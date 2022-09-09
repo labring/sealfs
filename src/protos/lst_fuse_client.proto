@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+
+// file system service
+service Remotefs {
+    rpc GetFile(GetFileRequest) returns (GetFileResponse) {}
+    rpc PutFile(PutFileRequest) returns (PutFileResponse) {}
+    rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse) {}
+    rpc ListFiles(ListFilesRequest) returns (ListFilesResponse) {}
+    rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse) {}
+    rpc DeleteDirectory(DeleteDirectoryRequest) returns (DeleteDirectoryResponse) {}
+    rpc ListDirectories(ListDirectoriesRequest) returns (ListDirectoriesResponse) {}
+}
+
+// file system service request and response
+message GetFileRequest {
+    string path = 1;
+}
+message GetFileResponse {
+    bytes data = 1;
+}
+message PutFileRequest {
+    string path = 1;
+    bytes data = 2;
+}
+message PutFileResponse {
+    string path = 1;
+}
+message DeleteFileRequest {
+    string path = 1;
+}
+message DeleteFileResponse {
+    string path = 1;
+}
+message ListFilesRequest {
+    string path = 1;
+}
+message ListFilesResponse {
+    repeated string files = 1;
+}
+message CreateDirectoryRequest {
+    string path = 1;
+}
+message CreateDirectoryResponse {
+    string path = 1;
+}
+message DeleteDirectoryRequest {
+    string path = 1;
+}
+message DeleteDirectoryResponse {
+    string path = 1;
+}
+message ListDirectoriesRequest {
+    string path = 1;
+}
+message ListDirectoriesResponse {
+    repeated string directories = 1;
+}
