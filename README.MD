@@ -55,7 +55,7 @@
 
 （下图左侧）
 
-！[alt fs](https://pic1.zhimg.com/v2-c0ee0e4d7fc8b78c149c7fd8cb38f93a_1440w.jpg)
+![alt fs](https://pic1.zhimg.com/v2-c0ee0e4d7fc8b78c149c7fd8cb38f93a_1440w.jpg)
 
 
 ### 网络文件（块）存储调用流程
@@ -64,7 +64,7 @@
 网络文件存储有许多不同的实现方式，最容易实现且易于使用的fuse。
 
 
-！[alt fuse](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9tbWJpei5xcGljLmNuL21tYml6X3BuZy9kNGhvWUpseE9qTnNvaWNRQkUwM01aRDBrWjNmY3VpYWVRZzJmV1RlNFlWV3RUYko5aWN1cG1iZ1IwZGd1RUlrTTloTzZzaWJQdU80VTlFNzlpYWczWWljdlE4US82NDA?x-oss-process=image/format,png)
+![alt fuse](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9tbWJpei5xcGljLmNuL21tYml6X3BuZy9kNGhvWUpseE9qTnNvaWNRQkUwM01aRDBrWjNmY3VpYWVRZzJmV1RlNFlWV3RUYko5aWN1cG1iZ1IwZGd1RUlrTTloTzZzaWJQdU80VTlFNzlpYWczWWljdlE4US82NDA?x-oss-process=image/format,png)
 
 在fuse中，通过网络进行文件存储的一次调用流程包括：
 1. 用户态请求
@@ -120,6 +120,7 @@ fuse作为实现成本最低的一种方式，是实现sealfs的最好选择，�
 
 ## 网络架构
 
+![image](https://user-images.githubusercontent.com/14962503/189853670-d10c29e8-34d7-468e-baa6-36c8fa65a3c9.png)
 
 ### 客户端
 使用libfuse构建客户端，用于挂载一个目录，并处理所有该目录下的请求。
