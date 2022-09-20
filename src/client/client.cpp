@@ -24,6 +24,10 @@
 
 /* get global client instance, thread-safe */
 
+std::mutex client_write_lock;
+
+Client* client;
+
 Node::Node(char* host, char* port) {
 	this->host = host;
 	this->port = port;
@@ -58,13 +62,16 @@ inline void Node::disconnect() {
 }
 
 Client* get_client() {
+	LOG("get_client");
 	if (!client) {
 		client_write_lock.lock();
 		if (!client) {
 			client = new Client();
+			client->add_node("127.0.0.1", "8888");
 		}
 		client_write_lock.unlock();
 	}
+	LOG("Client instance: %p", client);
 	return client; 
 }
 
@@ -72,9 +79,16 @@ Client::Client() {}
 
 Client::~Client() {}
 
+inline void Client::add_node(char* host, char* port) {
+	Node* node = new Node(host, port);
+	LOG("Adding node %s:%s", host, port);
+	this->server_list.insert(std::pair<int, Node*>(this->server_list.size(), node));  // TODO use distributed hash table
+	LOG("Added node %s:%s", host, port);
+}
+
 inline Connection* Client::get_connection(int index) {
 	auto iter_pair = server_list.equal_range(index);
-	if (iter_pair.first == server_list.end()) {
+	if (iter_pair.first == server_list.end()) { 
 		return server_list.begin()->second->get_connection();
 	}
 	return iter_pair.first->second->get_connection();

@@ -68,6 +68,7 @@ static void *init(struct fuse_conn_info *conn,
 static int lst_getattr(const char *path, struct stat *stbuf,
               struct fuse_file_info *fi)
 {
+	LOG("getattr %s", path);
     (void) fi;
 
     return get_client()->get_remote_file_attr(path, stbuf);
@@ -79,6 +80,7 @@ static int lst_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
               off_t offset, struct fuse_file_info *fi,
               enum fuse_readdir_flags flags)
 {
+	LOG("lst_readdir: %s", path);
     (void) offset;
     (void) fi;
     (void) flags;
@@ -90,6 +92,7 @@ static int lst_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 
 static int lst_open(const char *path, struct fuse_file_info *fi)
 {
+	LOG("lst_open: %s", path);
     return get_client()->open_remote_file(path, fi);
 }
 
@@ -98,6 +101,7 @@ static int lst_open(const char *path, struct fuse_file_info *fi)
 static int lst_read(const char *path, char *buf, size_t size, off_t offset,
            struct fuse_file_info *fi)
 {
+	LOG("lst_read: %s", path);
     (void) fi;
     return get_client()->read_remote_file(path, buf, size, offset);
 }
@@ -107,6 +111,7 @@ static int lst_read(const char *path, char *buf, size_t size, off_t offset,
 static int lst_write(const char *path, const char *buf, size_t size,
             off_t offset, struct fuse_file_info *fi)
 {
+	LOG("lst_write: %s", path);
     (void) fi;
     return get_client()->write_remote_file(path, buf, size, offset);
 }
@@ -115,12 +120,14 @@ static int lst_write(const char *path, const char *buf, size_t size,
 
 static int lst_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
+	LOG("lst_create: %s", path);
     (void) fi;
     return get_client()->create_remote_file(path, mode);
 }
 
 static int lst_mkdir(const char *path, mode_t mode)
 {
+	LOG("lst_mkdir: %s", path);
     return get_client()->create_remote_dir(path, mode);
 }
 
@@ -148,6 +155,8 @@ int main(int argc, char *argv[])
 	
 	init_logger("/home/luan/log.txt");
 
+	LOG("Starting client");
+
 	/* Parse options */
 	if (fuse_opt_parse(&args, &options, option_spec, NULL) == -1)
 		return 1;
@@ -163,7 +172,9 @@ int main(int argc, char *argv[])
 		args.argv[0][0] = '\0';
 	}
 
+	LOG("fuse_main");
 	ret = fuse_main(args.argc, args.argv, &lst_oper, NULL);
 	fuse_opt_free_args(&args);
+	LOG("Client stopped");
 	return ret;
 }

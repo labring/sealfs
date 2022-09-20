@@ -1,6 +1,8 @@
 #include "client/connection.hpp"
 #include <map>
 #include <mutex>
+#include <string>
+#include <vector>
 
 #define MAX_CONNECTIONS 1024
 /* class for holding all active connections */
@@ -24,6 +26,9 @@ class Client {
 public:
     Client();
     ~Client();
+
+    void add_node(char* host, char* port);
+
     inline Connection* get_connection(int index);
 
     /* map path to host and port index*/
@@ -45,7 +50,7 @@ private:
     std::map<int, Node*> server_list;
 };
 
-std::mutex client_write_lock;
+extern std::mutex client_write_lock;
 
 extern Client* client;
 

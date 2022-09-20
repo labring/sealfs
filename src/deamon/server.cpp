@@ -4,20 +4,18 @@
 using namespace std;
 
 
-Server::Server(int m_socket) {
+Server::Server(int m_socket, sockaddr_in m_client, leveldb::DB* m_db) {
     sock = m_socket;
+    client = m_client;
     connected = true;
     options.create_if_missing = true;
-    leveldb::Status status = leveldb::DB::Open(options, "./testdb", &db);
-    if (!status.ok()) {
-        std::cerr << status.ToString() << std::endl;
-    } else {
-        std::cout << "success!" << std::endl;
-    }
+    db = m_db;
 }
 
 Server::~Server() {
-    disconnect();
+    if (connected) {
+        disconnect();
+    }
 }
 
 void Server::disconnect() {
@@ -29,8 +27,14 @@ void Server::disconnect() {
 
 void Server::parse_request() {
     while (connected) {
+        int message_size;
+        int bytes_read = recv(sock, &message_size, sizeof(int), 0);
+        if (bytes_read == 0) {
+            disconnect();
+            break;
+        }
         char buf[1024];
-        int bytes_read = read(sock, buf, 1024);
+        bytes_read = recv(sock, buf, message_size, 0);
         if (bytes_read == 0) {
             disconnect();
             break;
@@ -40,6 +44,7 @@ void Server::parse_request() {
             break;
         }
         printf("%s", buf);
+        
     }
 }
 
@@ -53,7 +58,7 @@ int Server::response(const void* buf, int size) {
     return 0;
 }
 
-void Server::create_file(const char *path, mode_t mode, uid_t uid) {
+void Server::create_file(const char *path, mode_t mode, int uid) {
     
     cout << "create_file" << endl;
     cout << "path: " << path << endl;

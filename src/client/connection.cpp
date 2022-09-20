@@ -1,11 +1,13 @@
 
 #include <errno.h>
 #include <client/connection.hpp>
+#include <client/logging.hpp>
+#include <common/protocol.hpp>
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
-#include <logging.hpp>
+#include <assert.h>
 
 Connection::Connection(const char* host, const char* port) {
     this->host = strdup(host);
@@ -67,6 +69,7 @@ inline int Connection::reconnect() {
     }
     this->connected = 1;
     this->connect_lock.unlock();
+    LOG("Connected to %s:%s", this->host, this->port);
     return 0;
 }
 
@@ -124,13 +127,89 @@ void Connection::recv_response() {
     }
 }
 
+int Connection::send_request(int id, int type, int flags, int total_length, int path_length, const char* path, int meta_data_length, const void* meta_data, int data_length, const void* data) {
+    assert(total_length == sizeof(int) * 3 + path_length + meta_data_length + data_length);
+    this->send_lock.lock();
+    if (reconnect() < 0) {
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (send(this->sock, &id, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (send(this->sock, &type, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (send(this->sock, &flags, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (send(this->sock, &total_length, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (send(this->sock, &path_length, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (path_length>0) {
+        if (send(this->sock, path, path_length, 0) <= 0) {
+            LOG("Error sending request");
+            this->send_lock.unlock();
+            return -1;
+        }
+    }
+    if (send(this->sock, &meta_data_length, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (meta_data_length>0) {
+        if (send(this->sock, meta_data, meta_data_length, 0) <= 0) {
+            LOG("Error sending request");
+            this->send_lock.unlock();
+            return -1;
+        }
+    }
+    if (send(this->sock, &data_length, sizeof(int), 0) <= 0) {
+        LOG("Error sending request");
+        this->send_lock.unlock();
+        return -1;
+    }
+    if (data_length>0) {
+        if (send(this->sock, data, data_length, 0) <= 0) {
+            LOG("Error sending request");
+            this->send_lock.unlock();
+            return -1;
+        }
+    }
+    this->send_lock.unlock();
+    return 0;
+}
+
 
 int Connection::create_remote_file(const char *path, mode_t mode)
 {
     if (connected == 0) {
         return -EIO;
     }
-    return -EPERM;
+    int id = this->callback_end;
+    this->callback_end = (this->callback_end + 1) % MAX_BUFFER_SIZE;
+    this->callbacks[id].lock->lock();
+    int path_length = strlen(path) + 1;
+    int total_length = sizeof(int) * 3 + path_length + sizeof(mode_t);
+    int status = send_request(id, CREATE_FILE, 0, total_length, path_length, path, sizeof(mode_t), &mode, 0, NULL);
+    if (status < 0) {
+        this->callbacks[id].lock->unlock();
+        return status;
+    }
 }
 
 int Connection::create_remote_dir(const char *path, mode_t mode)

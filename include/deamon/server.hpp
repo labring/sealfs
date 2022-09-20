@@ -13,7 +13,7 @@
 
 class Server {
 public:
-    Server(int m_socket);
+    Server(int m_socket, sockaddr_in m_client, leveldb::DB* m_db);
     ~Server();
     inline void disconnect();
 
@@ -21,7 +21,7 @@ public:
 
     int response(const void* buf, int size);
 
-    void create_file(const char *path, mode_t mode, uid_t uid);
+    void create_file(const char *path, mode_t mode, int uid);
     int create_dir(const char *path, mode_t mode);
     int get_file_attr(const char *path, struct stat *stbuf);
     int read_dir(const char *path, void *buf, fuse_fill_dir_t filler);
@@ -29,6 +29,7 @@ public:
     int read_file(const char *path, char *buf, size_t size, off_t offset);
     int write_file(const char *path, const char *buf, size_t size, off_t offset);
     int sock;
+    sockaddr_in client;
     volatile char connected;
 private:
     //sockaddr_in addr;

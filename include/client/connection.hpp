@@ -8,8 +8,6 @@
 #include <mutex>
 #include <condition_variable>
 
-#define MAX_BUFFER_SIZE 65535
-
 struct OperationCallback {
     void* buffer;
     size_t size;
@@ -27,6 +25,7 @@ public:
     inline void disconnect();
 
     void recv_response();
+    int send_request(int id, int type, int flags, int total_length, int path_length, const char* path, int meta_data_length, const void* meta_data, int data_length, const void* data);
 
     int create_remote_file(const char *path, mode_t mode);
     int create_remote_dir(const char *path, mode_t mode);
@@ -42,6 +41,7 @@ private:
     char* host;
     char* port;
     std::mutex connect_lock;
+    std::mutex send_lock;
 
     int callback_start, callback_end;
     OperationCallback* callbacks;
