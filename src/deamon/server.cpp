@@ -1,15 +1,15 @@
-#include "deamon/server.hpp"
+#include <deamon/server.hpp>
+#include <common/logging.hpp>
+#include <common/protocol.hpp>
 #include <iostream>
 
 using namespace std;
 
 
-Server::Server(int m_socket, sockaddr_in m_client, leveldb::DB* m_db) {
+Server::Server(int m_socket, Engine* m_engine) {
     sock = m_socket;
-    client = m_client;
     connected = true;
-    options.create_if_missing = true;
-    db = m_db;
+    engine = m_engine;
 }
 
 Server::~Server() {
@@ -25,72 +25,147 @@ void Server::disconnect() {
     }
 }
 
+// requests
+// | id | type | flags | total_length | filename_length | filename | meta_data_length | meta_data | data_length | data |
+// | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 4Byte | 0~ | 4Byte | 0~ |
+
 void Server::parse_request() {
     while (connected) {
-        int message_size;
-        int bytes_read = recv(sock, &message_size, sizeof(int), 0);
-        if (bytes_read == 0) {
+        LOG("Waiting for request");
+        char header[HEADER_SIZE];
+        int read_size = recv(sock, header, HEADER_SIZE, MSG_WAITALL);
+        if (read_size != HEADER_SIZE) {
+            LOG("Error receiving request, read_size: %d", read_size);
             disconnect();
-            break;
+            return;
         }
-        char buf[1024];
-        bytes_read = recv(sock, buf, message_size, 0);
-        if (bytes_read == 0) {
+        LOG("Received request");
+        int id = *(int*) header;
+        LOG("id: %d", id);
+        OperationType type = *(OperationType*) (header + sizeof(int));
+        LOG("type: %d", type);
+        int flags = *(int*) (header + sizeof(int) * 2);
+        LOG("flags: %d", flags);
+        int total_length = *(int*) (header + sizeof(int) * 3);
+        LOG("Received request: id=%d, type=%d, flags=%d, total_length=%d", id, type, flags, total_length);
+        char buffer[total_length];
+        if (recv(sock, buffer, total_length, MSG_WAITALL) != total_length) {
+            LOG("Error receiving request");
             disconnect();
-            break;
+            return;
         }
-        if (bytes_read == -1) {
-            printf("Error reading from socket");
-            break;
+        int path_length = *(int*) buffer;
+        LOG("path_length: %d", path_length);
+
+        switch (type) {
+            case CREATE_FILE:
+                create_file(id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
+                break;
+            case CREATE_DIR:
+                create_dir(id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
+                break;
+            case GET_FILE_ATTR:
+                get_file_attr(id, SimpleString(buffer + sizeof(int), path_length));
+                break;
+            //TODO
+            default:
+                LOG("Unknown request type %d", type);
+                disconnect();
+                return;
         }
-        printf("%s", buf);
-        
     }
 }
 
-int Server::response(const void* buf, int size) {
-    // send(sock, (void*)&size, sizeof(int), 0);
-    // int bytes_sent = send(sock, buf, size, 0);
-    // if (bytes_sent == -1) {
-    //     printf("Error sending response");
-    //     return -1;
-    // }
+int Server::response(int id, int status, int flags, int total_length, int meta_data_length, const void* meta_data, int data_length, const void* data) {
+    assert(total_length == meta_data_length + data_length);
+    this->send_lock.lock();
+    if (!connected) {
+        return -1;
+    }
+    if (send(sock, &id, sizeof(int), 0) <= 0) {
+        LOG("Error sending response");
+        disconnect();
+        return -1;
+    }
+    if (send(sock, &status, sizeof(int), 0) <= 0) {
+        LOG("Error sending response");
+        disconnect();
+        return -1;
+    }
+    if (send(sock, &flags, sizeof(int), 0) <= 0) {
+        LOG("Error sending response");
+        disconnect();
+        return -1;
+    }
+    if (send(sock, &total_length, sizeof(int), 0) <= 0) {
+        LOG("Error sending response");
+        disconnect();
+        return -1;
+    }
+    if (send(sock, &meta_data_length, sizeof(int), 0) <= 0) {
+        LOG("Error sending response");
+        disconnect();
+        return -1;
+    }
+    if (meta_data_length > 0) {
+        if (send(sock, meta_data, meta_data_length, 0) <= 0) {
+            LOG("Error sending response");
+            disconnect();
+            return -1;
+        }
+    }
+    if (send(sock, &data_length, sizeof(int), 0) <= 0) {
+            LOG("Error sending response");
+            disconnect();
+            return -1;
+    }
+    if (data_length > 0) {
+        if (send(sock, data, data_length, 0) <= 0) {
+            LOG("Error sending response");
+            disconnect();
+            return -1;
+        }
+    }
+    this->send_lock.unlock();
     return 0;
 }
 
-void Server::create_file(const char *path, mode_t mode, int uid) {
+void Server::create_file(int id, SimpleString path, mode_t mode) {
     
     cout << "create_file" << endl;
-    cout << "path: " << path << endl;
+    cout << "path: " << string(path.data, path.length) << endl;
     cout << "mode: " << mode << endl;
 
-    string key(path);
-    string *value = NULL;
-    leveldb::Status s = db->Get(leveldb::ReadOptions(), key, value);
+    assert(engine != NULL);
 
-    if (s.ok()) {
-        printf("File already exists");
-        int buf[2] = {uid, -EEXIST};
-        if (response((const void*)buf, sizeof(buf)) == -1) {
-            printf("Error sending response");
-        }
-    } else if (s.IsNotFound()) {
-        printf("File not found");
-        leveldb::Status s;
-        if (mode & S_IFREG) {
-            s = db->Put(leveldb::WriteOptions(), key, "f\006\006\006");
-        } else if (mode & S_IFDIR) {
-            s = db->Put(leveldb::WriteOptions(), key, "d\006\006\006");
-        }
-        if (s.ok()) {
-            int buf[2] = {uid, 0};
-            if (response((const void*)buf, sizeof(buf)) == -1) {
-                printf("Error sending response");
-            }
-        } else {
-            printf("Error writing to db");
-        }
-    } else {
-        printf("An error occurred");
-    }
+    int status = engine->create_file(path, mode);
+
+    response(id, status, 0, 0, 0, NULL, 0, NULL);
+}
+
+void Server::create_dir(int id, SimpleString path, mode_t mode) {
+    
+    cout << "create_dir" << endl;
+    cout << "path: " << string(path.data, path.length) << endl;
+    cout << "mode: " << mode << endl;
+
+    assert(engine != NULL);
+
+    int status = engine->create_dir(path, mode);
+
+    response(id, status, 0, 0, 0, NULL, 0, NULL);
+}
+
+void Server::get_file_attr(int id, SimpleString path) {
+        
+    cout << "get_file_attr" << endl;
+    cout << "path: " << string(path.data, path.length) << endl;
+
+    assert(engine != NULL);
+
+    struct stat attr;
+    
+    int status = engine->get_file_attr(path, &attr);
+
+    response(id, status, 0, sizeof(struct stat), sizeof(struct stat), &attr, 0, NULL);
 }

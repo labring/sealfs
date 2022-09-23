@@ -19,10 +19,10 @@
  */
 
 
-#include <client/fuse_version.hpp>
+#include <common/fuse_version.hpp>
 
 #include <client/client.hpp>
-#include <client/logging.hpp>
+#include <common/logging.hpp>
 
 #include <fuse.h>
 #include <stdio.h>
@@ -68,7 +68,7 @@ static void *init(struct fuse_conn_info *conn,
 static int lst_getattr(const char *path, struct stat *stbuf,
               struct fuse_file_info *fi)
 {
-	LOG("getattr %s", path);
+	LOG("lst_getattr %s", path);
     (void) fi;
 
     return get_client()->get_remote_file_attr(path, stbuf);

@@ -19,7 +19,7 @@
  */
 
 #include <client/client.hpp>
-#include <client/logging.hpp>
+#include <common/logging.hpp>
 #include <assert.h>
 
 /* get global client instance, thread-safe */

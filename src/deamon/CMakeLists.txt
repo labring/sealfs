@@ -3,6 +3,8 @@
 set(PRELOAD_SRC
     main.cpp
     server.cpp
+    logging.cpp
+    engine.cpp
     )
 # set(PRELOAD_HEADERS
 #     include/preload.hpp

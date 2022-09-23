@@ -1,7 +1,8 @@
 #ifndef CONNECT_HPP
 #define CONNECT_HPP
 
-#include <client/fuse_version.hpp>
+#include <common/fuse_version.hpp>
+#include <common/protocol.hpp>
 #include <fuse.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -9,12 +10,14 @@
 #include <condition_variable>
 
 struct OperationCallback {
-    void* buffer;
+    void* data;
+    void* meta_data;
     size_t size;
     std::mutex* lock;
     std::condition_variable* cond;
-    int* status;
-    char mode;
+    CallbackState state;
+    int status;
+    time_t start_time;
 };
 
 class Connection {
