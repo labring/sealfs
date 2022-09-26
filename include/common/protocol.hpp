@@ -5,6 +5,8 @@
 
 #define MAX_BUFFER_SIZE 65535
 
+#define MAX_DIR_LIST_BUFFER_SIZE MAX_BUFFER_SIZE
+
 
 enum OperationType {
     CREATE_FILE = 1,

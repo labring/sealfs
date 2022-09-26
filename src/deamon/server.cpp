@@ -2,6 +2,7 @@
 #include <common/logging.hpp>
 #include <common/protocol.hpp>
 #include <iostream>
+#include <thread>
 
 using namespace std;
 
@@ -59,13 +60,16 @@ void Server::parse_request() {
 
         switch (type) {
             case CREATE_FILE:
-                create_file(id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
+                //create_file(id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
+                std::thread(&Server::create_file, this, id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
                 break;
             case CREATE_DIR:
-                create_dir(id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
+                //create_dir(id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
+                std::thread(&Server::create_dir, this, id, SimpleString(buffer + sizeof(int), path_length), *(mode_t*) (buffer + sizeof(int) + path_length));
                 break;
             case GET_FILE_ATTR:
-                get_file_attr(id, SimpleString(buffer + sizeof(int), path_length));
+                //get_file_attr(id, SimpleString(buffer + sizeof(int), path_length));
+                std::thread(&Server::get_file_attr, this, id, SimpleString(buffer + sizeof(int), path_length));
                 break;
             //TODO
             default:
@@ -77,7 +81,9 @@ void Server::parse_request() {
 }
 
 int Server::response(int id, int status, int flags, int total_length, int meta_data_length, const void* meta_data, int data_length, const void* data) {
+    LOG("Sending response");
     assert(total_length == meta_data_length + data_length);
+    LOG("id=%d, status=%d, flags=%d, total_length=%d, meta_data_length=%d, data_length=%d", id, status, flags, total_length, meta_data_length, data_length);
     this->send_lock.lock();
     if (!connected) {
         return -1;

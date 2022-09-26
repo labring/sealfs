@@ -40,6 +40,7 @@ include_directories(../../include /usr/local/include/fuse3)
 
 set(PRELOAD_LINK_LIBRARIES
     fuse3
+    pthread
     # grpc++
     )
 

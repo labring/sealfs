@@ -8,6 +8,7 @@
 #include <netinet/in.h>
 #include <mutex>
 #include <condition_variable>
+#include <thread>
 
 struct OperationCallback {
     void* data;
@@ -48,6 +49,8 @@ private:
 
     int callback_start, callback_end;
     OperationCallback* callbacks;
+
+    std::thread* recv_thread;
 };
 
 

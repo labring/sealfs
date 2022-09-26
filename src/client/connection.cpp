@@ -30,6 +30,9 @@ Connection::Connection(const char* host, const char* port) {
     if (reconnect() < 0) {
         LOG("Failed to connect to %s:%s", host, port);
     }
+
+    this->recv_thread = new std::thread(&Connection::recv_response, this);
+    this->recv_thread->detach();
 }
 
 Connection::~Connection() {
@@ -95,13 +98,15 @@ inline void Connection::disconnect() {
 
 void Connection::recv_response() {
     while (true) {
-
+        
+        LOG("Waiting for response");
         if (!this->connected) {
             LOG("Connection to %s:%s lost", this->host, this->port);
             return;
         }
 
         /* read operation response */
+        LOG("Reading response");
         char header[HEADER_SIZE];
         if (recv(this->sock, header, HEADER_SIZE, MSG_WAITALL) != HEADER_SIZE) {
             LOG("Error reading header");
@@ -110,6 +115,7 @@ void Connection::recv_response() {
         }
 
         /* parse header */
+        LOG("Parsing response");
         int id = *(int*)header;
         int flags = *(int*)(header + sizeof(int) * 2);
         int total_length = *(int*)(header + sizeof(int) * 3);
@@ -121,6 +127,7 @@ void Connection::recv_response() {
         }
         
         /* check if the operation is outdated */
+        LOG("Checking if the operation is outdated");
         if (this->callbacks[id].state != IN_PROGRESS) {
             LOG("Operation %d is outdated", id);
             char* buffer = (char*) malloc(total_length);
@@ -144,9 +151,10 @@ void Connection::recv_response() {
         }
 
         /* read meta data */
+        LOG("Reading meta data");
         int meta_data_length;
         if (recv(this->sock, &meta_data_length, sizeof(int), MSG_WAITALL) != sizeof(int)) {
-            LOG("Error reading meta data length");
+            LOG("Error reading meta data length %d", errno);
             this->disconnect();
             return;
         }
@@ -159,13 +167,14 @@ void Connection::recv_response() {
 
         if (meta_data_length > 0) {
             if (recv(this->sock, this->callbacks[id].meta_data, meta_data_length, MSG_WAITALL) != meta_data_length) {
-                LOG("Error reading meta data");
+                LOG("Error reading meta data %d", errno);
                 this->disconnect();
                 return;
             }
         }
 
         /* read data */
+        LOG("Reading data");
         int data_length;
         if (recv(this->sock, &data_length, sizeof(int), MSG_WAITALL) != sizeof(int)) {
             LOG("Error reading data length");
@@ -280,7 +289,7 @@ int Connection::create_remote_file(const char *path, mode_t mode)
     this->callbacks[id].state = IN_PROGRESS;
     std::unique_lock<std::mutex> lock(*this->callbacks[id].lock);
     this->callbacks[id].cond->wait_for(lock, std::chrono::milliseconds(3000)); // TODO: http://events.jianshu.io/p/53902d400dab
-    if (this->callbacks[id].state == IN_PROGRESS) {
+    if (this->callbacks[id].state != DONE) {
         LOG("timeout");
         this->callbacks[id].state = EMPTY;
         return -ETIMEDOUT;
@@ -305,19 +314,24 @@ int Connection::get_remote_file_attr(const char *path, struct stat *stbuf)
         LOG("not connected");
         return -EIO;
     }
+
     int id = this->callback_end;
     this->callback_end = (this->callback_end + 1) % MAX_BUFFER_SIZE;
+    this->callbacks[id].state = IN_PROGRESS;
+    this->callbacks[id].meta_data = stbuf;
+
+
+    LOG("sending request");
     int path_length = strlen(path);
     int total_length = sizeof(int) * 3 + path_length;
-    LOG("sending request");
     int status = send_request(id, GET_FILE_ATTR, 0, total_length, path_length, path, 0, NULL, 0, NULL);
     if (status < 0) {
-        this->callbacks[id].lock->unlock();
+        this->callbacks[id].state = EMPTY;
         LOG("error sending request");
         return status;
     }
+    
     LOG("waiting for response");
-    this->callbacks[id].state = IN_PROGRESS;
     std::unique_lock<std::mutex> lock(*this->callbacks[id].lock);
     this->callbacks[id].cond->wait_for(lock, std::chrono::milliseconds(3000));
     if (this->callbacks[id].state != DONE) {
@@ -325,19 +339,65 @@ int Connection::get_remote_file_attr(const char *path, struct stat *stbuf)
         return -ETIMEDOUT;
     }
     LOG("got response");
+    
     status = this->callbacks[id].status;
-    if (status >= 0) {
-        memcpy(stbuf, this->callbacks[id].meta_data, sizeof(struct stat));
-    }
     return status;
 }
 
 int Connection::read_remote_dir(const char *path, void *buf, fuse_fill_dir_t filler)
 {
+    LOG("read_remote_dir");
     if (connected == 0) {
+        LOG("not connected");
         return -EIO;
     }
-    return -EPERM;
+    int id = this->callback_end;
+    this->callback_end = (this->callback_end + 1) % MAX_BUFFER_SIZE;
+    this->callbacks[id].state = IN_PROGRESS;
+    this->callbacks[id].data = new char[MAX_DIR_LIST_BUFFER_SIZE];
+
+    LOG("sending request");
+    int path_length = strlen(path);
+    int total_length = sizeof(int) * 3 + path_length;
+    int status = send_request(id, READ_DIR, 0, total_length, path_length, path, 0, NULL, 0, NULL);
+    if (status < 0) {
+        LOG("error sending request");
+        this->callbacks[id].state = EMPTY;
+        free(this->callbacks[id].data);
+        return status;
+    }
+
+    LOG("waiting for response");
+    std::unique_lock<std::mutex> lock(*this->callbacks[id].lock);
+    this->callbacks[id].cond->wait_for(lock, std::chrono::milliseconds(3000));
+    if (this->callbacks[id].state != DONE) {
+        LOG("timeout");
+        this->callbacks[id].state = EMPTY;
+        free(this->callbacks[id].data);
+        return -ETIMEDOUT;
+    }
+    LOG("got response");
+    status = this->callbacks[id].status;
+    if (status < 0) {
+        free(this->callbacks[id].data);
+        this->callbacks[id].state = EMPTY;
+        return status;
+    }
+    /* read dir from data in callback. Every object include name length and directory name. Stop while name length is zero*/
+    for (int i = 0; i < MAX_DIR_LIST_BUFFER_SIZE;) {
+        int name_length = *(int *) (this->callbacks[id].data + i);
+        if (name_length == 0) {
+            break;
+        }
+        i += sizeof(int);
+        char name[name_length + 1];
+        memcpy(name, this->callbacks[id].data + i, name_length);
+        name[name_length] = '\0';
+        i += name_length;
+        filler(buf, name, NULL, 0, FUSE_FILL_DIR_PLUS);
+    }
+    free(this->callbacks[id].data);
+    return 0;
 }
 
 int Connection::open_remote_file(const char *path, struct fuse_file_info *fi)

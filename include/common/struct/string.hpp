@@ -2,9 +2,10 @@
 #define STRING_STRUCT_HPP
 
 struct SimpleString {
-    char* data;
+    const char* data;
     int length;
-    SimpleString(char* data, int length) : data(data), length(length) {}
+    SimpleString(const char* data, int length) : data(data), length(length) {}
+    SimpleString() : data(NULL), length(0) {}
 };
 
 #endif /* STRING_STRUCT_HPP */

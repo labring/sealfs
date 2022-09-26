@@ -18,7 +18,7 @@ public:
     int create_file(SimpleString path, mode_t mode);
     int create_dir(SimpleString path, mode_t mode);
     int get_file_attr(SimpleString path, struct stat *stbuf);
-    int read_dir(SimpleString path, void *buf, fuse_fill_dir_t filler);
+    int read_dir(SimpleString path, void *buf);
     int open_file(SimpleString path, struct fuse_file_info *fi);
     int read_file(SimpleString path, char *buf, size_t size, off_t offset);
     int write_file(SimpleString path, const void *buf, size_t size, off_t offset);

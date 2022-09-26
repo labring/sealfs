@@ -59,3 +59,49 @@ int Engine::get_file_attr(SimpleString path, struct stat *stbuf) {
     }
     return 0;
 }
+
+inline int add_directory(SimpleString path, void *buf, int offset) {
+    memcpy(buf + offset, (void*)&path.length, sizeof(int));
+    offset += sizeof(int);
+    memcpy(buf + offset, (void*)path.data, path.length);
+    offset += path.length;
+    return offset;
+}
+
+int Engine::read_dir(SimpleString path, void *buf) {
+    leveldb::Slice key(path.data, path.length);
+    std::string value;
+    leveldb::Status status = db->Get(read_options, key, &value);
+    if (!status.ok()) {
+        return -ENOENT;
+    }
+    if (value != "dir") {
+        return -ENOTDIR;
+    }
+    leveldb::Iterator* it = db->NewIterator(read_options);
+    int offset = 0;
+    for (it->Seek(key); it->Valid(); it->Next()) {
+        leveldb::Slice key = it->key();
+        if (key.size() <= path.length) {
+            break;
+        }
+        if (memcmp(key.data(), path.data, path.length) != 0) {
+            break;
+        }
+        if (key.data()[path.length] != '/') {
+            break;
+        }
+        SimpleString subpath;
+        subpath.data = key.data() + path.length + 1;
+        subpath.length = key.size() - path.length - 1;
+        for (int i = 0; i < subpath.length; i++) {
+            if (subpath.data[i] == '/') {
+                subpath.length = i;
+                break;
+            }
+        }
+        offset = add_directory(subpath, buf, offset);
+    }
+    delete it;
+    return 0;
+}
