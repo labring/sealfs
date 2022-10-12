@@ -58,6 +58,8 @@ int main() {
 
     Engine engine;
 
+    engine.init();
+
     while (1) {
         struct sockaddr_in client;
         int c = sizeof(struct sockaddr_in);

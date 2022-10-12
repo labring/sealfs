@@ -13,6 +13,8 @@
 struct OperationCallback {
     void* data;
     void* meta_data;
+    int data_length;
+    int meta_data_length;
     size_t size;
     std::mutex* lock;
     std::condition_variable* cond;

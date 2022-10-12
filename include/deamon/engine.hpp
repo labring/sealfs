@@ -5,8 +5,6 @@
 #include <fuse.h>
 #include <leveldb/db.h>
 
-#include <common/struct/string.hpp>
-
 class Engine {
 public:
     Engine();
@@ -15,15 +13,17 @@ public:
     void run();
     void stop();
 
-    int create_file(SimpleString path, mode_t mode);
-    int create_dir(SimpleString path, mode_t mode);
-    int get_file_attr(SimpleString path, struct stat *stbuf);
-    int read_dir(SimpleString path, void *buf);
-    int open_file(SimpleString path, struct fuse_file_info *fi);
-    int read_file(SimpleString path, char *buf, size_t size, off_t offset);
-    int write_file(SimpleString path, const void *buf, size_t size, off_t offset);
+    int create_file(leveldb::Slice path, mode_t mode);
+    int create_dir(leveldb::Slice path, mode_t mode);
+    int get_file_attr(leveldb::Slice path, struct stat *stbuf);
+    int read_dir(leveldb::Slice path, void *buf, int *size);
+    int open_file(leveldb::Slice path, struct fuse_file_info *fi);
+    int read_file(leveldb::Slice path, void *buf, size_t size, off_t offset);
+    int write_file(leveldb::Slice path, const void *buf, size_t size, off_t offset);
 private:
-    leveldb::DB* db;
+    leveldb::DB* file_attr_db;
+    leveldb::DB* sub_dir_db;
+    leveldb::DB* file_db;
     leveldb::Options options;
     leveldb::WriteOptions write_options;
     leveldb::ReadOptions read_options;

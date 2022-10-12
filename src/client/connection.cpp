@@ -109,7 +109,7 @@ void Connection::recv_response() {
         LOG("Reading response");
         char header[HEADER_SIZE];
         if (recv(this->sock, header, HEADER_SIZE, MSG_WAITALL) != HEADER_SIZE) {
-            LOG("Error reading header");
+            LOG("Error reading header %d", errno);
             this->disconnect();
             return;
         }
@@ -204,6 +204,7 @@ void Connection::recv_response() {
 int Connection::send_request(int id, int type, int flags, int total_length, int path_length, const char* path, int meta_data_length, const void* meta_data, int data_length, const void* data) {
     assert(total_length == sizeof(int) * 3 + path_length + meta_data_length + data_length);
     this->send_lock.lock();
+    LOG("Sending request id=%d, type=%d, flags=%d, total_length=%d, path_length=%d, path=%s, meta_data_length=%d, data_length=%d", id, type, flags, total_length, path_length, path, meta_data_length, data_length);
     if (reconnect() < 0) {
         this->send_lock.unlock();
         return -EIO;
@@ -384,19 +385,26 @@ int Connection::read_remote_dir(const char *path, void *buf, fuse_fill_dir_t fil
         return status;
     }
     /* read dir from data in callback. Every object include name length and directory name. Stop while name length is zero*/
+    LOG("reading dir");
+    char *data = (char *)this->callbacks[id].data;
     for (int i = 0; i < MAX_DIR_LIST_BUFFER_SIZE;) {
-        int name_length = *(int *) (this->callbacks[id].data + i);
-        if (name_length == 0) {
+        if (data[i] == 0) {
             break;
         }
-        i += sizeof(int);
-        char name[name_length + 1];
-        memcpy(name, this->callbacks[id].data + i, name_length);
-        name[name_length] = '\0';
-        i += name_length;
+        char name[MAX_BUFFER_SIZE];
+        int start_index = i;
+        for (i = start_index; i < MAX_DIR_LIST_BUFFER_SIZE; i++) {
+            if (data[i] == ';') {
+                break;
+            }
+        }
+        memcpy(name, (char*)this->callbacks[id].data + i, i - start_index);
+        name[i - start_index] = '\0';
         filler(buf, name, NULL, 0, FUSE_FILL_DIR_PLUS);
     }
+    LOG("done reading dir");
     free(this->callbacks[id].data);
+    LOG("freeing data");
     return 0;
 }
 
@@ -410,16 +418,78 @@ int Connection::open_remote_file(const char *path, struct fuse_file_info *fi)
 
 int Connection::read_remote_file(const char *path, char *buf, size_t size, off_t offset)
 {
+    LOG("read_remote_file");
     if (connected == 0) {
+        LOG("not connected");
         return -EIO;
     }
-    return -EPERM;
+    int id = this->callback_end;
+    this->callback_end = (this->callback_end + 1) % MAX_BUFFER_SIZE;
+    this->callbacks[id].state = IN_PROGRESS;
+    this->callbacks[id].data = new char[size];
+
+    LOG("sending request");
+    int path_length = strlen(path);
+    int total_length = sizeof(int) * 4 + path_length;
+    int status = send_request(id, READ_FILE, 0, total_length, path_length, path, sizeof(off_t), &offset, sizeof(size_t), &size);
+    if (status < 0) {
+        LOG("error sending request");
+        this->callbacks[id].state = EMPTY;
+        free(this->callbacks[id].data);
+        return status;
+    }
+
+    LOG("waiting for response");
+    std::unique_lock<std::mutex> lock(*this->callbacks[id].lock);
+    this->callbacks[id].cond->wait_for(lock, std::chrono::milliseconds(3000));
+    if (this->callbacks[id].state != DONE) {
+        LOG("timeout");
+        this->callbacks[id].state = EMPTY;
+        free(this->callbacks[id].data);
+        return -ETIMEDOUT;
+    }
+    LOG("got response");
+    status = this->callbacks[id].status;
+    if (status < 0) {
+        free(this->callbacks[id].data);
+        this->callbacks[id].state = EMPTY;
+        return status;
+    }
+    memcpy(buf, this->callbacks[id].data, size);
+    free(this->callbacks[id].data);
+    return size;
 }
 
 int Connection::write_remote_file(const char *path, const char *buf, size_t size, off_t offset)
 {
+    LOG("write_remote_file");
     if (connected == 0) {
+        LOG("not connected");
         return -EIO;
     }
-    return -EPERM;
+    int id = this->callback_end;
+    this->callback_end = (this->callback_end + 1) % MAX_BUFFER_SIZE;
+    this->callbacks[id].state = IN_PROGRESS;
+
+    LOG("sending request");
+    int path_length = strlen(path);
+    int total_length = sizeof(int) * 3 + path_length + size;
+    int status = send_request(id, WRITE_FILE, 0, total_length, path_length, path,  0, NULL, size, buf);
+    if (status < 0) {
+        LOG("error sending request");
+        this->callbacks[id].state = EMPTY;
+        return status;
+    }
+
+    LOG("waiting for response");
+    std::unique_lock<std::mutex> lock(*this->callbacks[id].lock);
+    this->callbacks[id].cond->wait_for(lock, std::chrono::milliseconds(3000));
+    if (this->callbacks[id].state != DONE) {
+        LOG("timeout");
+        this->callbacks[id].state = EMPTY;
+        return -ETIMEDOUT;
+    }
+    LOG("got response");
+    status = this->callbacks[id].status;
+    return status;
 }
