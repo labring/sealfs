@@ -3,6 +3,7 @@
 
 #include <common/fuse_version.hpp>
 #include <common/protocol.hpp>
+#include <common/types.hpp>
 #include <fuse.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,7 +16,7 @@ struct OperationCallback {
     void* meta_data;
     int data_length;
     int meta_data_length;
-    size_t size;
+    seal_size_t size;
     std::mutex* lock;
     std::condition_variable* cond;
     CallbackState state;
@@ -31,15 +32,15 @@ public:
     inline void disconnect();
 
     void recv_response();
-    int send_request(int id, int type, int flags, int total_length, int path_length, const char* path, int meta_data_length, const void* meta_data, int data_length, const void* data);
+    int send_request(int id, int type, int flags, seal_size_t total_length, seal_size_t path_length, const char* path, seal_size_t meta_data_length, const void* meta_data, seal_size_t data_length, const void* data);
 
     int create_remote_file(const char *path, mode_t mode);
     int create_remote_dir(const char *path, mode_t mode);
     int get_remote_file_attr(const char *path, struct stat *stbuf);
     int read_remote_dir(const char *path, void *buf, fuse_fill_dir_t filler);
     int open_remote_file(const char *path, struct fuse_file_info *fi);
-    int read_remote_file(const char *path, char *buf, size_t size, off_t offset);
-    int write_remote_file(const char *path, const char *buf, size_t size, off_t offset);
+    int read_remote_file(const char *path, char *buf, seal_size_t size, off_t offset);
+    int write_remote_file(const char *path, const char *buf, seal_size_t size, off_t offset);
     int sock;
     volatile char connected;
 private:

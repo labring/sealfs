@@ -118,7 +118,7 @@ void Connection::recv_response() {
         LOG("Parsing response");
         int id = *(int*)header;
         int flags = *(int*)(header + sizeof(int) * 2);
-        int total_length = *(int*)(header + sizeof(int) * 3);
+        seal_size_t total_length = *(seal_size_t*)(header + sizeof(int) * 3);
 
         if (id < 0 || id >= MAX_BUFFER_SIZE) {
             LOG("Invalid id %d", id);
@@ -152,8 +152,8 @@ void Connection::recv_response() {
 
         /* read meta data */
         LOG("Reading meta data");
-        int meta_data_length;
-        if (recv(this->sock, &meta_data_length, sizeof(int), MSG_WAITALL) != sizeof(int)) {
+        seal_size_t meta_data_length;
+        if (recv(this->sock, &meta_data_length, sizeof(seal_size_t), MSG_WAITALL) != sizeof(seal_size_t)) {
             LOG("Error reading meta data length %d", errno);
             this->disconnect();
             return;
@@ -175,8 +175,8 @@ void Connection::recv_response() {
 
         /* read data */
         LOG("Reading data");
-        int data_length;
-        if (recv(this->sock, &data_length, sizeof(int), MSG_WAITALL) != sizeof(int)) {
+        seal_size_t data_length;
+        if (recv(this->sock, &data_length, sizeof(seal_size_t), MSG_WAITALL) != sizeof(seal_size_t)) {
             LOG("Error reading data length");
             this->disconnect();
             return;
@@ -201,10 +201,10 @@ void Connection::recv_response() {
     }
 }
 
-int Connection::send_request(int id, int type, int flags, int total_length, int path_length, const char* path, int meta_data_length, const void* meta_data, int data_length, const void* data) {
-    assert(total_length == sizeof(int) * 3 + path_length + meta_data_length + data_length);
-    this->send_lock.lock();
+int Connection::send_request(int id, int type, int flags, seal_size_t total_length, seal_size_t path_length, const char* path, seal_size_t meta_data_length, const void* meta_data, seal_size_t data_length, const void* data) {
     LOG("Sending request id=%d, type=%d, flags=%d, total_length=%d, path_length=%d, path=%s, meta_data_length=%d, data_length=%d", id, type, flags, total_length, path_length, path, meta_data_length, data_length);
+    assert(total_length == sizeof(seal_size_t) * 3 + path_length + meta_data_length + data_length);
+    this->send_lock.lock();
     if (reconnect() < 0) {
         this->send_lock.unlock();
         return -EIO;
@@ -224,12 +224,12 @@ int Connection::send_request(int id, int type, int flags, int total_length, int 
         this->send_lock.unlock();
         return -EIO;
     }
-    if (send(this->sock, &total_length, sizeof(int), 0) <= 0) {
+    if (send(this->sock, &total_length, sizeof(seal_size_t), 0) <= 0) {
         LOG("Error sending request");
         this->send_lock.unlock();
         return -EIO;
     }
-    if (send(this->sock, &path_length, sizeof(int), 0) <= 0) {
+    if (send(this->sock, &path_length, sizeof(seal_size_t), 0) <= 0) {
         LOG("Error sending request");
         this->send_lock.unlock();
         return -EIO;
@@ -241,7 +241,7 @@ int Connection::send_request(int id, int type, int flags, int total_length, int 
             return -EIO;
         }
     }
-    if (send(this->sock, &meta_data_length, sizeof(int), 0) <= 0) {
+    if (send(this->sock, &meta_data_length, sizeof(seal_size_t), 0) <= 0) {
         LOG("Error sending request");
         this->send_lock.unlock();
         return -EIO;
@@ -253,7 +253,7 @@ int Connection::send_request(int id, int type, int flags, int total_length, int 
             return -EIO;
         }
     }
-    if (send(this->sock, &data_length, sizeof(int), 0) <= 0) {
+    if (send(this->sock, &data_length, sizeof(seal_size_t), 0) <= 0) {
         LOG("Error sending request");
         this->send_lock.unlock();
         return -EIO;
@@ -278,8 +278,8 @@ int Connection::create_remote_file(const char *path, mode_t mode)
     }
     int id = this->callback_end;
     this->callback_end = (this->callback_end + 1) % MAX_BUFFER_SIZE;
-    int path_length = strlen(path);
-    int total_length = sizeof(int) * 3 + path_length + sizeof(mode_t);
+    seal_size_t path_length = strlen(path);
+    seal_size_t total_length = sizeof(seal_size_t) * 3 + path_length + sizeof(mode_t);
 
     LOG("sending request");
     int status = send_request(id, CREATE_FILE, 0, total_length, path_length, path, sizeof(mode_t), &mode, 0, NULL);
@@ -323,8 +323,8 @@ int Connection::get_remote_file_attr(const char *path, struct stat *stbuf)
 
 
     LOG("sending request");
-    int path_length = strlen(path);
-    int total_length = sizeof(int) * 3 + path_length;
+    seal_size_t path_length = strlen(path);
+    seal_size_t total_length = sizeof(seal_size_t) * 3 + path_length;
     int status = send_request(id, GET_FILE_ATTR, 0, total_length, path_length, path, 0, NULL, 0, NULL);
     if (status < 0) {
         this->callbacks[id].state = EMPTY;
@@ -358,8 +358,8 @@ int Connection::read_remote_dir(const char *path, void *buf, fuse_fill_dir_t fil
     this->callbacks[id].data = new char[MAX_DIR_LIST_BUFFER_SIZE];
 
     LOG("sending request");
-    int path_length = strlen(path);
-    int total_length = sizeof(int) * 3 + path_length;
+    seal_size_t path_length = strlen(path);
+    seal_size_t total_length = sizeof(seal_size_t) * 3 + path_length;
     int status = send_request(id, READ_DIR, 0, total_length, path_length, path, 0, NULL, 0, NULL);
     if (status < 0) {
         LOG("error sending request");
@@ -416,7 +416,7 @@ int Connection::open_remote_file(const char *path, struct fuse_file_info *fi)
     return -EPERM;
 }
 
-int Connection::read_remote_file(const char *path, char *buf, size_t size, off_t offset)
+int Connection::read_remote_file(const char *path, char *buf, seal_size_t size, off_t offset)
 {
     LOG("read_remote_file");
     if (connected == 0) {
@@ -429,8 +429,8 @@ int Connection::read_remote_file(const char *path, char *buf, size_t size, off_t
     this->callbacks[id].data = new char[size];
 
     LOG("sending request");
-    int path_length = strlen(path);
-    int total_length = sizeof(int) * 4 + path_length;
+    seal_size_t path_length = strlen(path);
+    seal_size_t total_length = sizeof(seal_size_t) * 3 + path_length;
     int status = send_request(id, READ_FILE, 0, total_length, path_length, path, sizeof(off_t), &offset, sizeof(size_t), &size);
     if (status < 0) {
         LOG("error sending request");
@@ -460,7 +460,7 @@ int Connection::read_remote_file(const char *path, char *buf, size_t size, off_t
     return size;
 }
 
-int Connection::write_remote_file(const char *path, const char *buf, size_t size, off_t offset)
+int Connection::write_remote_file(const char *path, const char *buf, seal_size_t size, off_t offset)
 {
     LOG("write_remote_file");
     if (connected == 0) {
@@ -472,9 +472,13 @@ int Connection::write_remote_file(const char *path, const char *buf, size_t size
     this->callbacks[id].state = IN_PROGRESS;
 
     LOG("sending request");
-    int path_length = strlen(path);
-    int total_length = sizeof(int) * 3 + path_length + size;
-    int status = send_request(id, WRITE_FILE, 0, total_length, path_length, path,  0, NULL, size, buf);
+    seal_size_t path_length = strlen(path);
+    seal_size_t meta_data_length = sizeof(off_t) + sizeof(size_t);
+    char *meta_data = new char[meta_data_length+1];
+    memcpy(meta_data, &size, sizeof(seal_size_t));
+    memcpy(meta_data + sizeof(seal_size_t), &offset, sizeof(off_t));
+    seal_size_t total_length = sizeof(seal_size_t) * 3 + path_length + meta_data_length + size;
+    int status = send_request(id, WRITE_FILE, 0, total_length, path_length, path, meta_data_length, meta_data, size, buf);
     if (status < 0) {
         LOG("error sending request");
         this->callbacks[id].state = EMPTY;

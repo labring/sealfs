@@ -209,7 +209,7 @@ int Engine::get_file_attr(leveldb::Slice path, struct stat *stbuf) {
     return 0;
 }
 
-int Engine::read_dir(leveldb::Slice path, void *buf, int *size) {
+int Engine::read_dir(leveldb::Slice path, void *buf, seal_size_t *size) {
     std::string value;
     leveldb::Status status = file_attr_db->Get(read_options, path, &value);
     if (!status.ok()) {
@@ -227,7 +227,7 @@ int Engine::read_dir(leveldb::Slice path, void *buf, int *size) {
     return 0;
 }
 
-int Engine::write_file(leveldb::Slice path, const void *buf, size_t size, off_t offset) {
+int Engine::write_file(leveldb::Slice path, const void *buf, seal_size_t size, off_t offset) {
     leveldb::Slice key(path.data(), path.size());
     std::string value;
     leveldb::Status status = file_attr_db->Get(read_options, key, &value);
@@ -257,7 +257,7 @@ int Engine::write_file(leveldb::Slice path, const void *buf, size_t size, off_t 
     return size;
 }
 
-int Engine::read_file(leveldb::Slice path, void *buf, size_t size, off_t offset) {
+int Engine::read_file(leveldb::Slice path, void *buf, seal_size_t size, off_t offset) {
     leveldb::Slice key(path.data(), path.size());
     std::string value;
     leveldb::Status status = file_attr_db->Get(read_options, key, &value);
