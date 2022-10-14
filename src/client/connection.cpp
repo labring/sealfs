@@ -427,7 +427,7 @@ int Connection::read_remote_file(const char *path, char *buf, seal_size_t size, 
     LOG("sending request");
     seal_size_t path_length = strlen(path);
     seal_size_t total_length = sizeof(seal_size_t) * 3 + path_length;
-    int status = send_request(id, READ_FILE, 0, total_length, path_length, path, sizeof(off_t), &offset, sizeof(size_t), &size);
+    int status = send_request(id, READ_FILE, 0, total_length, path_length, path, sizeof(off_t), &offset, sizeof(seal_size_t), &size);
     if (status < 0) {
         LOG("error sending request");
         this->callbacks[id].state = EMPTY;
@@ -469,7 +469,7 @@ int Connection::write_remote_file(const char *path, const char *buf, seal_size_t
 
     LOG("sending request");
     seal_size_t path_length = strlen(path);
-    seal_size_t meta_data_length = sizeof(off_t) + sizeof(size_t);
+    seal_size_t meta_data_length = sizeof(off_t) + sizeof(seal_size_t);
     char *meta_data = new char[meta_data_length+1];
     memcpy(meta_data, &size, sizeof(seal_size_t));
     memcpy(meta_data + sizeof(seal_size_t), &offset, sizeof(off_t));

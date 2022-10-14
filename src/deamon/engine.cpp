@@ -262,6 +262,7 @@ int Engine::write_file(leveldb::Slice path, const void *buf, seal_size_t size, o
         LOG("error when open file %s", local_file_name.c_str());
         return -EIO;
     }
+    LOG("write file %s, %s, offset %ld, size %d", local_file_name.c_str(), std::string((char *)buf, size).c_str(), offset, size);
     int ret = pwrite(fd, buf, size, offset);
     if (ret < 0) {
         LOG("error when write file %s, errno %s", local_file_name.c_str(), strerror(errno));

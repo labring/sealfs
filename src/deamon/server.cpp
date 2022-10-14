@@ -92,6 +92,10 @@ void Server::operation_filter(int id, OperationType type, int flags, seal_size_t
             break;
         case WRITE_FILE:
             LOG("dealing request: WRITE_FILE");
+            if (total_length < 50)
+            for (int i = 0; i < total_length; i++) {
+                LOG("%d", buffer[i]);
+            }
             size = *(seal_size_t*) (buffer + sizeof(seal_size_t) + path_length + sizeof(seal_size_t));
             offset = *(off_t*) (buffer + sizeof(seal_size_t) + path_length + sizeof(seal_size_t) + sizeof(seal_size_t));
             //data_length = *(seal_size_t*) (buffer + sizeof(seal_size_t) + path_length + sizeof(seal_size_t) + sizeof(seal_size_t) + sizeof(off_t));
