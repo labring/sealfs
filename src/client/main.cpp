@@ -22,6 +22,7 @@
 #include <common/fuse_version.hpp>
 
 #include <client/client.hpp>
+#include <client/cluster_info.hpp>
 #include <common/logging.hpp>
 
 #include <fuse.h>
@@ -154,6 +155,7 @@ int main(int argc, char *argv[])
     lst_oper.mkdir		= lst_mkdir;
 	
 	init_logger("/home/luan/log.txt");
+	init_cluster_info("127.0.0.1", "8888"); //mock
 
 	LOG("Starting client");
 

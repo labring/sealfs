@@ -19,8 +19,11 @@
  */
 
 #include <client/client.hpp>
+#include <client/cluster_info.hpp>
 #include <common/logging.hpp>
 #include <assert.h>
+#include <vector>
+#include <string.h>
 
 /* get global client instance, thread-safe */
 
@@ -28,9 +31,11 @@ std::mutex client_write_lock;
 
 Client* client;
 
-Node::Node(char* host, char* port) {
-	this->host = host;
-	this->port = port;
+Node::Node(const char* host, const char* port) {
+	this->host = (char*)malloc(strlen(host) + 1);
+	strcpy(this->host, host);
+	this->port = (char*)malloc(strlen(port) + 1);
+	strcpy(this->port, port);
 }
 
 Node::~Node() {
@@ -64,10 +69,12 @@ inline void Node::disconnect() {
 Client* get_client() {
 	LOG("get_client");
 	if (!client) {
+		std::vector<std::pair<std::string, std::string>>& servers = get_servers();
+		assert(servers.size() == 1); // mock
 		client_write_lock.lock();
 		if (!client) {
 			client = new Client();
-			client->add_node("127.0.0.1", "8888");
+			client->add_node(servers[0].first.c_str(), servers[0].second.c_str());
 		}
 		client_write_lock.unlock();
 	}
@@ -79,7 +86,7 @@ Client::Client() {}
 
 Client::~Client() {}
 
-inline void Client::add_node(char* host, char* port) {
+inline void Client::add_node(const char* host, const char* port) {
 	Node* node = new Node(host, port);
 	LOG("Adding node %s:%s", host, port);
 	this->server_list.insert(std::pair<int, Node*>(this->server_list.size(), node));  // TODO use distributed hash table
@@ -110,7 +117,6 @@ int Client::add_server(const char* host, const char* port) {
 int Client::map_path(const char* path) {
 	return 0;
 }
-
 
 int Client::create_remote_file(const char *path, mode_t mode) {
 	Connection* conn = get_connection(map_path(path));

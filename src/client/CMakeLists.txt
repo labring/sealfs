@@ -28,6 +28,7 @@ set(PRELOAD_SRC
     connection.cpp
     logging.cpp
     main.cpp
+    cluster_info.cpp
     )
 
 

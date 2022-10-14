@@ -13,7 +13,7 @@ class Node {
 public:
     char* host;
     char* port;
-    Node(char* host, char* port);
+    Node(const char* host, const char* port);
     ~Node();
     inline Connection* get_connection();
     inline void disconnect();
@@ -27,7 +27,7 @@ public:
     Client();
     ~Client();
 
-    void add_node(char* host, char* port);
+    void add_node(const char* host, const char* port);
 
     inline Connection* get_connection(int index);
 
