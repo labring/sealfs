@@ -31,7 +31,7 @@ void Engine::init() {
     /* add root directory */
     leveldb::Status status = file_attr_db->Put(leveldb::WriteOptions(), "/", "d");
     assert(status.ok());
-    status = sub_dir_db->Put(leveldb::WriteOptions(), "/", "");
+    status = sub_dir_db->Put(leveldb::WriteOptions(), "/", add_dir(add_dir("","."), ".."));
     assert(status.ok());
     status = file_db->Put(leveldb::WriteOptions(), "/", "");
     assert(status.ok());
@@ -72,6 +72,8 @@ Engine::~Engine() {
 }
 
 int Engine::create_file(leveldb::Slice path, mode_t mode) {
+
+
     std::string value;
     if (path.data()[path.size()-1] == '/') {
         LOG("create dir %s, not regular file", path.data());
@@ -84,6 +86,32 @@ int Engine::create_file(leveldb::Slice path, mode_t mode) {
     }
     if (!status.IsNotFound()) {
         LOG("error when get file %s", path.data());
+        return -EIO;
+    }
+
+    /* create parent dir info */
+    int parent_path_length = 0;
+    for (int i = path.size() - 1; i >= 0; i--) {
+        if (path.data()[i] == '/') {
+            parent_path_length = i+1;
+            break;
+        }
+    }
+    if (parent_path_length == 0) {
+        LOG("error when get parent dir of %s", path.data());
+        return -EIO;
+    }
+    leveldb::Slice parent_key(path.data(), parent_path_length);
+    status = sub_dir_db->Get(read_options, parent_key, &value);
+    if (!status.ok()) {
+        LOG("error when get parent dir %s", std::string(parent_key.data(), parent_key.size()).c_str());
+        return -ENOENT;
+    }
+    std::string new_dir = std::string(path.data() + parent_path_length, path.size() - parent_path_length);
+    LOG("new_dir %s", new_dir.c_str());
+    status = sub_dir_db->Put(write_options, parent_key, add_dir(value, new_dir));
+    if (!status.ok()) {
+        LOG("error when update parent dir %s", parent_key.data());
         return -EIO;
     }
 
@@ -115,29 +143,6 @@ int Engine::create_file(leveldb::Slice path, mode_t mode) {
     }
     close(fd);
 
-    /* create parent dir info */
-    int parent_path_length = 0;
-    for (int i = path.size() - 1; i >= 0; i--) {
-        if (path.data()[i] == '/') {
-            parent_path_length = i;
-            break;
-        }
-    }
-    if (parent_path_length == 0) {
-        return 0;
-    }
-    leveldb::Slice parent_key(path.data(), parent_path_length);
-    status = sub_dir_db->Get(read_options, parent_key, &value);
-    if (!status.ok()) {
-        LOG("error when get parent dir %s", std::string(parent_key.data(), parent_key.size()).c_str());
-        return -ENOENT;
-    }
-    status = sub_dir_db->Put(write_options, parent_key, add_dir(value, std::string(path.data() + parent_path_length + 1, path.size() - parent_path_length - 1)));
-    if (!status.ok()) {
-        LOG("error when update parent dir %s", parent_key.data());
-        return -EIO;
-    }
-
     return 0;
 }
 
@@ -156,20 +161,18 @@ int Engine::create_dir(leveldb::Slice path, mode_t mode) {
         LOG("error when get dir %s", path.data());
         return -EIO;
     }
-    status = file_attr_db->Put(write_options, path, "d");
-    if (!status.ok()) {
-        LOG("error when create dir %s", path.data());
-        return -EIO;
-    }
+
+    /* create parent dir info */
     int parent_path_length = 0;
-    for (int i = path.size() - 1; i >= 0; i--) {
+    for (int i = path.size() - 2; i >= 0; i--) {
         if (path.data()[i] == '/') {
-            parent_path_length = i;
+            parent_path_length = i+1;
             break;
         }
     }
     if (parent_path_length == 0) {
-        return 0;
+        LOG("error when get parent dir of %s", path.data());
+        return -EIO;
     }
     leveldb::Slice parent_key(path.data(), parent_path_length);
     status = sub_dir_db->Get(read_options, parent_key, &value);
@@ -177,16 +180,26 @@ int Engine::create_dir(leveldb::Slice path, mode_t mode) {
         LOG("error when get parent dir %s", std::string(parent_key.data(), parent_key.size()).c_str());
         return -ENOENT;
     }
-    status = sub_dir_db->Put(write_options, parent_key, add_dir(value, std::string(path.data() + parent_path_length + 1, path.size() - parent_path_length - 1)));
+    std::string new_dirs = add_dir(value, std::string(path.data() + parent_path_length, path.size() - parent_path_length));
+    LOG("new_dirs: %s", new_dirs.c_str());
+    status = sub_dir_db->Put(write_options, parent_key, new_dirs);
     if (!status.ok()) {
         LOG("error when update parent dir %s", std::string(parent_key.data(), parent_key.size()).c_str());
         return -EIO;
     }
-    status = sub_dir_db->Put(write_options, path, "");
+    status = sub_dir_db->Put(write_options, path, add_dir(add_dir("","."), ".."));
     if (!status.ok()) {
         LOG("error when create dir %s", path.data());
         return -EIO;
     }
+
+    /* create dir */
+    status = file_attr_db->Put(write_options, path, "d");
+    if (!status.ok()) {
+        LOG("error when create dir %s", path.data());
+        return -EIO;
+    }
+
     return 0;
 }
 
@@ -254,6 +267,7 @@ int Engine::write_file(leveldb::Slice path, const void *buf, seal_size_t size, o
         LOG("error when write file %s, errno %s", local_file_name.c_str(), strerror(errno));
         return -EIO;
     }
+    close(fd);
     return size;
 }
 
@@ -284,5 +298,6 @@ int Engine::read_file(leveldb::Slice path, void *buf, seal_size_t size, off_t of
         LOG("error when read file %s, error %s", local_file_name.c_str(), strerror(errno));
         return -EIO;
     }
+    close(fd);
     return size;
 }

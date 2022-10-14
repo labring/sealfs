@@ -5,11 +5,7 @@
 #include <leveldb/db.h>
 
 inline std::string add_dir(std::string dirs, std::string dir) {
-    if (dirs.empty()) {
-        return dir;
-    } else {
-        return dirs + ";" + dir;
-    }
+    return dirs + (char)(u_int8_t)dir.size() + dir;
 }
 
 /* grenerate new file name by path */

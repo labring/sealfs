@@ -117,7 +117,7 @@ void Server::operation_filter(int id, OperationType type, int flags, seal_size_t
 
 int Server::response(int id, int status, int flags, seal_size_t total_length, seal_size_t meta_data_length, const void* meta_data, seal_size_t data_length, const void* data) {
     LOG("Sending response");
-    assert(total_length == meta_data_length + data_length);
+    assert(total_length == sizeof(seal_size_t) * 2 + meta_data_length + data_length);
     LOG("id=%d, status=%d, flags=%d, total_length=%d, meta_data_length=%d, data_length=%d", id, status, flags, total_length, meta_data_length, data_length);
     this->send_lock.lock();
     if (!connected) {
@@ -181,7 +181,7 @@ void Server::create_file(int id, leveldb::Slice path, mode_t mode) {
 
     int status = engine->create_file(path, mode);
 
-    response(id, status, 0, 0, 0, NULL, 0, NULL);
+    response(id, status, 0, sizeof(seal_size_t)+sizeof(seal_size_t), 0, NULL, 0, NULL);
 }
 
 void Server::create_dir(int id, leveldb::Slice path, mode_t mode) {
@@ -194,7 +194,7 @@ void Server::create_dir(int id, leveldb::Slice path, mode_t mode) {
 
     int status = engine->create_dir(path, mode);
 
-    response(id, status, 0, 0, 0, NULL, 0, NULL);
+    response(id, status, 0, sizeof(seal_size_t)+sizeof(seal_size_t), 0, NULL, 0, NULL);
 }
 
 void Server::get_file_attr(int id, leveldb::Slice path) {
@@ -208,7 +208,7 @@ void Server::get_file_attr(int id, leveldb::Slice path) {
     
     int status = engine->get_file_attr(path, &attr);
 
-    response(id, status, 0, sizeof(struct stat), sizeof(struct stat), &attr, 0, NULL);
+    response(id, status, 0, sizeof(seal_size_t)+sizeof(seal_size_t)+sizeof(struct stat), sizeof(struct stat), &attr, 0, NULL);
 }
 
 void Server::read_dir(int id, leveldb::Slice path) {
@@ -223,7 +223,7 @@ void Server::read_dir(int id, leveldb::Slice path) {
 
     int status = engine->read_dir(path, buf, &size);
 
-    response(id, status, 0, size, size, buf, 0, NULL);
+    response(id, status, 0, sizeof(seal_size_t)+sizeof(seal_size_t)+size, 0, NULL, size, buf);
 }
 
 void Server::write_file(int id, leveldb::Slice path, const void* data, seal_size_t size, off_t offset) {
@@ -237,7 +237,7 @@ void Server::write_file(int id, leveldb::Slice path, const void* data, seal_size
 
     int status = engine->write_file(path, data, size, offset);
 
-    response(id, status, 0, 0, 0, NULL, 0, NULL);
+    response(id, status, 0, sizeof(seal_size_t)+sizeof(seal_size_t), 0, NULL, 0, NULL);
 }
 
 void Server::read_file(int id, leveldb::Slice path, seal_size_t size, off_t offset) {
@@ -253,5 +253,5 @@ void Server::read_file(int id, leveldb::Slice path, seal_size_t size, off_t offs
 
     int status = engine->read_file(path, buf, size, offset);
 
-    response(id, status, 0, size, size, buf, 0, NULL);
+    response(id, status, 0, sizeof(seal_size_t)+sizeof(seal_size_t)+size, size, buf, 0, NULL);
 }

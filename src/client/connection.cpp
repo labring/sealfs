@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <assert.h>
+#include <limits.h>
 
 Connection::Connection(const char* host, const char* port) {
     this->host = strdup(host);
@@ -152,21 +153,20 @@ void Connection::recv_response() {
 
         /* read meta data */
         LOG("Reading meta data");
-        seal_size_t meta_data_length;
-        if (recv(this->sock, &meta_data_length, sizeof(seal_size_t), MSG_WAITALL) != sizeof(seal_size_t)) {
+        if (recv(this->sock, &this->callbacks[id].meta_data_length, sizeof(seal_size_t), MSG_WAITALL) != sizeof(seal_size_t)) {
             LOG("Error reading meta data length %d", errno);
             this->disconnect();
             return;
         }
         
-        if (meta_data_length < 0) {
-            LOG("Invalid meta data length %d", meta_data_length);
+        if (this->callbacks[id].meta_data_length < 0) {
+            LOG("Invalid meta data length %d", this->callbacks[id].meta_data_length);
             this->disconnect();
             return;
         }
 
-        if (meta_data_length > 0) {
-            if (recv(this->sock, this->callbacks[id].meta_data, meta_data_length, MSG_WAITALL) != meta_data_length) {
+        if (this->callbacks[id].meta_data_length > 0) {
+            if (recv(this->sock, this->callbacks[id].meta_data, this->callbacks[id].meta_data_length, MSG_WAITALL) != this->callbacks[id].meta_data_length) {
                 LOG("Error reading meta data %d", errno);
                 this->disconnect();
                 return;
@@ -175,22 +175,21 @@ void Connection::recv_response() {
 
         /* read data */
         LOG("Reading data");
-        seal_size_t data_length;
-        if (recv(this->sock, &data_length, sizeof(seal_size_t), MSG_WAITALL) != sizeof(seal_size_t)) {
-            LOG("Error reading data length");
+        if (recv(this->sock, &this->callbacks[id].data_length, sizeof(seal_size_t), MSG_WAITALL) != sizeof(seal_size_t)) {
+            LOG("Error reading data length %d", errno);
             this->disconnect();
             return;
         }
 
-        if (data_length < 0) {
-            LOG("Invalid data length %d", data_length);
+        if (this->callbacks[id].data_length < 0) {
+            LOG("Invalid data length %d", this->callbacks[id].data_length);
             this->disconnect();
             return;
         }
 
-        if (data_length > 0) {
-            if (recv(this->sock, this->callbacks[id].data, data_length, MSG_WAITALL) != data_length) {
-                LOG("Error reading data");
+        if (this->callbacks[id].data_length > 0) {
+            if (recv(this->sock, this->callbacks[id].data, this->callbacks[id].data_length, MSG_WAITALL) != this->callbacks[id].data_length) {
+                LOG("Error reading data %d", errno);
                 this->disconnect();
                 return;
             }
@@ -387,20 +386,17 @@ int Connection::read_remote_dir(const char *path, void *buf, fuse_fill_dir_t fil
     /* read dir from data in callback. Every object include name length and directory name. Stop while name length is zero*/
     LOG("reading dir");
     char *data = (char *)this->callbacks[id].data;
-    for (int i = 0; i < MAX_DIR_LIST_BUFFER_SIZE;) {
-        if (data[i] == 0) {
-            break;
-        }
-        char name[MAX_BUFFER_SIZE];
-        int start_index = i;
-        for (i = start_index; i < MAX_DIR_LIST_BUFFER_SIZE; i++) {
-            if (data[i] == ';') {
-                break;
-            }
-        }
-        memcpy(name, (char*)this->callbacks[id].data + i, i - start_index);
-        name[i - start_index] = '\0';
+    seal_size_t curr_index = 0;
+    while (curr_index < this->callbacks[id].data_length) {
+        u_int8_t name_length = *(u_int8_t *)(data + curr_index);
+        curr_index += sizeof(u_int8_t);
+        assert(name_length > 0);
+        char name[NAME_MAX+1];
+        memcpy(name, data + curr_index, name_length);
+        name[name_length] = '\0';
+        LOG("name: %s", name);
         filler(buf, name, NULL, 0, FUSE_FILL_DIR_PLUS);
+        curr_index += name_length;
     }
     LOG("done reading dir");
     free(this->callbacks[id].data);
