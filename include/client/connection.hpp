@@ -56,21 +56,4 @@ private:
     std::thread* recv_thread;
 };
 
-
-// void init_logger(const char* log_file_name);
-
-// int create_remote_file(const char *path, mode_t mode);
-
-// int create_remote_dir(const char *path, mode_t mode);
-
-// int get_remote_file_attr(const char *path, struct stat *stbuf);
-
-// int read_remote_dir(const char *path, void *buf, fuse_fill_dir_t filler);
-
-// int open_remote_file(const char *path, struct fuse_file_info *fi);
-
-// int read_remote_file(const char *path, char *buf, size_t size, off_t offset);
-
-// int write_remote_file(const char *path, const char *buf, size_t size, off_t offset);
-
 #endif // CONNECT_HPP
