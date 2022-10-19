@@ -1,0 +1,25 @@
+[package]
+name = "sealfs-rust"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.21.2", features = ["full"] }
+client = {path = "client"}
+server = {path = "server"}
+
+[[bin]]
+name = "client"
+path = "src/bin/client.rs"
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[workspace]
+members = [
+    "server",
+    "client",
+]
