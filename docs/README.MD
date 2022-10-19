@@ -1,176 +1,177 @@
-# sealfs设计文档
+# Sealfs Design Document
 
-## 用户接口与系统调用流程
+## User Interface And System Call Process
 
-### 对象存储、文件存储、块存储接口
-目前对于存储服务所提供的接口主要有三种，对象存储、文件存储和块存储。  
-日常使用遇到的大多数是文件存储，应用程序大多也是以文件为单位进行文件操作，请求交给文件系统。而块存储则位于文件系统之下，与存储设备直接对接，其访问目标是存储设备的一段区间，文件存储的请求在处理之后被转换为块存储。
-二者在posix都提供了完整的接口标准。在linux中系统中，这两种类型的存储也被纳入了内核中，由内核来处理程序的系统调用。  
-对象存储则是一类第三方的存储接口，提供单个文件的读写，典型的标准有aws-s3等。这类接口与linux系统无关，访问则需要单独的客户端。
+### Object Storage, File Storage, Block Storage Interface
+At present, there are three kinds of interfaces provided for storage services: object storage, file storage and block storage.
+In daily use, most of them are file storage, and most of the applications operate on the basis of files, and the requests are handed over to the file system. Block storage is located under the file system and directly connected with the storage device. Its access target is a section of the storage device. The file storage request is converted to block storage after processing.
+Both of them provide complete interface standards in posix. In the Linux system, these two types of storage are also included in the kernel, which handles system calls of programs.
+Object storage is a third-party storage interface that provides reading and writing of a single file. Typical standards include aws-s3. This type of interface is independent of the Linux system, and access requires a separate client.
 
-- 本地文件（块）存储调用流程
-本地文件存储的一次调用流程包括：
-1. 用户态请求
+- Local file (block) storage call process
+One call process of local file storage includes:
+1. User status request
 2. VFS
-3. 内核文件系统
-4. 块设备驱动
+3. Kernel file system
+4. Block device drive
 
-如果请求是块设备请求，则直接交给内核的块设备驱动（中间省略了两步，不影响）。可以看出无论哪种请求，都只进行一次内核用户态切换。
+If the request is a block device request, it is directly delivered to the kernel's block device driver (two steps are omitted in the middle, which does not affect). It can be seen that no matter what kind of request, there is only one kernel user mode switch.
 
 ![alt fs](https://pic1.zhimg.com/v2-c0ee0e4d7fc8b78c149c7fd8cb38f93a_1440w.jpg)
 
 
-### 网络文件（块）存储调用流程
+### Network File (Block) Storage Call Process
 
-#### fuse
-网络文件存储有许多不同的实现方式，最容易实现且易于使用的fuse。
+#### Fuse
+There are many different ways to implement network file storage, and fuse is the easiest to implement and use.
 
 
 ![alt fuse](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9tbWJpei5xcGljLmNuL21tYml6X3BuZy9kNGhvWUpseE9qTnNvaWNRQkUwM01aRDBrWjNmY3VpYWVRZzJmV1RlNFlWV3RUYko5aWN1cG1iZ1IwZGd1RUlrTTloTzZzaWJQdU80VTlFNzlpYWczWWljdlE4US82NDA?x-oss-process=image/format,png)
 
-在fuse中，通过网络进行文件存储的一次调用流程包括：
-1. 用户态请求
-2. VFS(切换)
-1. FUSE内核模块
-3. 用户态client(切换)
-4. 用户态server
-5. vfs(切换)
-3. 内核文件系统
-5. 块设备驱动
+In fuse, a call process for file storage through the network includes:
+1. User status request
+2. VFS (switching)
+3. FUSE kernel module
+4. User mode client (switching)
+5. User mode server
+6. vfs (switching)
+7. Kernel file system
+8. Block device drive
 
-过程中总共涉及3次用户内核态切换，调用返回后则为6次，成本大大增加。
+The process involves three user kernel state switches in total, and six after the call returns, which greatly increases the cost.
 
-#### 内核文件系统
-为了减少调用次数，另一种实现方案则是直接在内核态实现文件系统，网络请求则在内核态实现。
-1. 用户态请求
-2. VFS(切换)
-1. 内核态client
-4. 用户态server
-5. vfs(切换)
-3. 内核文件系统
-5. 块设备驱动
+#### Kernel File System
+In order to reduce the number of calls, another implementation scheme is to directly implement the file system in the kernel state, and network requests are implemented in the kernel state.
+1. User status request
+2. VFS (switching)
+3. Kernel client
+4. User mode server
+5. vfs (switching)
+6. Kernel file system
+7. Block device drive
 
-这种方案可以将切换次数减少至2次，但缺点也显而易见：
-1. 内核编程的调试复杂
-1. 需要为客户端安装额外内核模块
+This scheme can reduce the number of handovers to 2, but its disadvantages are also obvious:
+1. The debugging of kernel programming is complex
+2. You need to install additional kernel modules for the client
 
-#### 系统调用劫持
-此外还有一种方案。在上一节的图中，可以看到，用户请求并不是直接交给linux内核的，而是经过了glibc(或其他libc库)来提交系统调用，这意味着可以在libc层替换系统调用的地址，实现系统调用劫持。  
-1. 用户态请求
-1. 系统调用劫持client
-4. 用户态server
-5. vfs(切换)
-3. 内核文件系统
-5. 块设备驱动
-这种情况下，用户内核态切换次数仅为一次，网络交互也完全实现在用户态，无论是切换的代价还是编程成本都可以降到最低。
+#### System Call Hijacking
+There is another option. In the figure in the previous section, we can see that user requests are not directly handed over to the Linux kernel, but are submitted through glibc (or other libc libraries). This means that the address of system calls can be replaced at the libc layer to achieve system call hijacking.
+1. User status request
+2. System call hijacking client
+3. User mode server
+4. vfs (switching)
+5. Kernel file system
+6. Block device drive
+In this case, the number of user kernel mode switches is only once, and the network interaction is completely implemented in the user mode, both the switching cost and the programming cost can be minimized.
 
-遗憾的是，并不是所有的应用程序都是通过libc进行系统调用的，例如golang的二进制程序，其不使用任何动态链接。
+Unfortunately, not all applications make system calls through libc, such as the binary program of golang, which does not use any dynamic links.
 
-### 对象存储调用流程
-由于对象存储无关系统调用，而是由第三方定义标准，所以无关任何用户内核态切换，没有这一层面上的限制。  
-这也是为什么开源的对象存储产品如此之多，且性能良好的部分原因了。
+### Object Storage Call Process
+Since object storage is independent of system calls, but is defined by a third party, it is independent of any user kernel state switching, and there is no restriction on this level.
+This is partly why there are so many open source object storage products with high performance.
 
-#### 结论
+#### Conclusion
 
-fuse作为实现成本最低的一种方式，是实现sealfs的最好选择，但需要注意fuse存在的一些问题，主要需要解决：
-- 双缓存
-- inode转换
-- 其他fuse下冗余的机制
+As a way of achieving the lowest cost, fuse is the best choice to implement sealfs. However, you should pay attention to some problems existing in fuse, which mainly need to solve:
+- Double cache
 
-开发内核文件系统不是个好的选择，用户应用所在的节点安装内核补丁可能存在风险与限制。
+- Inode conversion
 
-系统调用劫持的实现难度不高，性能更好，可以作为特殊需求场景的可选支持项。
+- Redundancy mechanism under other fuse
 
-## 网络架构
+It is not a good choice to develop the kernel file system. There may be risks and limitations in installing the kernel patch on the node where the user applies.
+
+The system call hijacking is not difficult to implement and has better performance. It can be used as an optional support item for special demand scenarios.
+
+## Network Architecture
 
 ![image](https://user-images.githubusercontent.com/14962503/189853670-d10c29e8-34d7-468e-baa6-36c8fa65a3c9.png)
 
-#### 客户端
-使用libfuse构建客户端，用于挂载一个目录，并处理所有该目录下的请求。
-一个文件请求会被客户端使用在线算法映射到一个服务器，通过socket链接进行传输。
+#### Client
+Use libfuse to build the client, which is used to mount a directory and process all requests under the directory.
+A file request will be mapped to a server by the client using an online algorithm and transmitted through the socket link.
 
-#### 服务器
-一个服务器用于组织一部分文件内容，接收任意位置的客户端对于位于该目标服务器的所有文件请求。一个节点上可以存在多个服务器，所有服务器间组织管理的文件内容不存在重合。
+#### Sever
+A server is used to organize some file contents and receive all file requests from clients at any location for the target server. There can be multiple servers on a node, and the file contents managed by all server organizations do not overlap.
 
-#### 数据流连接
+#### Data Flow Connection
 
-一个数据流连接用于保持活跃的服务器连接。一个客户端与一个服务器间仅存在一个（或可配置的有限多个）数据流连接，用于处理客户端所有位于该服务节点的文件请求。  
-可能的实现方式是直接使用RPC框架，或基于socket或其他网络协议，亦或是各类RDMA。目前直接使用socket实现，有些复杂，具体流程在请求流程中描述并实现。
+A data flow connection is used to maintain an active server connection. There is only one (or a limited number of configurable) data flow connection between a client and a server, which is used to process all file requests of the client at the service node.
+The possible implementation method is to directly use RPC framework, or based on socket or other network protocols, or various RDMA. At present, it is implemented directly using socket, which is somewhat complex. The specific process is described and implemented in the request process.
 
-#### 请求流程
+#### Request Process
 
-1. client接收请求，创建处理线程。创建处理线程的工作是由libfuse实现的，sealfs实现的函数可以认为已经是独立线程。
-2. 计算文件所在的服务器，内容在元数据管理中，本节不细述。
-3. 向server发送文件请求，hold线程。发送请求的过程要考虑多个请求并行处理的情况。为每个请求建立一个socket是最简单的实现，但创建连接的延迟过高，网络连接数也可能会过多。保持多个长连接保证了创建连接的延迟问题，但在大并发的情况下，依旧无法解决网络连接数量过多，同时代码的实现也稍显复杂。所以采用了一个长连接共享多个文件请求的方式。一个线程发送请求需要包含该请求的id与数据长度，同时需要实现一个额外的线程安全的队列用于保存发送请求后的线程的锁。
-4. server处理文件请求，并将请求结果返回给client。处理过程中始终保持了请求的id。
-5. client接收数据，激活请求线程并处理返回值。一个（或有限多个）独立的线程用于接收请求结果，其中包含了请求的id，需要在队列中查询请求id所对应的线程锁，写入结果并释放该线程锁，激活原请求线程并将结果返回给应用。
+1. The client receives the request and creates a processing thread. The work of creating processing threads is implemented by libfuse, and the functions implemented by sealfs can be considered as independent threads.
+2. The server where the calculation file is located, and the content is in metadata management, which is not detailed in this section.
+3. Send a file request to the server and hold the thread. The process of sending requests should consider the parallel processing of multiple requests. Setting up a socket for each request is the simplest implementation, but the connection creation delay is too high, and the number of network connections may be too large. Maintaining multiple long connections ensures the delay of connection creation. However, in the case of large concurrency, it is still unable to solve the problem of excessive network connections. At the same time, the code implementation is slightly complicated. Therefore, a long connection is used to share multiple file requests. When a thread sends a request, it needs to include the request ID and data length. At the same time, it needs to implement an additional thread safe queue to store the lock of the thread after sending the request.
+4. The server processes the file request and returns the request result to the client. The requested id is always maintained during processing.
+5. The client receives data, activates the request thread, and processes the return value. One (or a limited number of) independent threads are used to receive the request result, which contains the request ID, so it is necessary to query the thread lock corresponding to the request ID in the queue, write the result and release the thread lock, activate the original request thread and return the result to the application.
 
-上述流程可以横向扩展，一个client可以存在多个长连接，用于解决一个线程处理socket请求带来的cpu瓶颈。
+The above process can be expanded horizontally. A client can have multiple long connections to solve the CPU bottleneck caused by a thread processing socket requests.
 
-#### 内存拷贝
+#### Memory Copy
 
-采用了多个请求共享同一线程的方式，socket发送请求时，由于数据不定长，需要提前发送一个长度变量，才能避免粘包。这里有两种不同的方案:  
-一种是使用多个socket实现连接池，每次发送一个请求使用一个socket，该方案不存在数据包连续性的问题，可以多次发送。  
-另一种是用同一个socket，但是要保证数据连续性，需要进行字符串拼接，涉及内存拷贝，开销会变大，那为了避免这个问题，每次发送数据需要给线程加锁，这个是第一个阶段的实现方案。
+The method that multiple requests share the same thread is adopted. When the socket sends a request, it needs to send a length variable in advance to avoid packet sticking due to the variable length of the data. There are two different solutions:
+One is to use multiple sockets to realize the connection pool. One socket is used to send one request each time. This scheme does not have the problem of packet continuity and can be sent multiple times.
+The other is to use the same socket, but to ensure data continuity, string splicing is required. When memory copying is involved, the overhead will increase. To avoid this problem, threads need to be locked each time data is sent. This is the implementation scheme of the first phase.
 
-## 元数据管理
+## Metadata Management
 
-- 无分布式元数据
+- No distributed metadata
+>In the big data environment, the volume of metadata is also very large, and the access performance of metadata is the key to the performance of the entire distributed file system. Common metadata management can be divided into centralized and distributed metadata management architectures. The centralized metadata management architecture uses a single metadata server, which is simple to implement, but has a single point of failure and other problems. The distributed metadata management architecture disperses metadata on multiple nodes, thus solving the performance bottleneck of the metadata server and improving the scalability of the metadata management architecture, but the implementation is more complex and introduces the problem of metadata consistency. In addition, there is a distributed architecture without metadata server, which organizes data through online algorithms, and does not require a dedicated metadata server. However, it is difficult to guarantee the data consistency of this architecture. The implementation is more complex. The file directory traversal operation is inefficient and lacks the global monitoring and management function of the file system.
 
->在大数据环境下，元数据的体量也非常大，元数据的存取性能是整个分布式文件系统性能的关键。常见的元数据管理可以分为集中式和分布式元数据管理架构。集中式元数据管理架构采用单一的元数据服务器，实现简单．但是存在单点故障等问题。分布式元数据管理架构则将元数据分散在多个结点上．进而解决了元数据服务器的性能瓶颈等问题．并提高了元数据管理架构的可扩展性，但实现较为复杂，并引入了元数据一致性的问题。另外，还有一种无元数据服务器的分布式架构，通过在线算法组织数据，不需要专用的元数据服务器。但是该架构对数据一致性的保障很困难．实现较为复杂。文件目录遍历操作效率低下，并且缺乏文件系统全局监控管理功能。
+In order to efficiently adopt the metadata free distributed architecture, a simple implementation is to use the file name to hash, obtain the corresponding server ID, and put all the data and metadata related to the file on the server. Its scalability is also good. On the one hand, it can realize node expansion and contraction based on consistent hash, and on the other hand, it can also realize file segmentation based on offset to balance storage space. Refer to gekkofs for this method.
 
-为了效率采用无元数据的分布式架构，一种简单的实现是使用文件名进行hash，获取对应的服务器id，将所有该文件相关的数据与元数据全部放在该服务器上。其可扩展性也较好，一方面可以实现基于一致性hash的节点扩缩容，另一方面也可以实现基于offset的文件分段，平衡存储空间。这个方法参考GFS、gekkofs。
+There are two problems. One is the traversal of the file directory. Because the metadata is scattered, it requires multiple requests from each server to obtain the metadata directory information. Second, the capacity of directory storage space is difficult to monitor. The possible solution is to delay updating the metadata of all parent directories, but there may be many complex problems in the actual situation, such as the request to delete a directory still needs to traverse all data. These problems cannot be solved by GlusterFS and other storage solutions. It will be very interesting to solve these problems and make sealfs unique.
 
-存在的问题在于两点，一是文件目录的遍历问题，由于元数据分散，需要多次请求各个服务器来获取元数据目录信息。二是目录存储空间的容量难以监控。可能的解决方案是延迟更新所有父目录的元数据，但实际情况可能还有许多复杂问题，例如删除某目录的请求仍需要遍历所有数据。这些问题是GFS等存储方案还未能解决的，解决这些问题会十分有趣，也会使sealfs变得独特。
+- Local metadata management
 
-- 本地元数据管理  
-每个节点由一个leveldb本地数据库负责存储元数据，以kv的形式保存可以被哈希到该节点的文件名:文件元数据。请求到达时先向数据库查询元数据，再存取对应位置的文件内容。
+A leveldb local database is responsible for storing metadata of each node, and saving the file name that can be hashed to the node: file metadata in the form of kv. When a request arrives, it first queries the database for metadata, and then accesses the file content at the corresponding location.
 
-- 集群元数据管理  
-对于整个集群来说，除了文件元数据，还需要存储服务器信息，保存有几个节点。由于更新和读取的频率不高（仅在扩缩容时会变更），直接使用raft维护即可。
+- Cluster metadata management
 
-## 一些其他的扩展
+For the entire cluster, in addition to file metadata, server information needs to be stored, with several nodes. Because the update and read frequency is not high (it will change only when the capacity is expanded or shrunk), you can use the lift maintenance directly.
 
-- 数据可靠性与高可用  
-一个文件被hash到一个节点上，那么多hash几次就可以分布到多个节点上实现replica。
+## Some Other Extensions
 
-- 数据扩缩容  
-基于一致性hash实现扩缩容，具体细节暂时先不讲。需要明确的是添加或删除节点后集群会进行rebalance，这是一致性hash本身需要做的，无需额外设计。rebalance期间会导致集群性能下降，且可能耗费较长时间，但对于可以持续提供服务。在rebalance期间需要做的工作如下：
+- Data reliability and high availability
+If a file is hashed to a node, multiple hashes can be distributed to multiple nodes to achieve replica.
 
-| 开始扩容 | 迁移数据 | 扩容完成 |
+-Data expansion
+Capacity expansion and reduction are implemented based on consistency hash. The details will not be discussed for the time being. It needs to be clear that after adding or deleting nodes, the cluster will be rebalanced. This is what consistency hash itself needs to do without additional design. Rebalance will cause the cluster performance to decline and may take a long time, but it can provide services continuously. The work to be done during rebalance is as follows:
+
+| Start capacity expansion | Migrate data | Complete capacity expansion |
 | ---- | ---- | ---- |
-| 更新集群元数据 | client进行二次请求，确认迁移后数据和迁移前数据一致性，并将数据写于新节点;同时迁移任务进行数据迁移和同步 | 确认集群元数据 |
+|Updating cluster metadata | The client makes a second request to confirm the consistency of the data after migration and the data before migration, and writes the data to the new node; Simultaneous migration task for data migration and synchronization | Confirm cluster metadata|
 
-- 租户管理  
-对于不同的client申请挂载的磁盘，进行容量限制隔离
+-Tenant Management
+For the disks that different clients apply to mount, perform capacity limitation isolation
 
-- 内存缓存  
-在server端实现文件的内存缓存，避免存储瓶颈。但同时要求不能有集群级别的断电。可选实现。
+-Memory cache
+The memory cache of files is implemented on the server side to avoid storage bottlenecks. At the same time, there must be no cluster level power failure. Optional implementation.
 
-## 实现计划
 
-- 功能实现12.30：
-  - 核心9.30：
-    - [ ] socket网络通信
-    - [ ] fuse文件系统接口
-    - [ ] 多节点集群元数据管理
+## Implementation Plan
 
-  - 性能优化：
-    - [ ] 系统调用劫持
-    - [ ] 协程
+- Function realization 12.30:
+  - Core 9.30:
+    - [ ] Socket network communication
+    - [ ] fuse file system interface
+    - [ ] Multi node cluster metadata management
+  - Performance optimization:
+    - [ ] System call hijacking
+    - [ ] Coordinated schedule
     - [ ] RDMA
-    - [ ] 内存缓存
-  
-  - 测试
+    - [ ] Memory cache 
+  - Testing
     - [ ] IO500
-    - [ ] 对比测试
+    - [ ] Comparison test
 
-- 通用文件系统，预计2023.6.30：
-  - 其他功能
-    - [ ] 文件分段
-    - [ ] 扩缩容
-    - [ ] 租户容量管理
-    - [ ] 数据冗余
-
-- IO500比赛，预计23年5月
-
+- Common file system, estimated to be 2023.6.30:
+  - Other functions
+    - [ ] Document segmentation
+    - [ ] Expansion capacity
+    - [ ] Tenant capacity management
+    - [ ] Data redundancy
+    
+- IO500 competition, expected on May 2023

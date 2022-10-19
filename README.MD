@@ -1,44 +1,54 @@
 # SEALFS
+[English](https://github.com/labring/sealfs/blob/dev/README.MD)|[简体中文](https://github.com/labring/sealfs/blob/dev/README-ZH.MD)
 
-丝滑，高性能的分布式文件存储
+Silky, high-performance distributed file system.
 
 
-## 为什么要为云原生构建新的分布式文件存储
+## Why Build A New Distributed File System For Cloud Native
 
-#### 使用本地存储
+#### Use Local Storage
 
-- 单点故障  
-云原生应用使用本地持久化存储带来的最大问题是单点故障，由于数据位于某个特定的节点，节点宕机会导致数据不可用，受绑定的应用无法重启，也难以迁移到其他节点。此外单节点磁盘故障甚至会出现数据丢失的问题。  
-目前对于一些数据可靠性要求高的应用，都在应用层实现了分布式架构，本质上是将复杂性交给了应用，对于复杂的应用而言，成本过高。  
-- 存储规划与扩容  
-应用本地存储意味着需要对每个节点进行容量规划，在节点故障时还需要对原本的分布式架构进行额外的迁移配置，带来了巨大的工作量和出错概率。  
-另一方面，原本的容量不足时，进行节点扩容也是本地存储无法解决的难题。
-- 性能效率低下
-由于磁盘设备IO，本地存储的性能是存在瓶颈的，多应用共享磁盘时尤其明显。
+- Single point of failure
+  The biggest problem of cloud native applications using local persistent storage is a single point of failure. Because the data is located at a specific node, the node downtime causes data unavailable, and the bound applications cannot be restarted, and it is difficult to migrate to other nodes. In addition, single node disk failure may even cause data loss.
+  At present, for some applications requiring high data reliability, the distributed architecture is implemented in the application layer, essentially giving the complexity to the application. For complex applications, the cost is too high.
 
-#### 使用现有分布式存储
+- Storage planning and capacity expansion
+  Applying local storage means that capacity planning is required for each node, and additional migration configuration is required for the original distributed architecture in case of node failure, which brings huge workload and error probability.
+  On the other hand, when the original capacity is insufficient, node expansion is also a problem that local storage cannot solve.
 
-- 性能
-尽管理论上分布式存储的数据性能随着节点增多可以不受限制，但实际上还是受到几方面的影响。一是集群一致性带来的瓶颈，使用raft等协议的分布式方案存在的问题；二是数据调用流程延长带来的内存拷贝成本，采用fuse的众多文件系统带来的问题；三是元数据请求的瓶颈，典型的是GFS，大规模集群下目录遍历的成本非常高。
+- Inefficient performance
+  Due to disk device IO, there is a bottleneck in the performance of local storage, especially when multiple applications share disks.
 
-- 配置
-配置复杂，特别的节点扩容，许多限制要求十分苛刻。典型为GFS扩容极其复杂。cephfs的稳定性较差。
+#### Use Existing Distributed Storage
 
-- 价格
-高性能的商业分布式存储价格昂贵，开源产品又大多无法相提并论。
+- Performance
+  Although theoretically, the data performance of distributed storage can be unlimited with the increase of nodes, it is actually affected in several aspects. First, the bottleneck brought by cluster consistency, and the problems of distributed solutions using raft and other protocols; The second is the memory copy cost caused by the extension of the data call process, and the problems caused by many file systems using fuse; The third is the bottleneck of metadata request, typically GFS. The cost of directory traversal under large-scale clusters is very high.
 
-## 适用场景
+- Configuration
+  The configuration is complex, especially for node expansion, and many restrictions are very demanding. Typically, GFS capacity expansion is extremely complex. Cephfs has poor stability.
 
-性能极致方案×可靠数据体验
+- Price
+  High performance commercial distributed storage is expensive, and most open source products cannot be compared.
 
-- 高性能的网络数据访问
-  - 无分布式元数据的方案
+## Application Scenes
+
+Extreme performance scheme × Reliable data experience
+
+- High performance network data access
+  - Scheme without distributed metadata
   - intercept
-  - 完整posix请求（link、rename、delete的高效实现）
-- 丝滑
-  - 数据可靠性
-  - 数据服务高可用性
-  - 存储节点可扩展
+  - Complete posix request (efficient implementation of link, rename and delete)
+
+- Highly reliable data management
+  - Data high reliability
+  - Data service high availability
+  - Storage Node Scalable
+
+- Convenient auto scaling
+
+## Design Document
+[design document](https://github.com/labring/sealfs/blob/dev/docs/README.MD)
+
 
 ## Install
 
@@ -49,7 +59,7 @@
   make
 ```
 
-## Quick start
+## Quick Start
 
 start deamon
 ```
