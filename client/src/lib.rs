@@ -1,5 +1,4 @@
-use tokio::{net::TcpStream, io::AsyncWriteExt};
-
+use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 pub async fn connect(addr: &str) -> Result<TcpStream, Box<dyn std::error::Error>> {
     let stream = TcpStream::connect(addr).await?;

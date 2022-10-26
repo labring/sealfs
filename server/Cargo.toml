@@ -8,3 +8,8 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.21.2", features = ["full"] }
 libc = "0.2"
+anyhow = "1.0.66"
+thiserror = "1.0.37"
+log = "0.4.17"
+
+common = { path = "../common" }

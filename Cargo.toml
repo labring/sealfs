@@ -7,6 +7,13 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.21.2", features = ["full"] }
+lazy_static = "1.4.0"
+anyhow = "1.0.66"
+thiserror = "1.0.37"
+log = "0.4.17"
+clap = { version = "4.0.18", features = ["derive"] }
+env_logger = "0.9.1"
+
 client = {path = "client"}
 server = {path = "server"}
 
@@ -22,4 +29,5 @@ path = "src/bin/server.rs"
 members = [
     "server",
     "client",
+    "common",
 ]
