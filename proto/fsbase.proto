@@ -1,0 +1,107 @@
+syntax = "proto3";
+package fsbase;
+
+// file system service
+service RemoteFs {
+    rpc CreateFile(CreateFileRequest) returns (CreateFileResponse) {}
+    rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse) {}
+    rpc GetFileAttributes(GetFileAttributesRequest) returns (GetFileAttributesResponse) {}
+    rpc ReadDirectory(ReadDirectoryRequest) returns (ReadDirectoryResponse) {}
+    rpc OpenFile(OpenFileRequest) returns (OpenFileResponse) {}
+    rpc ReadFile(ReadFileRequest) returns (ReadFileResponse) {}
+    rpc WriteFile(WriteFileRequest) returns (WriteFileResponse) {}
+    rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse) {}
+    rpc DeleteDirectory(DeleteDirectoryRequest) returns (DeleteDirectoryResponse) {}
+}
+
+
+// file system service request
+message CreateFileRequest {
+    string path = 1;
+    uint32 mode = 2;
+}
+
+message CreateDirectoryRequest {
+    string path = 1;
+    uint32 mode = 2;
+}
+
+message GetFileAttributesRequest {
+    string path = 1;
+}
+
+message ReadDirectoryRequest {
+    string path = 1;
+    // offset of the directory entry
+}
+
+message OpenFileRequest {
+    string path = 1;
+    uint32 mode = 2;
+}
+
+message ReadFileRequest {
+    string path = 1;
+    uint64 size = 2;
+    uint64 offset = 3;
+}
+
+message WriteFileRequest {
+    string path = 1;
+    uint64 size = 2;
+    uint64 offset = 3;
+    bytes data = 4;
+}
+
+message DeleteFileRequest {
+    string path = 1;
+}
+
+message DeleteDirectoryRequest {
+    string path = 1;
+}
+
+
+// file system service response
+message CreateFileResponse {
+    uint32 status = 1;
+}
+
+message CreateDirectoryResponse {
+    uint32 status = 1;
+}
+
+message GetFileAttributesResponse {
+    uint32 status = 1;
+    uint32 mode = 2;
+    uint64 size = 3;
+}
+
+message ReadDirectoryResponse {
+    uint32 status = 1;
+    bytes entries = 2;
+}
+
+message OpenFileResponse {
+    uint32 status = 1;
+}
+
+message ReadFileResponse {
+    uint32 status = 1;
+    uint64 size = 2;
+    bytes data = 3;
+}
+
+message WriteFileResponse {
+    uint32 status = 1;
+    uint64 size = 2;
+}
+
+message DeleteFileResponse {
+    uint32 status = 1;
+}
+
+message DeleteDirectoryResponse {
+    uint32 status = 1;
+}
+

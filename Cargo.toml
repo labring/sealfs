@@ -13,9 +13,14 @@ thiserror = "1.0.37"
 log = "0.4.17"
 clap = { version = "4.0.18", features = ["derive"] }
 env_logger = "0.9.1"
+tonic = "0.8.2"
+prost = "0.11.0"
 
 client = {path = "client"}
 server = {path = "server"}
+
+[build-dependencies]
+tonic-build = "0.8"
 
 [[bin]]
 name = "client"
