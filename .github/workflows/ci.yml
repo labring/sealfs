@@ -1,0 +1,78 @@
+name: Continuous integration
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.62.0
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.6
+        with:
+          profile: minimal
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+      - run: sudo apt-get install protobuf-compiler
+      - run: cargo build --verbose --release
+
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.6
+        with:
+          profile: minimal
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+      - run: sudo apt-get install protobuf-compiler
+      - run: cargo check
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.6
+        with:
+          profile: minimal
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+      - run: sudo apt-get install protobuf-compiler
+      - run: cargo test --all
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.6
+        with:
+          profile: minimal
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1.0.6
+        with:
+          profile: minimal
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          override: true
+      - run: sudo apt-get install protobuf-compiler
+      - run: rustup component add clippy
+      - run: cargo clippy -- -D warnings
