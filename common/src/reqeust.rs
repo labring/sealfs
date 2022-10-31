@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 // request
 // | id | type | flags | total_length | filename_length | filename | meta_data_length | meta_data | data_length | data |
 // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 4Byte | 0~ | 4Byte | 0~ |

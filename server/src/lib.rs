@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use common::{
     byte::array2u32,
     reqeust::{OperationType, RequestHeader, REQUEST_HEADER_SIZE},

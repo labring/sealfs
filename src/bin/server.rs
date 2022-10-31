@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use clap::Parser;
 use log::info;
 use sealfs_rust::service::{self, FsService};

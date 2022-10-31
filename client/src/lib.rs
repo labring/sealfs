@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use tokio::{io::AsyncWriteExt, net::TcpStream};
 
 pub async fn connect(addr: &str) -> Result<TcpStream, Box<dyn std::error::Error>> {
