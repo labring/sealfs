@@ -17,9 +17,12 @@ clap = { version = "4.0.18", features = ["derive"] }
 env_logger = "0.9.1"
 tonic = "0.8.2"
 prost = "0.11.0"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9.14"
 
 client = {path = "client"}
 server = {path = "server"}
+manager = {path = "manager"}
 
 [build-dependencies]
 tonic-build = "0.8"
@@ -32,9 +35,14 @@ path = "src/bin/client.rs"
 name = "server"
 path = "src/bin/server.rs"
 
+[[bin]]
+name = "manager"
+path = "src/bin/manager.rs"
+
 [workspace]
 members = [
     "server",
     "client",
     "common",
+    "manager",
 ]

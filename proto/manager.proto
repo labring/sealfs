@@ -1,0 +1,21 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+package manager;
+
+service Manager {
+    rpc SendHeart(HeartRequest) returns (HeartResponse) {}
+}
+
+//heart request
+message HeartRequest {
+    string Addr = 1;
+    uint32 flag = 2;
+}
+
+//heart response
+message HeartResponse {
+    uint32 status = 1;
+}

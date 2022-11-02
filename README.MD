@@ -1,5 +1,5 @@
 # SEALFS
-[English](https://github.com/labring/sealfs/blob/dev/README.MD)|[简体中文](https://github.com/labring/sealfs/blob/dev/README-ZH.MD)
+[English](https://github.com/labring/sealfs-rust/blob/dev/README.MD)|[简体中文](https://github.com/labring/sealfs-rust/blob/dev/README-ZH.MD)
 
 high-performance,high reliability and auto-scaling distributed file system.
 

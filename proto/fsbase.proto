@@ -18,7 +18,6 @@ service RemoteFs {
     rpc DeleteDirectory(DeleteDirectoryRequest) returns (DeleteDirectoryResponse) {}
 }
 
-
 // file system service request
 message CreateFileRequest {
     string path = 1;
@@ -108,4 +107,3 @@ message DeleteFileResponse {
 message DeleteDirectoryResponse {
     uint32 status = 1;
 }
-
