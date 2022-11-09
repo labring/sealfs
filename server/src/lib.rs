@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod engine;
+
 use common::{
     byte::array2u32,
     reqeust::{OperationType, RequestHeader, REQUEST_HEADER_SIZE},

@@ -1,0 +1,416 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+use super::{Engine, EngineError};
+use log::info;
+use rocksdb::{Options, DB};
+use serde::{Deserialize, Serialize};
+use std::{
+    cmp::Ordering,
+    collections::{hash_map::DefaultHasher, HashMap},
+    fs::{self, File},
+    hash::{Hash, Hasher},
+    path::Path,
+};
+
+pub struct DefaultEngine {
+    pub file_db: Database,
+    pub dir_db: Database,
+    pub file_attr_db: Database,
+    pub root: String,
+}
+
+pub struct Database {
+    pub db: DB,
+    pub db_opts: Options,
+    pub path: String,
+}
+
+impl Engine for DefaultEngine {
+    fn new(db_path: &str, root: &str) -> Self {
+        let file_db = {
+            let mut db_opts = Options::default();
+            db_opts.create_if_missing(true);
+            let path = format!("{}_file", db_path);
+            let db = match DB::open(&db_opts, path.as_str()) {
+                Ok(db) => db,
+                Err(_) => panic!("Failed to create db"),
+            };
+            Database { db, db_opts, path }
+        };
+
+        let dir_db = {
+            let mut db_opts = Options::default();
+            db_opts.create_if_missing(true);
+            let path = format!("{}_dir", db_path);
+            let db = match DB::open(&db_opts, path.as_str()) {
+                Ok(db) => db,
+                Err(_) => panic!("Failed to create db"),
+            };
+            Database { db, db_opts, path }
+        };
+
+        let file_attr_db = {
+            let mut db_opts = Options::default();
+            db_opts.create_if_missing(true);
+            let path = format!("{}_file_attr", db_path);
+            let db = match DB::open(&db_opts, path.as_str()) {
+                Ok(db) => db,
+                Err(_) => panic!("Failed to create db"),
+            };
+            Database { db, db_opts, path }
+        };
+
+        if !Path::new(root).exists() {
+            fs::create_dir(root).unwrap();
+        }
+
+        Self {
+            file_db,
+            dir_db,
+            file_attr_db,
+            root: root.to_string(),
+        }
+    }
+
+    fn init(&self) {
+        let root_sub_dir = SubDirectory::new();
+        let _ = self
+            .dir_db
+            .db
+            .put(b"/", bincode::serialize(&root_sub_dir).unwrap());
+        let _ = self.file_attr_db.db.put(b"/", b"d");
+        let _ = self.file_db.db.put(b"/", b"");
+    }
+
+    fn create_file(&self, path: String) -> Result<(), EngineError> {
+        if path.ends_with('/') {
+            return Err(EngineError::IsDir);
+        }
+
+        match self.file_attr_db.db.get(path.as_bytes()) {
+            Ok(Some(_value)) => return Err(EngineError::Exist),
+            Ok(None) => {}
+            Err(_) => return Err(EngineError::IO),
+        }
+
+        let (parent_dir, file_name) = {
+            let directory: Vec<&str> = path.split('/').collect();
+            let l = directory.len();
+            match l.cmp(&2) {
+                Ordering::Equal => ("/", directory[l - 1]),
+                Ordering::Greater => (directory[l - 2], directory[l - 1]),
+                _ => {
+                    return Err(EngineError::Path);
+                }
+            }
+        };
+
+        // a temporary implementation
+        match self.dir_db.db.get(parent_dir.as_bytes()) {
+            Ok(Some(value)) => {
+                let mut sub_dir: SubDirectory = bincode::deserialize(&value[..]).unwrap();
+                sub_dir.add_dir(file_name.to_string());
+                self.dir_db
+                    .db
+                    .put(parent_dir.as_bytes(), bincode::serialize(&sub_dir).unwrap())?;
+            }
+            Ok(None) => {
+                return Err(EngineError::NoEntry);
+            }
+            Err(_) => {
+                return Err(EngineError::IO);
+            }
+        }
+
+        self.file_attr_db.db.put(&path, "f")?;
+        let local_file_name = generate_local_file_name(&self.root, &path);
+        self.file_db
+            .db
+            .put(&path.as_bytes(), local_file_name.as_bytes())?;
+
+        File::create(local_file_name)?;
+
+        Ok(())
+    }
+
+    fn create_directory(&self, path: String) -> Result<(), EngineError> {
+        if !path.ends_with('/') {
+            info!("create file {}, not dir", path);
+            return Err(EngineError::NotDir);
+        }
+        match self.file_attr_db.db.get(path.as_bytes())? {
+            Some(_) => return Err(EngineError::Exist),
+            None => {}
+        }
+        let index = {
+            let mut index = 0;
+            let l = path.len() - 1;
+            path.chars().into_iter().enumerate().for_each(|(i, c)| {
+                if c == '/' && i != l {
+                    index = i;
+                }
+            });
+            index
+        };
+        let parent_dir = if index == 0 { "/" } else { &path[..index] };
+
+        // a temporary implementation
+        match self.dir_db.db.get(parent_dir.as_bytes())? {
+            Some(value) => {
+                let mut sub_dirs: SubDirectory = bincode::deserialize(&value[..]).unwrap();
+                sub_dirs.add_dir(path[index + 1..].to_string());
+                self.dir_db.db.put(
+                    parent_dir.as_bytes(),
+                    bincode::serialize(&sub_dirs).unwrap(),
+                )?;
+            }
+            None => {}
+        }
+        let sub_dirs = SubDirectory::new();
+        self.dir_db
+            .db
+            .put(path.as_bytes(), bincode::serialize(&sub_dirs).unwrap())?;
+        self.file_attr_db.db.put(path.as_bytes(), b"d")?;
+        Ok(())
+    }
+
+    fn get_file_attributes(&self, path: String) -> Result<Option<Vec<String>>, EngineError> {
+        match self.file_attr_db.db.get(path.as_bytes())? {
+            Some(value) => Ok(Some(bincode::deserialize(&value[..]).unwrap())),
+            None => Ok(None),
+        }
+    }
+
+    fn read_directory(&self, path: String) -> Result<Vec<String>, EngineError> {
+        match self.file_attr_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                if "d" != bincode::deserialize::<String>(&value[..]).unwrap() {
+                    return Err(EngineError::NotDir);
+                }
+            }
+            None => {}
+        }
+        match self.dir_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                let sub_dirs: Vec<String> = bincode::deserialize(&value[..]).unwrap();
+                Ok(sub_dirs)
+            }
+            None => Err(EngineError::NoEntry),
+        }
+    }
+
+    fn read_file(&self, path: String) -> Result<Vec<u8>, EngineError> {
+        match self.file_attr_db.db.get(path.as_bytes()) {
+            Ok(Some(value)) => {
+                if "f" != String::from_utf8(value).unwrap() {
+                    return Err(EngineError::IsDir);
+                }
+            }
+            Ok(None) => {
+                return Err(EngineError::NoEntry);
+            }
+            Err(_) => {
+                return Err(EngineError::IO);
+            }
+        }
+
+        let local_file_name: String = match self.file_db.db.get(path.as_bytes())? {
+            Some(value) => String::from_utf8(value).unwrap(),
+            None => {
+                return Err(EngineError::NoEntry);
+            }
+        };
+        let data = fs::read(local_file_name)?;
+        Ok(data)
+    }
+
+    fn write_file(&self, path: String, data: &[u8]) -> Result<(), EngineError> {
+        match self.file_attr_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                if "f" != String::from_utf8(value).unwrap() {
+                    return Err(EngineError::IsDir);
+                }
+            }
+            None => {
+                return Err(EngineError::NoEntry);
+            }
+        }
+        let local_file_name = match self.file_db.db.get(path.as_bytes())? {
+            Some(value) => String::from_utf8(value).unwrap(),
+            None => {
+                return Err(EngineError::NoEntry);
+            }
+        };
+        fs::write(local_file_name, data)?;
+        Ok(())
+    }
+
+    fn delete_file(&self, path: String) -> Result<(), EngineError> {
+        self.file_attr_db.db.delete(path.as_bytes())?;
+        let (parent_dir, file_name) = {
+            let directory: Vec<&str> = path.split('/').collect();
+            let l = directory.len();
+            match l.cmp(&2) {
+                Ordering::Equal => ("/", directory[l - 1]),
+                Ordering::Greater => (directory[l - 2], directory[l - 1]),
+                _ => {
+                    return Err(EngineError::Path);
+                }
+            }
+        };
+
+        // a temporary implementation
+        match self.dir_db.db.get(parent_dir.as_bytes())? {
+            Some(value) => {
+                let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+                sub_dirs.delete_dir(file_name.to_string());
+                self.dir_db.db.put(
+                    parent_dir.as_bytes(),
+                    bincode::serialize(&sub_dirs).unwrap(),
+                )?;
+            }
+            None => {}
+        }
+        match self.file_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                let local_file_name = String::from_utf8(value).unwrap();
+                fs::remove_file(local_file_name)?;
+            }
+            None => {}
+        }
+        self.file_db.db.delete(path.as_bytes())?;
+        Ok(())
+    }
+
+    fn delete_directory(&self, path: String) -> Result<(), EngineError> {
+        self.file_attr_db.db.delete(path.as_bytes())?;
+        self.dir_db.db.delete(path.as_bytes())?;
+        let index = {
+            let mut index = 0;
+            let l = path.len() - 1;
+            path.chars().into_iter().enumerate().for_each(|(i, c)| {
+                if c == '/' && i != l {
+                    index = i;
+                }
+            });
+            index
+        };
+        let parent_dir = if index == 0 { "/" } else { &path[..index] };
+        // a temporary implementation
+        match self.dir_db.db.get(parent_dir.as_bytes())? {
+            Some(value) => {
+                let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+                sub_dirs.delete_dir(path[index + 1..].to_string());
+                self.dir_db.db.put(
+                    parent_dir.as_bytes(),
+                    bincode::serialize(&sub_dirs).unwrap(),
+                )?;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+struct SubDirectory {
+    sub_dir: HashMap<String, String>,
+}
+
+impl SubDirectory {
+    pub fn new() -> Self {
+        let sub_dir = HashMap::from([
+            (".".to_string(), "d".to_string()),
+            ("".to_string(), "d".to_string()),
+            ("..".to_string(), "d".to_string()),
+        ]);
+        SubDirectory { sub_dir }
+    }
+
+    pub fn add_dir(&mut self, dir: String) {
+        self.sub_dir.insert(dir, "d".to_string());
+    }
+
+    pub fn delete_dir(&mut self, dir: String) {
+        self.sub_dir.remove(&dir);
+    }
+}
+
+#[inline]
+fn generate_local_file_name(root: &str, path: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    format!("{}/{}", root, hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::{default_engine::generate_local_file_name, Engine};
+
+    use super::{DefaultEngine, SubDirectory};
+
+    #[test]
+    fn test_create_delete_dir() {
+        {
+            let engine = DefaultEngine::new("/tmp/test_dir_db", "/tmp/test");
+            engine.init();
+            engine.create_directory("/a/".to_string()).unwrap();
+            let v = engine.dir_db.db.get("/a/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let mut sub_dir = SubDirectory::new();
+            assert_eq!(dirs, sub_dir);
+            let v = engine.dir_db.db.get("/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            sub_dir.add_dir("a/".to_string());
+            assert_eq!(dirs, sub_dir);
+            engine.delete_directory("/a/".to_string()).unwrap();
+            assert_eq!(None, engine.dir_db.db.get("/a/").unwrap());
+            let v = engine.dir_db.db.get("/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            sub_dir.delete_dir("a/".to_string());
+            assert_eq!(sub_dir, dirs);
+        }
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_dir").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_file").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_file_attr").unwrap();
+    }
+
+    #[test]
+    fn test_create_delete_file() {
+        {
+            let engine = DefaultEngine::new("/tmp/test_file_db", "/tmp/test");
+            engine.init();
+            engine.create_file("/a.txt".to_string()).unwrap();
+            let v = engine.file_db.db.get(b"/a.txt").unwrap().unwrap();
+            let local_file_name = String::from_utf8(v).unwrap();
+            assert_eq!(
+                local_file_name,
+                generate_local_file_name("/tmp/test", "/a.txt")
+            );
+            engine.delete_file("/a.txt".to_string()).unwrap();
+            assert_eq!(None, engine.file_db.db.get(b"/a.txt").unwrap());
+        }
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_dir").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_file").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_file_attr").unwrap();
+    }
+
+    #[test]
+    fn test_read_write_file() {
+        {
+            let engine = DefaultEngine::new("/tmp/test_rw_db", "/tmp/test");
+            engine.init();
+            engine.create_file("/b.txt".to_string()).unwrap();
+            engine
+                .write_file("/b.txt".to_string(), "hello world".as_bytes())
+                .unwrap();
+            let value = engine.read_file("/b.txt".to_string()).unwrap();
+            assert_eq!("hello world", String::from_utf8(value).unwrap());
+        }
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_rw_db_dir").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_rw_db_file").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_rw_db_file_attr").unwrap();
+    }
+}
