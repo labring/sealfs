@@ -21,7 +21,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
-      - run: sudo apt-get install protobuf-compiler
+      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: cargo build --verbose --release
 
   check:
@@ -34,7 +34,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
-      - run: sudo apt-get install protobuf-compiler
+      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: cargo check
 
   test:
@@ -47,7 +47,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
-      - run: sudo apt-get install protobuf-compiler
+      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: cargo test --all
 
   fmt:
@@ -73,6 +73,6 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
-      - run: sudo apt-get install protobuf-compiler
+      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: rustup component add clippy
       - run: cargo clippy -- -D warnings
