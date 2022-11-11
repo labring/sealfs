@@ -7,7 +7,6 @@ use log::info;
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use std::{
-    cmp::Ordering,
     collections::{hash_map::DefaultHasher, HashMap},
     fs::{self, File},
     hash::{Hash, Hasher},
@@ -95,17 +94,11 @@ impl Engine for DefaultEngine {
             Err(_) => return Err(EngineError::IO),
         }
 
-        let (parent_dir, file_name) = {
-            let directory: Vec<&str> = path.split('/').collect();
-            let l = directory.len();
-            match l.cmp(&2) {
-                Ordering::Equal => ("/", directory[l - 1]),
-                Ordering::Greater => (directory[l - 2], directory[l - 1]),
-                _ => {
-                    return Err(EngineError::Path);
-                }
-            }
+        let index = match path.rfind('/') {
+            Some(value) => value,
+            None => return Err(EngineError::Path),
         };
+        let (parent_dir, file_name) = (&path[..=index], &path[(index + 1)..]);
 
         // a temporary implementation
         match self.dir_db.db.get(parent_dir.as_bytes()) {
@@ -131,7 +124,6 @@ impl Engine for DefaultEngine {
             .put(&path.as_bytes(), local_file_name.as_bytes())?;
 
         File::create(local_file_name)?;
-
         Ok(())
     }
 
@@ -144,17 +136,13 @@ impl Engine for DefaultEngine {
             Some(_) => return Err(EngineError::Exist),
             None => {}
         }
-        let index = {
-            let mut index = 0;
-            let l = path.len() - 1;
-            path.chars().into_iter().enumerate().for_each(|(i, c)| {
-                if c == '/' && i != l {
-                    index = i;
-                }
-            });
-            index
+
+        let index = match path[..(path.len() - 1)].rfind('/') {
+            Some(value) => value,
+            None => return Err(EngineError::Path),
         };
-        let parent_dir = if index == 0 { "/" } else { &path[..index] };
+
+        let parent_dir = &path[..=index];
 
         // a temporary implementation
         match self.dir_db.db.get(parent_dir.as_bytes())? {
@@ -249,17 +237,12 @@ impl Engine for DefaultEngine {
 
     fn delete_file(&self, path: String) -> Result<(), EngineError> {
         self.file_attr_db.db.delete(path.as_bytes())?;
-        let (parent_dir, file_name) = {
-            let directory: Vec<&str> = path.split('/').collect();
-            let l = directory.len();
-            match l.cmp(&2) {
-                Ordering::Equal => ("/", directory[l - 1]),
-                Ordering::Greater => (directory[l - 2], directory[l - 1]),
-                _ => {
-                    return Err(EngineError::Path);
-                }
-            }
+
+        let index = match path.rfind('/') {
+            Some(value) => value,
+            None => return Err(EngineError::Path),
         };
+        let (parent_dir, file_name) = (&path[..=index], &path[(index + 1)..]);
 
         // a temporary implementation
         match self.dir_db.db.get(parent_dir.as_bytes())? {
@@ -287,17 +270,13 @@ impl Engine for DefaultEngine {
     fn delete_directory(&self, path: String) -> Result<(), EngineError> {
         self.file_attr_db.db.delete(path.as_bytes())?;
         self.dir_db.db.delete(path.as_bytes())?;
-        let index = {
-            let mut index = 0;
-            let l = path.len() - 1;
-            path.chars().into_iter().enumerate().for_each(|(i, c)| {
-                if c == '/' && i != l {
-                    index = i;
-                }
-            });
-            index
+
+        let index = match path[..(path.len() - 1)].rfind('/') {
+            Some(value) => value,
+            None => return Err(EngineError::Path),
         };
-        let parent_dir = if index == 0 { "/" } else { &path[..index] };
+
+        let parent_dir = &path[..=index];
         // a temporary implementation
         match self.dir_db.db.get(parent_dir.as_bytes())? {
             Some(value) => {
@@ -372,6 +351,29 @@ mod tests {
             sub_dir.delete_dir("a/".to_string());
             assert_eq!(sub_dir, dirs);
         }
+
+        {
+            let engine = DefaultEngine::new("/tmp/test_dir_db", "/tmp/test");
+            engine.init();
+            engine.create_directory("/a1/".to_string()).unwrap();
+            let v = engine.dir_db.db.get("/a1/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let mut sub_dir = SubDirectory::new();
+            assert_eq!(dirs, sub_dir);
+
+            engine.create_directory("/a1/a2/".to_string()).unwrap();
+            let v = engine.dir_db.db.get("/a1/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            sub_dir.add_dir("a2/".to_string());
+            assert_eq!(dirs, sub_dir);
+
+            engine.delete_directory("/a1/".to_string()).unwrap();
+            assert_eq!(None, engine.dir_db.db.get("/a1/").unwrap());
+
+            let v = engine.dir_db.db.get("/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            assert_eq!(SubDirectory::new(), dirs);
+        }
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_dir").unwrap();
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_file").unwrap();
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_file_attr").unwrap();
@@ -392,6 +394,23 @@ mod tests {
             engine.delete_file("/a.txt".to_string()).unwrap();
             assert_eq!(None, engine.file_db.db.get(b"/a.txt").unwrap());
         }
+
+        {
+            let engine = DefaultEngine::new("/tmp/test_file_db", "/tmp/test");
+            engine.init();
+            engine.create_directory("/test_a/".to_string()).unwrap();
+            engine.create_directory("/test_a/a/".to_string()).unwrap();
+            engine.create_file("/test_a/a/a.txt".to_string()).unwrap();
+            let v = engine.file_db.db.get(b"/test_a/a/a.txt").unwrap().unwrap();
+            let local_file_name = String::from_utf8(v).unwrap();
+            assert_eq!(
+                local_file_name,
+                generate_local_file_name("/tmp/test", "/test_a/a/a.txt")
+            );
+            engine.delete_file("/test_a/a/a.txt".to_string()).unwrap();
+            assert_eq!(None, engine.file_db.db.get(b"/test_a/a/a.txt").unwrap());
+        }
+
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_dir").unwrap();
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_file").unwrap();
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_file_attr").unwrap();
