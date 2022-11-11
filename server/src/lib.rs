@@ -6,7 +6,13 @@ pub mod distributed_engine;
 pub mod server;
 pub mod storage_engine;
 
+use std::sync::Arc;
+
+use crate::storage_engine::StorageEngine;
+
 use crate::server::Server;
+use distributed_engine::DistributedEngine;
+use storage_engine::default_engine::DefaultEngine;
 use tokio::net::TcpListener;
 
 #[derive(Debug, thiserror::Error)]
@@ -39,9 +45,19 @@ pub enum EngineError {
     Rocksdb(#[from] rocksdb::Error),
 }
 
-pub async fn run(address: String) -> anyhow::Result<()> {
+pub async fn run(
+    address: String,
+    database_path: String,
+    storage_path: String,
+) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&address).await?;
-    let mut server = Server::new(address, listener);
+    // let engine = Arc::new(Mutex::new(DefaultEngine::new(
+    //     &database_path,
+    //     &storage_path,
+    // )));
+    let local_storage = DefaultEngine::new(&database_path, &storage_path);
+    let engine = Arc::new(DistributedEngine::new(local_storage));
+    let mut server = Server::new(address, listener, engine);
     server.run().await?;
     Ok(())
 }

@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
+use crate::EngineError;
 use common::{
     byte::array2u32,
-    request::{OperationType, RequestHeader, REQUEST_HEADER_SIZE},
+    request::{OperationType, RequestHeader, REQUEST_FILENAME_LENGTH, REQUEST_HEADER_SIZE},
 };
 use log::{debug, info};
 use tokio::{
@@ -9,16 +12,43 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::ServerError;
+use crate::{distributed_engine::DistributedEngine, storage_engine::StorageEngine, ServerError};
 
-pub struct Server {
-    pub address: String,
-    listener: TcpListener,
+macro_rules! EngineErr2Status {
+    ($e:expr) => {
+        match $e {
+            EngineError::IO => -libc::EIO,
+            EngineError::NoEntry => -libc::ENOENT,
+            EngineError::NotDir => -libc::ENOTDIR,
+            EngineError::IsDir => -libc::EISDIR,
+            EngineError::Exist => -libc::EEXIST,
+            EngineError::NotEmpty => -libc::ENOTEMPTY,
+            // todo
+            // other Error
+            _ => 0,
+        }
+    };
 }
 
-impl Server {
-    pub fn new(address: String, listener: TcpListener) -> Self {
-        Self { address, listener }
+pub struct Server<S: StorageEngine + std::marker::Send + std::marker::Sync + 'static> {
+    pub address: String,
+    listener: TcpListener,
+    engine: Arc<DistributedEngine<S>>,
+}
+
+impl<S> Server<S>
+where
+    S: StorageEngine + std::marker::Send + std::marker::Sync + 'static,
+{
+    pub fn new(address: String, listener: TcpListener, engine: Arc<DistributedEngine<S>>) -> Self
+    where
+        S: StorageEngine,
+    {
+        Self {
+            address,
+            listener,
+            engine,
+        }
     }
 
     pub async fn run(&mut self) -> anyhow::Result<()> {
@@ -30,6 +60,7 @@ impl Server {
                         stream,
                         send_lock: Mutex::new(()),
                     };
+                    let e = Arc::clone(&self.engine);
                     tokio::spawn(async move {
                         let header_result = handler.parse_header().await;
                         let header = match header_result {
@@ -40,7 +71,7 @@ impl Server {
                                 todo!("response to client, error is {}", e);
                             }
                         };
-                        match handler.dispatch(header).await {
+                        match handler.dispatch(header, e).await {
                             Ok(_) => {}
                             Err(e) => {
                                 todo!("handle response error, error is {}", e);
@@ -80,16 +111,48 @@ impl Handler {
         Ok(header)
     }
 
-    pub async fn dispatch(&mut self, header: RequestHeader) -> anyhow::Result<()> {
+    pub async fn read_body(&mut self, length: usize) -> anyhow::Result<Vec<u8>> {
+        let mut buf: Vec<u8> = Vec::with_capacity(length);
+        self.stream.read_exact(&mut buf).await?;
+        Ok(buf)
+    }
+
+    pub async fn parse_path(&mut self, raw_data: Vec<u8>) -> Result<Option<String>, ServerError> {
+        let filename_length = array2u32(&raw_data[0..REQUEST_FILENAME_LENGTH]) as usize;
+        let file_name = String::from_utf8(
+            raw_data[REQUEST_FILENAME_LENGTH..REQUEST_FILENAME_LENGTH + filename_length].to_vec(),
+        )
+        .unwrap();
+        Ok(Some(file_name))
+    }
+
+    pub async fn dispatch<S: StorageEngine>(
+        &mut self,
+        header: RequestHeader,
+        engine: Arc<DistributedEngine<S>>,
+    ) -> anyhow::Result<()> {
+        let buf = self
+            .read_body(header.total_length as usize - REQUEST_HEADER_SIZE)
+            .await?;
         match header.r#type {
             OperationType::CreateFile => {
                 debug!("Create File");
-                self.response(header.id, 0, 0, 16, None, None, None, None)
+                let file_path = self.parse_path(buf).await?.unwrap();
+                let status = match engine.create_file(file_path).await {
+                    Ok(()) => 0,
+                    Err(e) => EngineErr2Status!(e) as u32,
+                };
+                self.response(header.id, status, 0, 16, None, None, None, None)
                     .await?;
             }
             OperationType::CreateDir => {
                 debug!("Create Dir");
-                self.response(header.id, 0, 0, 16, None, None, None, None)
+                let dir_path = self.parse_path(buf).await?.unwrap();
+                let status = match engine.create_dir(dir_path).await {
+                    Ok(()) => 0,
+                    Err(e) => EngineErr2Status!(e) as u32,
+                };
+                self.response(header.id, status, 0, 16, None, None, None, None)
                     .await?;
             }
             OperationType::GetFileAttr => {
@@ -99,13 +162,28 @@ impl Handler {
             }
             OperationType::OpenFile => {
                 debug!("Open File");
-                self.response(header.id, 0, 0, 16, None, None, None, None)
-                    .await?;
+                todo!()
             }
             OperationType::ReadDir => {
                 debug!("Read Dir");
-                self.response(header.id, 0, 0, 16, None, None, None, None)
-                    .await?;
+                let dir_path = self.parse_path(buf).await?.unwrap();
+                let (data, status) = match engine.read_dir(dir_path).await {
+                    Ok(value) => (value, 0u32),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e) as u32),
+                };
+                let l: usize = data.iter().map(|s| s.as_bytes().len()).sum();
+                let data_byte = bincode::serialize(&data[..])?;
+                self.response(
+                    header.id,
+                    status,
+                    0,
+                    16,
+                    None,
+                    Some(l as u32),
+                    None,
+                    Some(data_byte.as_slice()),
+                )
+                .await?;
             }
             OperationType::ReadFile => {
                 debug!("Read File");
