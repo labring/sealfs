@@ -24,6 +24,9 @@ pub enum EngineError {
     #[error("EPATH")]
     Path,
 
+    #[error("ENOTEMPTY")]
+    NotEmpty,
+
     #[error(transparent)]
     StdIo(#[from] std::io::Error),
 
@@ -51,4 +54,6 @@ pub trait Engine {
     fn delete_file(&self, path: String) -> Result<(), EngineError>;
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError>;
+
+    fn delete_directory_recursive(&self, path: String) -> Result<(), EngineError>;
 }
