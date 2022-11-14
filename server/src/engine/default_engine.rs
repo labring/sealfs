@@ -269,13 +269,39 @@ impl Engine for DefaultEngine {
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError> {
         self.file_attr_db.db.delete(path.as_bytes())?;
+        // a temporary implementation
+        match self.dir_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                let sub_dir = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+                if sub_dir.sub_dir.len() != 3 {
+                    return Err(EngineError::NotEmpty);
+                }
+            }
+            None => {}
+        }
         self.dir_db.db.delete(path.as_bytes())?;
+        self.delete_from_parent(path)?;
+        Ok(())
+    }
 
-        let index = match path[..(path.len() - 1)].rfind('/') {
-            Some(value) => value,
-            None => return Err(EngineError::Path),
-        };
+    fn delete_directory_recursive(&self, path: String) -> Result<(), EngineError> {
+        self.file_attr_db.db.delete(path.as_bytes())?;
+        self.delete_dir_recursive(path.clone())?;
+        self.delete_from_parent(path)?;
+        Ok(())
+    }
+}
 
+impl DefaultEngine {
+    fn delete_from_parent(&self, path: String) -> Result<(), EngineError> {
+        let l = path.len() - 1;
+        let (index, _) = path
+            .chars()
+            .into_iter()
+            .rev()
+            .enumerate()
+            .find(|(i, c)| *i != l - 1 && *c == '/')
+            .unwrap();
         let parent_dir = &path[..=index];
         // a temporary implementation
         match self.dir_db.db.get(parent_dir.as_bytes())? {
@@ -288,6 +314,43 @@ impl Engine for DefaultEngine {
                 )?;
             }
             None => {}
+        }
+        Ok(())
+    }
+
+    fn delete_dir_recursive(&self, path: String) -> Result<(), EngineError> {
+        match self.dir_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                let sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+                if sub_dirs == SubDirectory::new() {
+                    self.dir_db.db.delete(path.as_bytes())?;
+                    return Ok(());
+                }
+                for sub_dir in sub_dirs.sub_dir {
+                    if sub_dir.0 == "." || sub_dir.0 == ".." || sub_dir.0.is_empty() {
+                        continue;
+                    }
+                    let p = format!("{}/{}", path, sub_dir.0);
+                    if sub_dir.1.eq("f") {
+                        self.file_attr_db.db.delete(p.as_bytes())?;
+                        let local_file = match self.file_db.db.get(p.as_bytes())? {
+                            Some(value) => String::from_utf8(value).unwrap(),
+                            None => {
+                                return Err(EngineError::NoEntry);
+                            }
+                        };
+                        fs::remove_file(local_file)?;
+                        self.file_db.db.delete(p.as_bytes())?;
+                        continue;
+                    }
+                    self.delete_dir_recursive(p)?;
+                }
+                self.dir_db.db.delete(path.as_bytes())?;
+            }
+            None => {
+                self.dir_db.db.delete(path.as_bytes())?;
+                return Ok(());
+            }
         }
         Ok(())
     }
@@ -367,8 +430,18 @@ mod tests {
             sub_dir.add_dir("a2/".to_string());
             assert_eq!(dirs, sub_dir);
 
-            engine.delete_directory("/a1/".to_string()).unwrap();
+            engine
+                .delete_directory_recursive("/a1/".to_string())
+                .unwrap();
             assert_eq!(None, engine.dir_db.db.get("/a1/").unwrap());
+
+            engine.create_directory("/a3/".to_string()).unwrap();
+            let v = engine.dir_db.db.get("/a3/").unwrap().unwrap();
+            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let sub_dir = SubDirectory::new();
+            assert_eq!(dirs, sub_dir);
+            engine.delete_directory("/a3/".to_string()).unwrap();
+            assert_eq!(None, engine.dir_db.db.get("/a3/").unwrap());
 
             let v = engine.dir_db.db.get("/").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
