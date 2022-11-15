@@ -2,39 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::EngineError;
+
 pub mod default_engine;
-
-#[derive(Debug, thiserror::Error)]
-pub enum EngineError {
-    #[error("ENOENT")]
-    NoEntry,
-
-    #[error("ENOTDIR")]
-    NotDir,
-
-    #[error("EISDIR")]
-    IsDir,
-
-    #[error("EEXIST")]
-    Exist,
-
-    #[error("EIO")]
-    IO,
-
-    #[error("EPATH")]
-    Path,
-
-    #[error("ENOTEMPTY")]
-    NotEmpty,
-
-    #[error(transparent)]
-    StdIo(#[from] std::io::Error),
-
-    #[error(transparent)]
-    Rocksdb(#[from] rocksdb::Error),
-}
-
-pub trait Engine {
+pub trait StorageEngine {
     fn new(db_path: &str, root: &str) -> Self;
 
     fn init(&self);
