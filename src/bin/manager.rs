@@ -2,13 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use manager::heart::healthy_check;
 use sealfs_rust::manager_service::{self, ManagerService};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 use tonic::transport::Server;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Properties {
-    port: String,
+    address: String,
+    protect_threshold: String,
 }
 
 #[tokio::main]
@@ -16,8 +19,12 @@ async fn main() -> anyhow::Result<()> {
     //read from yaml.
     let yaml_str = include_str!("../../manager.yaml");
     let properties: Properties = serde_yaml::from_str(yaml_str).expect("manager.yaml read failed!");
-    let address = properties.port;
+    let address = properties.address;
     let service = ManagerService::default();
+
+    tokio::spawn(async {
+        healthy_check().await;
+    });
 
     //build rpc server.
     Server::builder()

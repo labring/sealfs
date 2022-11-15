@@ -11,8 +11,9 @@ service Manager {
 
 //heart request
 message HeartRequest {
-    string Addr = 1;
+    string address = 1;
     uint32 flag = 2;
+    string lifetime = 3;
 }
 
 //heart response

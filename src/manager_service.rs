@@ -1,6 +1,7 @@
 use self::manager::{
     manager_server::Manager, manager_server::ManagerServer, HeartRequest, HeartResponse,
 };
+use ::manager::heart::register_server;
 use log::debug;
 use tonic::{Request, Response, Status};
 
@@ -22,6 +23,8 @@ impl Manager for ManagerService {
         request: Request<HeartRequest>,
     ) -> Result<Response<HeartResponse>, Status> {
         debug!("Got a request from {:?}", request.remote_addr());
+        let message = request.get_ref();
+        register_server(message.address.clone(), message.lifetime.clone()).await;
         let response = HeartResponse { status: 0 };
         Ok(Response::new(response))
     }
