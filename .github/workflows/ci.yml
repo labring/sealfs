@@ -3,8 +3,16 @@ name: Continuous integration
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.yaml"
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "**/*.yaml"
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +29,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
+      - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: cargo build --verbose --release
 
@@ -34,6 +43,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
+      - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: cargo check
 
@@ -47,6 +57,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
+      - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: cargo test --all
 
@@ -60,6 +71,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
+      - uses: Swatinem/rust-cache@v2
       - run: rustup component add rustfmt
       - run: cargo fmt --all -- --check
 
@@ -73,6 +85,7 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
+      - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get install protobuf-compiler libfuse-dev -y
       - run: rustup component add clippy
       - run: cargo clippy -- -D warnings
