@@ -6,7 +6,7 @@ pub mod engine;
 
 use common::{
     byte::array2u32,
-    reqeust::{OperationType, RequestHeader, REQUEST_HEADER_SIZE},
+    request::{OperationType, RequestHeader, REQUEST_HEADER_SIZE},
 };
 use log::{debug, info};
 use tokio::{

@@ -137,7 +137,7 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     /* TODO
     thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: Os { code: 107, kind: NotConnected, message: "Transport endpoint is not connected" }', sealfs-rust/client/src/lib.rs:162:49
 
-    shuold be fixed by checking if the mountpoint is valid
+    should be fixed by checking if the mountpoint is valid
     */
 
     Ok(())
