@@ -5,13 +5,12 @@ pub mod connection;
 pub mod distribute_hash_table;
 pub mod manager;
 
-use clap::{crate_version, Arg, Command};
+use clap::Parser;
 use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
 use manager::CLIENT;
-use std::env;
 use std::ffi::OsStr;
 
 struct SealFS;
@@ -103,33 +102,14 @@ impl Filesystem for SealFS {
 }
 
 pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = Command::new("sealfs")
-        .version(crate_version!())
-        .author("Christopher Berner")
-        .arg(
-            Arg::new("MOUNT_POINT")
-                .required(true)
-                .index(1)
-                .help("Act as a client, and mount FUSE at given path"),
-        )
-        .arg(
-            Arg::new("auto_unmount")
-                .long("auto_unmount")
-                .help("Automatically unmount on process exit"),
-        )
-        .arg(
-            Arg::new("allow-root")
-                .long("allow-root")
-                .help("Allow root user to access filesystem"),
-        )
-        .get_matches();
+    let cli = Cli::parse();
     env_logger::init();
-    let mountpoint = matches.value_of("MOUNT_POINT").unwrap();
+    let mountpoint = cli.mount_point.unwrap();
     let mut options = vec![MountOption::RO, MountOption::FSName("seal".to_string())];
-    if matches.is_present("auto_unmount") {
+    if cli.auto_unmount {
         options.push(MountOption::AutoUnmount);
     }
-    if matches.is_present("allow-root") {
+    if cli.allow_root {
         options.push(MountOption::AllowRoot);
     }
 
@@ -141,4 +121,20 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     */
 
     Ok(())
+}
+
+#[derive(Parser)]
+#[command(author = "Christopher Berner", version, about, long_about = None)]
+struct Cli {
+    /// Act as a client, and mount FUSE at given path
+    #[arg(required = true, name = "MOUNT_POINT")]
+    mount_point: Option<String>,
+
+    /// Automatically unmount on process exit
+    #[arg(long = "auto_unmount", name = "auto_unmount")]
+    auto_unmount: bool,
+
+    /// Allow root user to access filesystem
+    #[arg(long = "allow-root", name = "allow-root")]
+    allow_root: bool,
 }
