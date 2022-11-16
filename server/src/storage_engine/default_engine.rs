@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{Engine, EngineError};
+use crate::EngineError;
+
+use super::StorageEngine;
 use log::info;
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
@@ -26,7 +28,7 @@ pub struct Database {
     pub path: String,
 }
 
-impl Engine for DefaultEngine {
+impl StorageEngine for DefaultEngine {
     fn new(db_path: &str, root: &str) -> Self {
         let file_db = {
             let mut db_opts = Options::default();
@@ -389,7 +391,7 @@ fn generate_local_file_name(root: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::{default_engine::generate_local_file_name, Engine};
+    use crate::storage_engine::{default_engine::generate_local_file_name, StorageEngine};
 
     use super::{DefaultEngine, SubDirectory};
 
