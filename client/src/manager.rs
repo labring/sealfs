@@ -383,7 +383,7 @@ impl Deref for MANAGER {
 impl MANAGER {
     pub fn get() -> *const Manager {
         unsafe {
-            if MANAGER.m == std::ptr::null_mut() {
+            if MANAGER.m.is_null() {
                 MANAGER.m = Box::into_raw(Box::new(Manager::new()));
             }
             &MANAGER as *const MANAGER as *const Manager

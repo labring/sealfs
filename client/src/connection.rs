@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use common::reqeust::{
+use common::request::{
     OperationType, CLIENT_REQUEST_TIMEOUT, CLIENT_RESPONSE_TIMEOUT, REQUEST_QUEUE_LENGTH,
     RESPONSE_HEADER_SIZE,
 };
@@ -87,10 +87,11 @@ impl Connection {
         data: &[u8],
         meta_data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.send_lock.lock().unwrap();
+        let lock = self.send_lock.lock().unwrap();
         let _ = self.stream.write_all(header);
         let _ = self.stream.write_all(data);
         let _ = self.stream.write_all(meta_data);
+        drop(lock);
         Ok(())
     }
 
@@ -99,10 +100,10 @@ impl Connection {
         loop {
             // wake up time out requests
             let now = time::SystemTime::now();
-            while self.start_index.lock().unwrap().clone() != self.end_index.lock().unwrap().clone()
-                && now > self.callbacks[self.start_index.lock().unwrap().clone() as usize].timeout
+            while *self.start_index.lock().unwrap() != *self.end_index.lock().unwrap()
+                && now > self.callbacks[*self.start_index.lock().unwrap() as usize].timeout
             {
-                let index = self.start_index.lock().unwrap().clone();
+                let index = *self.start_index.lock().unwrap();
                 self.callbacks[index as usize].status = CallbackState::TIMEOUT;
                 self.callbacks[index as usize].channel.0.send(()).unwrap();
                 *self.start_index.lock().unwrap() = (index + 1) % REQUEST_QUEUE_LENGTH as u32;
