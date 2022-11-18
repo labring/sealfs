@@ -99,6 +99,11 @@ impl Handler {
 
     pub async fn dispatch(&mut self, header: RequestHeader) -> anyhow::Result<()> {
         match header.r#type {
+            OperationType::Lookup => {
+                debug!("Lookup");
+                self.response(header.id, 0, 0, 16, None, None, None, None)
+                    .await?;
+            }
             OperationType::CreateFile => {
                 debug!("Create File");
                 self.response(header.id, 0, 0, 16, None, None, None, None)

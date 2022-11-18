@@ -15,6 +15,7 @@ log = "0.4.17"
 clap = { version = "3.0", features = ["cargo"] }
 lazy_static = "1.4.0"
 dashmap = "5.4.0"
+common = { path = "../common" }
 
 [dev-dependencies]
 env_logger = "0.9"

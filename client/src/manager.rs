@@ -8,18 +8,18 @@ use fuser::{
     FileAttr, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
     ReplyWrite,
 };
-use lazy_static::lazy_static;
 use std::ffi::OsStr;
+use std::ops::{Deref, DerefMut};
 use std::time::Duration;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex},
 };
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
 pub struct Manager {
     // TODO replace with a thread safe data structure
-    pub connections: Arc<RwLock<HashMap<i32, Connection>>>,
+    pub connections: HashMap<i32, Connection>,
     pub inodes: Arc<Mutex<HashMap<String, FileAttr>>>,
     pub inodes_reverse: Arc<Mutex<HashMap<u64, String>>>,
 }
@@ -33,30 +33,27 @@ impl Default for Manager {
 impl Manager {
     pub fn new() -> Self {
         Self {
-            connections: Arc::new(RwLock::new(HashMap::new())),
+            connections: HashMap::new(),
             inodes: Arc::new(Mutex::new(HashMap::new())),
             inodes_reverse: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn add_connection(&self, id: i32, connection: Connection) {
-        self.connections
-            .write()
-            .unwrap()
-            .insert(id as i32, connection);
+    pub fn add_connection(&mut self, id: i32, connection: Connection) {
+        self.connections.insert(id as i32, connection);
     }
 
-    pub fn remove_connection(&self, id: i32) {
-        self.connections.write().unwrap().remove(&(id as i32));
+    pub fn remove_connection(&mut self, id: i32) {
+        self.connections.remove(&(id as i32));
     }
 
     pub fn get_connection_index(&self, path: &str) -> Option<i32> {
         let hash = hash(path);
-        let index = hash % self.connections.read().unwrap().len() as u32;
+        let index = hash % self.connections.len() as u32;
         Some(index as i32)
     }
 
-    pub fn lookup_remote(&self, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    pub fn lookup_remote(&mut self, parent: u64, name: &OsStr, reply: ReplyEntry) {
         log::info!("lookup_remote");
         if self.inodes_reverse.lock().unwrap().contains_key(&parent) {
             let path = format!(
@@ -67,12 +64,9 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
-                .get(&(index as i32))
+                .get_mut(&(index as i32))
                 .unwrap()
                 .lookup(&path);
-            //let result = connection.lookup(&path).await;
             match result {
                 Ok(attr) => {
                     let inode = attr.ino;
@@ -85,6 +79,7 @@ impl Manager {
                 }
             }
             log::info!("lookup_remote end");
+        //let result = connection.lookup(&path).await;
         } else {
             reply.error(libc::ENOENT);
             log::info!("lookup_remote error");
@@ -110,8 +105,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .create(&path, mode, umask, flags);
@@ -146,8 +139,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .getattr(&path);
@@ -179,8 +170,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .readdir(&path);
@@ -217,8 +206,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .read(&path, offset, size);
@@ -250,8 +237,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .write(&path, offset, data);
@@ -281,8 +266,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .mkdir(&path, mode);
@@ -317,8 +300,6 @@ impl Manager {
             let index = self.get_connection_index(&path).unwrap();
             let result = self
                 .connections
-                .read()
-                .unwrap()
                 .get(&(index as i32))
                 .unwrap()
                 .open(&path, flags);
@@ -346,13 +327,7 @@ impl Manager {
                 name.to_str().unwrap()
             );
             let index = self.get_connection_index(&path).unwrap();
-            let result = self
-                .connections
-                .read()
-                .unwrap()
-                .get(&(index as i32))
-                .unwrap()
-                .unlink(&path);
+            let result = self.connections.get(&(index as i32)).unwrap().unlink(&path);
             match result {
                 Ok(_) => {
                     reply.ok();
@@ -377,13 +352,7 @@ impl Manager {
                 name.to_str().unwrap()
             );
             let index = self.get_connection_index(&path).unwrap();
-            let result = self
-                .connections
-                .read()
-                .unwrap()
-                .get(&(index as i32))
-                .unwrap()
-                .rmdir(&path);
+            let result = self.connections.get(&(index as i32)).unwrap().rmdir(&path);
             match result {
                 Ok(_) => {
                     reply.ok();
@@ -400,6 +369,34 @@ impl Manager {
     }
 }
 
-lazy_static! {
-    pub static ref CLIENT: Manager = Manager::new();
+pub struct MANAGER {
+    m: *mut Manager,
 }
+
+impl Deref for MANAGER {
+    type Target = Manager;
+    fn deref(&self) -> &Manager {
+        unsafe { &*MANAGER::get() }
+    }
+}
+
+impl MANAGER {
+    pub fn get() -> *const Manager {
+        unsafe {
+            if MANAGER.m == std::ptr::null_mut() {
+                MANAGER.m = Box::into_raw(Box::new(Manager::new()));
+            }
+            &MANAGER as *const MANAGER as *const Manager
+        }
+    }
+}
+
+impl DerefMut for MANAGER {
+    fn deref_mut(&mut self) -> &mut Manager {
+        unsafe { &mut *(MANAGER::get() as *mut Manager) }
+    }
+}
+
+pub static mut MANAGER: MANAGER = MANAGER {
+    m: std::ptr::null_mut(),
+};
