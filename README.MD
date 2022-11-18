@@ -1,5 +1,5 @@
 # SEALFS
-[English](https://github.com/labring/sealfs-rust/blob/dev/README.MD)|[简体中文](https://github.com/labring/sealfs-rust/blob/dev/README-ZH.MD)
+[English](https://github.com/labring/sealfs/blob/main/README.MD)|[简体中文](https://github.com/labring/sealfs/blob/main/README-ZH.MD)
 
 high-performance,high reliability and auto-scaling distributed file system.
 
@@ -47,32 +47,31 @@ Extreme performance scheme × Reliable data experience
 - Convenient auto scaling
 
 ## Design Document
-[design document](https://github.com/labring/sealfs-rust/blob/main/docs/README.MD)
+[design document](https://github.com/labring/sealfs/blob/main/docs/README.MD)
 
 ## LICENSE
-[Apache License 2.0](https://github.com/labring/sealfs-rust/blob/main/LICENSE)
+[Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)
 
 ## Implementation Plan
 
-- Function:
+- first version Function:
   - Core:
     - [ ] Socket network communication
     - [ ] fuse file system interface
-    - [ ] cluster management
-    - [ ] Storage engine
+    - [ ] cluster heartbeat management
+    - [ ] file Storage
     - [ ] Location algorithm
   - Performance optimization:
-    - [ ] System call hijacking
-    - [ ] Coordinated schedule
+    - [ ] System call hijacking(file system of user mode)
     - [ ] RDMA
-    - [ ] Memory cache
+    - [ ] Combination of software and hardware(DPDK SPDK)
   - Testing
     - [ ] IO500
     - [ ] Comparison test
 
 - Common file system:
   - Other functions
-    - [ ] Document segmentation
+    - [ ] Distributed transaction
     - [ ] Auto-scaling capacity
     - [ ] Tenant management
     - [ ] Data redundancy

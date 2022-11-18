@@ -41,34 +41,32 @@
 - 便捷的弹性伸缩
 
 ## 设计文档
-[设计文档](https://github.com/labring/sealfs-rust/blob/main/docs/README.MD)
+[设计文档](https://github.com/labring/sealfs/blob/main/docs/README-ZH.MD)
 
 ## 开源协议
-[Apache License 2.0](https://github.com/labring/sealfs-rust/blob/main/LICENSE)
+[Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)
 
 ## 实现计划
 
-- 功能实现：
+- 第一版功能实现：
   - 核心：
     - [ ] socket网络通信
     - [ ] fuse文件系统接口
-    - [ ] 集群管理
-    - [ ] 存储引擎
+    - [ ] 心跳管理
+    - [ ] 文件存储
     - [ ] 选址算法
 
   - 性能优化：
-    - [ ] 系统调用劫持
-    - [ ] 协程
+    - [ ] 系统调用劫持（用户态文件系统）
     - [ ] RDMA
-    - [ ] 内存缓存
+    - [ ] 软硬件结合（SPDK，DPDK）
 
   - 测试
     - [ ] IO500
     - [ ] 对比测试
 
-- 通用文件系统：
-  - 其他功能
-    - [ ] 文件分段
+- 可靠的文件系统：
+    - [ ] 分布式事务
     - [ ] 弹性扩缩容
     - [ ] 租户管理
     - [ ] 多副本及纠删码
