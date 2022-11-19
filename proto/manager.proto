@@ -7,6 +7,7 @@ package manager;
 
 service Manager {
     rpc SendHeart(HeartRequest) returns (HeartResponse) {}
+    rpc GetMetadata(MetadataRequest) returns (MetadataResponse) {}
 }
 
 //heart request
@@ -19,4 +20,14 @@ message HeartRequest {
 //heart response
 message HeartResponse {
     uint32 status = 1;
+}
+
+//server metadata request
+message MetadataRequest {
+    uint32 flag = 1;
+}
+
+//server metadata response
+message MetadataResponse {
+    repeated string instances = 1;
 }

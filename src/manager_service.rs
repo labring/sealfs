@@ -1,7 +1,8 @@
 use self::manager::{
     manager_server::Manager, manager_server::ManagerServer, HeartRequest, HeartResponse,
+    MetadataRequest, MetadataResponse,
 };
-use ::manager::heart::register_server;
+use ::manager::heart::{register_server, HEALTHY_MAP};
 use log::debug;
 use tonic::{Request, Response, Status};
 
@@ -26,6 +27,20 @@ impl Manager for ManagerService {
         let message = request.get_ref();
         register_server(message.address.clone(), message.lifetime.clone()).await;
         let response = HeartResponse { status: 0 };
+        Ok(Response::new(response))
+    }
+
+    async fn get_metadata(
+        &self,
+        request: Request<MetadataRequest>,
+    ) -> Result<Response<MetadataResponse>, Status> {
+        println!("Got a request from {:?}", request.remote_addr());
+        let mut vec: Vec<String> = vec![];
+        HEALTHY_MAP.iter().for_each(|instance| {
+            let key = instance.key();
+            vec.push(key.clone());
+        });
+        let response = MetadataResponse { instances: vec };
         Ok(Response::new(response))
     }
 }

@@ -12,7 +12,7 @@ use tokio::time::MissedTickBehavior;
 const UNHEALTHY_TIME: u64 = 15;
 
 lazy_static! {
-    static ref HEALTHY_MAP: DashMap<String, u64> = DashMap::new();
+    pub static ref HEALTHY_MAP: DashMap<String, u64> = DashMap::new();
 }
 
 pub async fn register_server(address: String, _lifetime: String) {
