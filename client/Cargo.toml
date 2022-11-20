@@ -17,6 +17,10 @@ clap = { version = "4.0.18", features = ["derive"] }
 lazy_static = "1.4.0"
 dashmap = "5.4.0"
 tonic = "0.8.2"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9.14"
+
+common = {path = "../common"}
 
 [dev-dependencies]
 env_logger = "0.9"

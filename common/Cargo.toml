@@ -8,3 +8,11 @@ license = "Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+tonic = "0.8.2"
+log = "0.4.17"
+prost = "0.11.0"
+
+manager = {path = "../manager"}
+
+[build-dependencies]
+tonic-build = "0.8"

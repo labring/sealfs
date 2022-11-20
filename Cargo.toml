@@ -25,7 +25,6 @@ dashmap = "5.4.0"
 client = {path = "client"}
 server = {path = "server"}
 manager = {path = "manager"}
-common = {path = "common"}
 
 [build-dependencies]
 tonic-build = "0.8"

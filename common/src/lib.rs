@@ -3,4 +3,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod byte;
+pub mod manager_service;
 pub mod request;
