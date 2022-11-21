@@ -44,15 +44,34 @@ pub enum EngineError {
     #[error(transparent)]
     Rocksdb(#[from] rocksdb::Error),
 }
+impl From<u32> for EngineError {
+    fn from(status: u32) -> Self {
+        match status {
+            1 => EngineError::NoEntry,
+            _ => EngineError::IO,
+        }
+    }
+}
+
+impl From<EngineError> for u32 {
+    fn from(error: EngineError) -> Self {
+        match error {
+            EngineError::NoEntry => 1,
+            EngineError::IO => 2,
+            _ => 3,
+        }
+    }
+}
 
 pub async fn run(
+    index: i32,
     address: String,
     database_path: String,
     storage_path: String,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&address).await?;
     let local_storage = DefaultEngine::new(&database_path, &storage_path);
-    let engine = Arc::new(DistributedEngine::new(local_storage));
+    let engine = Arc::new(DistributedEngine::new(index, local_storage));
     let mut server = Server::new(address, listener, engine);
     server.run().await?;
     Ok(())

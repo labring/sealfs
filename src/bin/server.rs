@@ -58,7 +58,9 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //     .set_serving::<RemoteFsServer<FsService>>()
     //     .await;
     info!("Start Server");
+    // TO DO get index
     server::run(
+        0,
         properties.server_address.clone(),
         properties.database_path.clone(),
         properties.storage_path.clone(),
