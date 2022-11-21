@@ -122,6 +122,16 @@ impl Handler {
                 self.response(header.id, 0, 0, 16, None, None, None, None)
                     .await?;
             }
+            OperationType::DeleteFile => {
+                debug!("Remove File");
+                self.response(header.id, 0, 0, 16, None, None, None, None)
+                    .await?;
+            }
+            OperationType::DeleteDir => {
+                debug!("Remove Dir");
+                self.response(header.id, 0, 0, 16, None, None, None, None)
+                    .await?;
+            }
         }
         Ok(())
     }

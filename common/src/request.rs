@@ -19,7 +19,7 @@ pub const CLIENT_REQUEST_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 */
 pub const RESPONSE_HEADER_SIZE: usize = 16;
 
-pub const CLIENT_RESPONSE_TIMEOUT: time::Duration = time::Duration::from_micros(300); // timeout for client response loop
+// pub const CLIENT_RESPONSE_TIMEOUT: time::Duration = time::Duration::from_micros(300); // timeout for client response loop
 
 pub struct RequestHeader {
     pub id: u32,
@@ -48,6 +48,8 @@ pub enum OperationType {
     OpenFile = 5,
     ReadFile = 6,
     WriteFile = 7,
+    DeleteFile = 8,
+    DeleteDir = 9,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -62,6 +64,8 @@ impl TryFrom<u32> for OperationType {
             5 => Ok(OperationType::OpenFile),
             6 => Ok(OperationType::ReadFile),
             7 => Ok(OperationType::WriteFile),
+            8 => Ok(OperationType::DeleteFile),
+            9 => Ok(OperationType::DeleteDir),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -78,6 +82,8 @@ impl OperationType {
             OperationType::OpenFile => 5u32.to_le_bytes(),
             OperationType::ReadFile => 6u32.to_le_bytes(),
             OperationType::WriteFile => 7u32.to_le_bytes(),
+            OperationType::DeleteFile => 8u32.to_le_bytes(),
+            OperationType::DeleteDir => 9u32.to_le_bytes(),
         }
     }
 }
