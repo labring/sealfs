@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use common::manager_service::{self, ManagerService};
 use manager::heart::healthy_check;
-use sealfs_rust::manager_service::{self, ManagerService};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tonic::transport::Server;

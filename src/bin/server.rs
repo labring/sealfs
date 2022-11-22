@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     let _server_address = properties.server_address.clone();
 
     //connect to manager
-    info!("Connect To Manager");
+    info!("Connect To Manager.");
     let client = ManagerClient::connect(http_manager_address).await?;
 
     //begin scheduled task
@@ -88,7 +88,7 @@ async fn begin_heartbeat_report(
         });
         let result = client.send_heart(request).await;
         if result.is_err() {
-            panic!("send heartbeat error");
+            panic!("send heartbeat error.");
         }
         interval.tick().await;
     }

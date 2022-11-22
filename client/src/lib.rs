@@ -6,12 +6,22 @@ pub mod distribute_hash_table;
 pub mod manager;
 
 use clap::Parser;
+use common::manager_service::manager::manager_client::ManagerClient;
+use common::manager_service::manager::MetadataRequest;
 use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
 use manager::CLIENT;
+use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
+
+const CLIENT_FLAG: u32 = 2;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    manager_address: String,
+}
 
 struct SealFS;
 
@@ -101,7 +111,7 @@ impl Filesystem for SealFS {
     }
 }
 
-pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     env_logger::init();
     let mountpoint = cli.mount_point.unwrap();
@@ -112,6 +122,21 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     if cli.allow_root {
         options.push(MountOption::AllowRoot);
     }
+
+    let attr = include_str!("../../client.yaml");
+    let config: Config = serde_yaml::from_str(attr).expect("client.yaml read failed!");
+    let manager_address = config.manager_address;
+    let http_manager_address = format!("http://{}", manager_address);
+
+    tokio::spawn(async {
+        let mut client = ManagerClient::connect(http_manager_address).await.unwrap();
+        let request = tonic::Request::new(MetadataRequest { flag: CLIENT_FLAG });
+        let result = client.get_metadata(request).await;
+        if result.is_err() {
+            panic!("get metadata error.");
+        }
+    })
+    .await?;
 
     fuser::mount2(SealFS, mountpoint, &options).unwrap();
     /* TODO
