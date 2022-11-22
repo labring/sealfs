@@ -6,6 +6,9 @@
 // | id | type | flags | total_length | filename_length | filename | meta_data_length | meta_data | data_length | data |
 // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 4Byte | 0~ | 4Byte | 0~ |
 pub const REQUEST_HEADER_SIZE: usize = 16;
+pub const REQUEST_FILENAME_LENGTH_SIZE: usize = 4;
+pub const REQUEST_METADATA_LENGTH_SIZE: usize = 4;
+pub const REQUEST_DATA_LENGTH_SIZE: usize = 4;
 
 pub struct RequestHeader {
     pub id: u32,

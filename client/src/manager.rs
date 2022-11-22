@@ -52,7 +52,7 @@ impl Manager {
 
     pub fn get_connection_index(&self, path: &str) -> Option<i32> {
         let hash = hash(path);
-        let index = hash % self.connections.read().unwrap().len() as u32;
+        let index = hash % self.connections.read().unwrap().len() as u64;
         Some(index as i32)
     }
 

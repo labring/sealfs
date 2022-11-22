@@ -3,6 +3,8 @@
 
 high-performance,high reliability and auto-scaling distributed file system.
 
+## Recent Plan
+Refer to [recent plan](https://github.com/labring/sealfs/issues/23)
 
 ## Why Build A New Distributed File System For Cloud Native
 

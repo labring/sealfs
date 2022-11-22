@@ -4,13 +4,11 @@
 
 use log::info;
 use manager_service::{manager_client::ManagerClient, HeartRequest};
-use sealfs_rust::service::fsbase::remote_fs_server::RemoteFsServer;
-use sealfs_rust::service::{self, FsService};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
-use tonic::transport::{Channel, Server};
+use tonic::transport::Channel;
 
 const SERVER_FLAG: u32 = 1;
 
@@ -19,6 +17,8 @@ struct Properties {
     manager_address: String,
     server_address: String,
     lifetime: String,
+    database_path: String,
+    storage_path: String,
 }
 
 pub mod manager_service {
@@ -52,17 +52,23 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
 
     //todo
     //start server
-    let fs_service = FsService::default();
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter
-        .set_serving::<RemoteFsServer<FsService>>()
-        .await;
+    // let fs_service = FsService::default();
+    // let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    // health_reporter
+    //     .set_serving::<RemoteFsServer<FsService>>()
+    //     .await;
     info!("Start Server");
-    Server::builder()
-        .add_service(health_service)
-        .add_service(service::new_fs_service(fs_service))
-        .serve(properties.server_address.parse().unwrap())
-        .await?;
+    server::run(
+        properties.server_address.clone(),
+        properties.database_path.clone(),
+        properties.storage_path.clone(),
+    )
+    .await?;
+    // Server::builder()
+    //     .add_service(health_service)
+    //     .add_service(service::new_fs_service(fs_service))
+    //     .serve(properties.server_address.parse().unwrap())
+    //     .await?;
 
     Ok(())
 }
