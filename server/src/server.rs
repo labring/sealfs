@@ -163,6 +163,11 @@ impl Handler {
             .read_body(header.total_length as usize - REQUEST_HEADER_SIZE)
             .await?;
         match header.r#type {
+            OperationType::Lookup => {
+                debug!("Lookup");
+                self.response(header.id, 0, 0, 16, None, None, None, None)
+                    .await?;
+            }
             OperationType::CreateFile => {
                 debug!("Create File");
                 let file_path = self.parse_path(&buf).await?.unwrap();
@@ -262,6 +267,16 @@ impl Handler {
                     Err(e) => EngineErr2Status!(e) as u32,
                 };
                 self.response(header.id, status, 0, 16, None, None, None, None)
+                    .await?;
+            }
+            OperationType::DeleteFile => {
+                debug!("Remove File");
+                self.response(header.id, 0, 0, 16, None, None, None, None)
+                    .await?;
+            }
+            OperationType::DeleteDir => {
+                debug!("Remove Dir");
+                self.response(header.id, 0, 0, 16, None, None, None, None)
                     .await?;
             }
         }

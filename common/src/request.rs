@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::time;
+
 // request
 // | id | type | flags | total_length | filename_length | filename | meta_data_length | meta_data | data_length | data |
 // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 4Byte | 0~ | 4Byte | 0~ |
@@ -10,6 +12,18 @@ pub const REQUEST_FILENAME_LENGTH_SIZE: usize = 4;
 pub const REQUEST_METADATA_LENGTH_SIZE: usize = 4;
 pub const REQUEST_DATA_LENGTH_SIZE: usize = 4;
 
+pub const REQUEST_QUEUE_LENGTH: usize = 65535;
+pub const CLIENT_REQUEST_TIMEOUT: time::Duration = time::Duration::from_secs(3);
+
+/* receive operation response and wake up the operation thread using condition variable
+    response
+    | id | status | flags | total_length | meta_data_lenght | meta_data | data_length | data |
+    | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 0~ | 4Byte | 0~ |
+*/
+pub const RESPONSE_HEADER_SIZE: usize = 16;
+
+// pub const CLIENT_RESPONSE_TIMEOUT: time::Duration = time::Duration::from_micros(300); // timeout for client response loop
+
 pub struct RequestHeader {
     pub id: u32,
     pub r#type: OperationType,
@@ -17,7 +31,19 @@ pub struct RequestHeader {
     pub total_length: u32,
 }
 
+impl RequestHeader {
+    pub fn new(id: u32, r#type: OperationType, flags: u32, total_length: u32) -> Self {
+        Self {
+            id,
+            r#type,
+            flags,
+            total_length,
+        }
+    }
+}
+
 pub enum OperationType {
+    Lookup = 0,
     CreateFile = 1,
     CreateDir = 2,
     GetFileAttr = 3,
@@ -25,6 +51,8 @@ pub enum OperationType {
     OpenFile = 5,
     ReadFile = 6,
     WriteFile = 7,
+    DeleteFile = 8,
+    DeleteDir = 9,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -39,7 +67,26 @@ impl TryFrom<u32> for OperationType {
             5 => Ok(OperationType::OpenFile),
             6 => Ok(OperationType::ReadFile),
             7 => Ok(OperationType::WriteFile),
+            8 => Ok(OperationType::DeleteFile),
+            9 => Ok(OperationType::DeleteDir),
             _ => panic!("Unkown value: {}", value),
+        }
+    }
+}
+
+impl OperationType {
+    pub fn to_le_bytes(&self) -> [u8; 4] {
+        match self {
+            OperationType::Lookup => 0u32.to_le_bytes(),
+            OperationType::CreateFile => 1u32.to_le_bytes(),
+            OperationType::CreateDir => 2u32.to_le_bytes(),
+            OperationType::GetFileAttr => 3u32.to_le_bytes(),
+            OperationType::ReadDir => 4u32.to_le_bytes(),
+            OperationType::OpenFile => 5u32.to_le_bytes(),
+            OperationType::ReadFile => 6u32.to_le_bytes(),
+            OperationType::WriteFile => 7u32.to_le_bytes(),
+            OperationType::DeleteFile => 8u32.to_le_bytes(),
+            OperationType::DeleteDir => 9u32.to_le_bytes(),
         }
     }
 }

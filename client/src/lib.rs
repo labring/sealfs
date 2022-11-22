@@ -12,7 +12,8 @@ use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
-use manager::CLIENT;
+use log::info;
+use manager::MANAGER;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
@@ -27,7 +28,10 @@ struct SealFS;
 
 impl Filesystem for SealFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        CLIENT.lookup_remote(parent, name, reply);
+        info!("lookup, parent = {}, name = {:?}", parent, name);
+        unsafe {
+            MANAGER.lookup_remote(parent, name, reply);
+        }
     }
 
     fn create(
@@ -40,15 +44,27 @@ impl Filesystem for SealFS {
         flags: i32,
         reply: ReplyCreate,
     ) {
-        CLIENT.create_remote(parent, name, mode, umask, flags, reply);
+        info!(
+            "create, parent = {}, name = {:?}, mode = {}, umask = {}, flags = {}",
+            parent, name, mode, umask, flags
+        );
+        unsafe {
+            MANAGER.create_remote(parent, name, mode, umask, flags, reply);
+        }
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        CLIENT.getattr_remote(ino, reply);
+        info!("getattr, ino = {}", ino);
+        unsafe {
+            MANAGER.getattr_remote(ino, reply);
+        }
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, reply: ReplyDirectory) {
-        CLIENT.readdir_remote(ino, offset, reply);
+        info!("readdir, ino = {}, offset = {}", ino, offset);
+        unsafe {
+            MANAGER.readdir_remote(ino, offset, reply);
+        }
     }
 
     fn read(
@@ -62,7 +78,10 @@ impl Filesystem for SealFS {
         _lock_owner: Option<u64>,
         reply: ReplyData,
     ) {
-        CLIENT.read_remote(ino, offset, size, reply);
+        info!("read, ino = {}, offset = {}, size = {}", ino, offset, size);
+        unsafe {
+            MANAGER.read_remote(ino, offset, size, reply);
+        }
     }
 
     fn write(
@@ -77,7 +96,13 @@ impl Filesystem for SealFS {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
-        CLIENT.write_remote(ino, offset, data, reply);
+        info!(
+            "write, ino = {}, offset = {}, data = {:?}",
+            ino, offset, data
+        );
+        unsafe {
+            MANAGER.write_remote(ino, offset, data, reply);
+        }
     }
 
     fn mkdir(
@@ -89,11 +114,20 @@ impl Filesystem for SealFS {
         _umask: u32,
         reply: ReplyEntry,
     ) {
-        CLIENT.mkdir_remote(parent, name, mode, reply);
+        info!(
+            "mkdir, parent = {}, name = {:?}, mode = {}",
+            parent, name, mode
+        );
+        unsafe {
+            MANAGER.mkdir_remote(parent, name, mode, reply);
+        }
     }
 
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
-        CLIENT.open_remote(ino, flags, reply);
+        println!("open, ino = {}, flags = {}", ino, flags);
+        unsafe {
+            MANAGER.open_remote(ino, flags, reply);
+        }
     }
 
     fn unlink(
@@ -103,17 +137,28 @@ impl Filesystem for SealFS {
         _name: &OsStr,
         reply: fuser::ReplyEmpty,
     ) {
-        CLIENT.unlink_remote(_parent, _name, reply);
+        info!("unlink");
+        unsafe {
+            MANAGER.unlink_remote(_parent, _name, reply);
+        }
     }
 
     fn rmdir(&mut self, _req: &Request<'_>, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
-        CLIENT.rmdir_remote(_parent, _name, reply);
+        info!("rmdir");
+        unsafe {
+            MANAGER.rmdir_remote(_parent, _name, reply);
+        }
     }
 }
 
 pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    env_logger::init();
+    let mut builder = env_logger::Builder::from_default_env();
+    builder
+        .format_timestamp(None)
+        .filter(None, log::LevelFilter::Info);
+    builder.init();
+    info!("starting up");
     let mountpoint = cli.mount_point.unwrap();
     let mut options = vec![MountOption::RO, MountOption::FSName("seal".to_string())];
     if cli.auto_unmount {
@@ -137,6 +182,9 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
         }
     })
     .await?;
+    unsafe {
+        MANAGER.temp_init("127.0.0.1", 8080);
+    }
 
     fuser::mount2(SealFS, mountpoint, &options).unwrap();
     /* TODO
