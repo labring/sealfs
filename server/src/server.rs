@@ -20,19 +20,22 @@ use crate::{distributed_engine::DistributedEngine, storage_engine::StorageEngine
 macro_rules! EngineErr2Status {
     ($e:expr) => {
         match $e {
-            EngineError::IO => -libc::EIO,
-            EngineError::NoEntry => -libc::ENOENT,
-            EngineError::NotDir => -libc::ENOTDIR,
-            EngineError::IsDir => -libc::EISDIR,
-            EngineError::Exist => -libc::EEXIST,
-            EngineError::NotEmpty => -libc::ENOTEMPTY,
+            EngineError::IO => libc::EIO,
+            EngineError::NoEntry => libc::ENOENT,
+            EngineError::NotDir => libc::ENOTDIR,
+            EngineError::IsDir => libc::EISDIR,
+            EngineError::Exist => libc::EEXIST,
+            EngineError::NotEmpty => libc::ENOTEMPTY,
+            // temp
+            EngineError::Path => -1,
+            EngineError::StdIo(_) => -1,
+            EngineError::Rocksdb(_) => -1,
             // todo
             // other Error
-            _ => 0,
+            _ => -1,
         }
     };
 }
-
 pub struct Server<S: StorageEngine + std::marker::Send + std::marker::Sync + 'static> {
     pub address: String,
     listener: TcpListener,
@@ -116,6 +119,7 @@ impl Handler {
 
     pub async fn read_body(&mut self, length: usize) -> anyhow::Result<Vec<u8>> {
         let mut buf: Vec<u8> = Vec::with_capacity(length);
+        buf.resize(length, 0);
         self.stream.read_exact(&mut buf).await?;
         Ok(buf)
     }
@@ -165,10 +169,13 @@ impl Handler {
         match header.r#type {
             OperationType::CreateFile => {
                 debug!("Create File");
+                
                 let file_path = self.parse_path(&buf).await?.unwrap();
                 let status = match engine.create_file(file_path).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                    Err(e) => {
+                        EngineErr2Status!(e) as u32
+                    },
                 };
                 self.response(header.id, status, 0, 16, None, None, None, None)
                     .await?;
@@ -258,6 +265,26 @@ impl Handler {
                 start = start + metadata_length + REQUEST_METADATA_LENGTH_SIZE;
                 let (_data_length, data) = self.parse_data(&buf, start).await?;
                 let status = match engine.write_file(file_path, data.as_slice()).await {
+                    Ok(()) => 0,
+                    Err(e) => EngineErr2Status!(e) as u32,
+                };
+                self.response(header.id, status, 0, 16, None, None, None, None)
+                    .await?;
+            }
+            OperationType::DeleteFile => {
+                debug!("Delete File");
+                let file_path = self.parse_path(&buf).await?.unwrap();
+                let status = match engine.delete_file(file_path).await {
+                    Ok(()) => 0,
+                    Err(e) => EngineErr2Status!(e) as u32,
+                };
+                self.response(header.id, status, 0, 16, None, None, None, None)
+                    .await?;
+            }
+            OperationType::DeleteDir => {
+                debug!("Delete Dir");
+                let file_path = self.parse_path(&buf).await?.unwrap();
+                let status = match engine.delete_dir(file_path).await {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e) as u32,
                 };

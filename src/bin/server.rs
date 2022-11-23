@@ -19,6 +19,8 @@ struct Properties {
     lifetime: String,
     database_path: String,
     storage_path: String,
+    local_distributed_address: String,
+    all_distributed_address: Vec<String>,
 }
 
 pub mod manager_service {
@@ -62,6 +64,8 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         properties.server_address.clone(),
         properties.database_path.clone(),
         properties.storage_path.clone(),
+        properties.local_distributed_address.clone(),
+        properties.all_distributed_address.clone(),
     )
     .await?;
     // Server::builder()
