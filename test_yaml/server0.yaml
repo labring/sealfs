@@ -1,15 +1,15 @@
 manager_address:
   127.0.0.1:8081
 server_address:
-  127.0.0.1:8087
+  127.0.0.1:8085
 lifetime:
   long
 database_path:
-  /tmp/database2/
+  /tmp/database0/
 storage_path:
-  /tmp/storage2/
+  /tmp/storage0/
 local_distributed_address:
-  127.0.0.1:8092
+  127.0.0.1:8090
 all_distributed_address:
  - 127.0.0.1:8090
  - 127.0.0.1:8091

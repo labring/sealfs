@@ -2,7 +2,7 @@ pub mod engine_rpc;
 
 use crate::storage_engine::StorageEngine;
 use crate::EngineError;
-use common::distribute_hash_table::hash;
+use common::distribute_hash_table::{hash, index_selector};
 
 use engine_rpc::enginerpc::{enginerpc_client::EnginerpcClient, EngineRequest};
 use std::collections::HashMap;
@@ -10,9 +10,9 @@ use std::sync::{Arc, Mutex};
 use tonic::transport::Channel;
 
 pub struct DistributedEngine<Storage: StorageEngine> {
-    pub index: i32,
-    pub local_storage: Storage,
-    pub connections: Arc<Mutex<HashMap<i32, EnginerpcClient<Channel>>>>,
+    pub address: String,
+    pub local_storage: Arc<Storage>,
+    pub connections: Arc<Mutex<HashMap<String, Option<EnginerpcClient<Channel>>>>>,
 }
 
 fn path_split(path: String) -> Result<(String, String), EngineError> {
@@ -35,42 +35,53 @@ impl<Storage> DistributedEngine<Storage>
 where
     Storage: StorageEngine,
 {
-    pub fn new(index: i32, local_storage: Storage) -> Self {
+    pub fn new(address: String, local_storage: Arc<Storage>) -> Self {
         Self {
-            index,
+            address,
             local_storage,
             connections: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    pub fn add_connection(&self, id: i32, connection: EnginerpcClient<Channel>) {
-        self.connections
-            .lock()
-            .unwrap()
-            .insert(id as i32, connection);
+    pub fn add_connection(&self, address: String, connection: Option<EnginerpcClient<Channel>>) {
+        self.connections.lock().unwrap().insert(address, connection);
     }
 
-    pub fn remove_connection(&self, id: i32) {
-        self.connections.lock().unwrap().remove(&(id as i32));
+    pub fn remove_connection(&self, address: String) {
+        self.connections.lock().unwrap().remove(&address);
     }
 
-    pub fn get_connection_index(&self, path: &str) -> Option<i32> {
-        let hash = hash(path);
-        let index = hash % self.connections.lock().unwrap().len() as u64;
-        Some(index as i32)
+    pub fn get_connection_index(&self, path: &str) -> Option<String> {
+        Some(index_selector(hash(path)))
     }
-
+    fn get_connection(&self, address: String) -> Result<EnginerpcClient<Channel>, EngineError> {
+        let connect = {
+            self.connections
+                .lock()
+                .unwrap()
+                .get(&address)
+                .unwrap()
+                .clone()
+        };
+        match connect {
+            Some(value) => Ok(value),
+            None => Err(EngineError::StdIo(std::io::Error::from(
+                std::io::ErrorKind::NotConnected,
+            ))),
+        }
+    }
     pub async fn create_dir(&self, path: String) -> Result<(), EngineError> {
+        let mut path = path;
         if !path.ends_with('/') {
-            return Err(EngineError::NotDir);
+            path.push('/');
         }
         if self.local_storage.is_exist(path.clone())? {
             return Err(EngineError::Exist);
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let index = self.get_connection_index(parent_dir.as_str()).unwrap();
-        if self.index == index {
+        let address = self.get_connection_index(parent_dir.as_str()).unwrap();
+        if self.address == address {
             self.local_storage
                 .directory_add_entry(parent_dir, file_name)?;
         } else {
@@ -78,14 +89,7 @@ where
                 parentdir: parent_dir,
                 filename: file_name,
             });
-            let mut connect = {
-                self.connections
-                    .lock()
-                    .unwrap()
-                    .get(&index)
-                    .unwrap()
-                    .clone()
-            };
+            let mut connect = self.get_connection(address)?;
             let response = connect.directory_add_entry(request).await;
 
             let status = match response {
@@ -105,32 +109,25 @@ where
     }
 
     pub async fn delete_dir(&self, path: String) -> Result<(), EngineError> {
+        let mut path = path;
         if !path.ends_with('/') {
-            return Err(EngineError::NotDir);
+            path.push('/');
         }
         if !self.local_storage.is_exist(path.clone())? {
             return Ok(());
         }
-
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let index = self.get_connection_index(parent_dir.as_str()).unwrap();
-        if self.index == index {
+        let address = self.get_connection_index(parent_dir.as_str()).unwrap();
+        if self.address == address {
             self.local_storage
-                .directory_delete_entry(parent_dir, file_name)?;
+                .directory_delete_entry(parent_dir.clone(), file_name.clone())?;
         } else {
             let request = tonic::Request::new(EngineRequest {
-                parentdir: parent_dir,
-                filename: file_name,
+                parentdir: parent_dir.clone(),
+                filename: file_name.clone(),
             });
-            let mut connect = {
-                self.connections
-                    .lock()
-                    .unwrap()
-                    .get(&index)
-                    .unwrap()
-                    .clone()
-            };
-            let response = connect.directory_add_entry(request).await;
+            let mut connect = self.get_connection(address.clone())?;
+            let response = connect.directory_delete_entry(request).await;
 
             let status = match response {
                 Ok(value) => value.get_ref().status,
@@ -144,8 +141,30 @@ where
                 return Err(EngineError::from(status));
             }
         }
-
-        self.local_storage.delete_directory(path)
+        let result = self.local_storage.delete_directory(path);
+        match result {
+            Ok(()) => (),
+            Err(_) => {
+                let request = tonic::Request::new(EngineRequest {
+                    parentdir: parent_dir,
+                    filename: file_name,
+                });
+                let mut connect = self.get_connection(address)?;
+                let response = connect.directory_add_entry(request).await;
+                let status = match response {
+                    Ok(value) => value.get_ref().status,
+                    _ => {
+                        return Err(EngineError::StdIo(std::io::Error::from(
+                            std::io::ErrorKind::NotConnected,
+                        )))
+                    }
+                };
+                if status != 0 {
+                    return Err(EngineError::from(status));
+                }
+            }
+        };
+        result
     }
 
     pub async fn read_dir(&self, path: String) -> Result<Vec<String>, EngineError> {
@@ -162,8 +181,8 @@ where
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let index = self.get_connection_index(parent_dir.as_str()).unwrap();
-        if self.index == index {
+        let address = self.get_connection_index(parent_dir.as_str()).unwrap();
+        if self.address == address {
             self.local_storage
                 .directory_add_entry(parent_dir, file_name)?;
         } else {
@@ -171,14 +190,7 @@ where
                 parentdir: parent_dir,
                 filename: file_name,
             });
-            let mut connect = {
-                self.connections
-                    .lock()
-                    .unwrap()
-                    .get(&index)
-                    .unwrap()
-                    .clone()
-            };
+            let mut connect = self.get_connection(address)?;
             let response = connect.directory_add_entry(request).await;
 
             let status = match response {
@@ -206,8 +218,8 @@ where
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let index = self.get_connection_index(parent_dir.as_str()).unwrap();
-        if self.index == index {
+        let address = self.get_connection_index(parent_dir.as_str()).unwrap();
+        if self.address == address {
             self.local_storage
                 .directory_delete_entry(parent_dir, file_name)?;
         } else {
@@ -215,15 +227,8 @@ where
                 parentdir: parent_dir,
                 filename: file_name,
             });
-            let mut connect = {
-                self.connections
-                    .lock()
-                    .unwrap()
-                    .get(&index)
-                    .unwrap()
-                    .clone()
-            };
-            let response = connect.directory_add_entry(request).await;
+            let mut connect = self.get_connection(address)?;
+            let response = connect.directory_delete_entry(request).await;
 
             let status = match response {
                 Ok(value) => value.get_ref().status,

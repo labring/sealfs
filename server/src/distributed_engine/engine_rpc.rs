@@ -1,15 +1,15 @@
 use self::enginerpc::{
     enginerpc_server::Enginerpc, enginerpc_server::EnginerpcServer, EngineRequest, EngineResponse,
 };
-
 use crate::storage_engine::StorageEngine;
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 pub mod enginerpc {
     tonic::include_proto!("enginerpc");
 }
 
 pub struct RPCService<Storage: StorageEngine> {
-    pub local_storage: Storage,
+    pub local_storage: Arc<Storage>,
 }
 
 pub fn new_manager_service<
@@ -20,7 +20,7 @@ pub fn new_manager_service<
     EnginerpcServer::new(service)
 }
 impl<Storage: StorageEngine> RPCService<Storage> {
-    pub fn new(local_storage: Storage) -> Self {
+    pub fn new(local_storage: Arc<Storage>) -> Self {
         Self { local_storage }
     }
 }
@@ -33,8 +33,6 @@ impl<Storage: StorageEngine + std::marker::Send + std::marker::Sync + 'static> E
         request: Request<EngineRequest>,
     ) -> Result<Response<EngineResponse>, Status> {
         let message = request.get_ref();
-        println!("parentdir: {}", message.parentdir.clone());
-        println!("filename: {}", message.filename.clone());
         let result = self
             .local_storage
             .directory_add_entry(message.parentdir.clone(), message.filename.clone());

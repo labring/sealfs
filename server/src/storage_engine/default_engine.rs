@@ -4,7 +4,7 @@
 
 use crate::EngineError;
 
-use super::StorageEngine;
+use crate::StorageEngine;
 use rocksdb::{Options, DB};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -247,6 +247,15 @@ impl StorageEngine for DefaultEngine {
     }
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError> {
+        match self.dir_db.db.get(path.as_bytes())? {
+            Some(value) => {
+                let sub_dir = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+                if sub_dir.sub_dir.len() != 3 {
+                    return Err(EngineError::NotEmpty);
+                }
+            }
+            None => {}
+        }
         self.file_attr_db.db.delete(path.as_bytes())?;
         self.dir_db.db.delete(path.as_bytes())?;
         Ok(())
