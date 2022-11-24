@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use common::request::{
-    OperationType, CLIENT_REQUEST_TIMEOUT, REQUEST_HEADER_SIZE, REQUEST_QUEUE_LENGTH,
-    RESPONSE_HEADER_SIZE,
+    OperationType, ResponseHeader, CLIENT_REQUEST_TIMEOUT, MAX_DATA_LENGTH, MAX_METADATA_LENGTH,
+    REQUEST_HEADER_SIZE, REQUEST_QUEUE_LENGTH, RESPONSE_HEADER_SIZE,
 };
+use log::info;
 use std::{
     io::{Read, Write},
     net::TcpStream,
@@ -87,10 +88,26 @@ impl Connection {
         Ok(())
     }
 
-    pub fn receive(
+    pub fn receive_response_header(&self) -> Result<ResponseHeader, Box<dyn std::error::Error>> {
+        let mut stream = self.stream.as_ref().unwrap();
+        let mut header = [0; RESPONSE_HEADER_SIZE];
+        stream.read_exact(&mut header)?;
+        let id = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+        let status = i32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+        let flags = u32::from_be_bytes([header[8], header[9], header[10], header[11]]);
+        let total_length = u32::from_be_bytes([header[12], header[13], header[14], header[15]]);
+        Ok(ResponseHeader {
+            id,
+            status,
+            flags,
+            total_length,
+        })
+    }
+
+    pub fn receive_response(
         &self,
-        data: &mut Vec<u8>,
-        meta_data: &mut Vec<u8>,
+        data: &mut [u8],
+        meta_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut stream = self.stream.as_ref().unwrap();
         let mut header = [0u8; RESPONSE_HEADER_SIZE];
@@ -101,10 +118,20 @@ impl Connection {
         meta_data_length_bytes.copy_from_slice(&header[4..8]);
         let data_length = u32::from_be_bytes(data_length_bytes);
         let meta_data_length = u32::from_be_bytes(meta_data_length_bytes);
-        data.resize(data_length as usize, 0);
-        meta_data.resize(meta_data_length as usize, 0);
-        stream.read_exact(data)?;
-        stream.read_exact(meta_data)?;
+        if data_length > MAX_DATA_LENGTH.try_into().unwrap()
+            || meta_data_length > MAX_METADATA_LENGTH.try_into().unwrap()
+        {
+            return Err("data length or meta data length is too long".into());
+        }
+        stream.read_exact(&mut data[0..data_length as usize])?;
+        stream.read_exact(&mut meta_data[0..meta_data_length as usize])?;
+        Ok(())
+    }
+
+    pub fn clean_response(&self, total_length: u32) -> Result<(), Box<dyn std::error::Error>> {
+        let mut stream = self.stream.as_ref().unwrap();
+        let mut buffer = vec![0u8; total_length as usize];
+        stream.read_exact(&mut buffer)?;
         Ok(())
     }
 }
@@ -117,11 +144,20 @@ pub enum CallbackState {
 }
 
 pub struct OperationCallback {
-    pub data: Vec<u8>,
-    pub meta_data: Vec<u8>,
+    // Data and meta_data are used to store the response data
+    // and meta_data from the server.
+    // But it should be used only when the state is Done(In particular,
+    // it should not be used util the request processing is completed)
+    //
+    // A better way is to use a mutable pointer to the data and meta_data
+    // in unsafe code to avoid large memory usage and lifetime issues.
+    // We should do this in the future.
+    pub data: [u8; MAX_DATA_LENGTH],
+    pub meta_data: [u8; MAX_METADATA_LENGTH],
     pub data_length: u32,
     pub meta_data_length: u32,
-    pub status: CallbackState,
+    pub state: CallbackState,
+    pub request_status: libc::c_int,
     pub channel: (mpsc::Sender<()>, mpsc::Receiver<()>),
 }
 
@@ -130,11 +166,12 @@ unsafe impl std::marker::Sync for OperationCallback {}
 impl Default for OperationCallback {
     fn default() -> Self {
         Self {
-            data: Vec::new(),
-            meta_data: Vec::new(),
+            data: [0u8; MAX_DATA_LENGTH],
+            meta_data: [0u8; MAX_METADATA_LENGTH],
             data_length: 0,
             meta_data_length: 0,
-            status: CallbackState::Empty,
+            state: CallbackState::Empty,
+            request_status: 0,
             channel: mpsc::channel(),
         }
     }
@@ -143,11 +180,12 @@ impl Default for OperationCallback {
 impl OperationCallback {
     pub fn new() -> Self {
         Self {
-            data: Vec::new(),
-            meta_data: Vec::new(),
+            data: [0u8; MAX_DATA_LENGTH],
+            meta_data: [0u8; MAX_METADATA_LENGTH],
             data_length: 0,
             meta_data_length: 0,
-            status: CallbackState::Empty,
+            state: CallbackState::Empty,
+            request_status: 0,
             channel: mpsc::channel(),
         }
     }
@@ -184,13 +222,24 @@ impl CircularQueue {
         }
     }
 
-    pub fn register_callback(&self) -> Result<u32, Box<dyn std::error::Error>> {
+    pub fn register_callback(
+        &self,
+        _data: &[u8],
+        data_length: u32,
+        _meta_data: &[u8],
+        meta_data_length: u32,
+    ) -> Result<u32, Box<dyn std::error::Error>> {
         let mut end_index = self.end_index.lock().unwrap();
         let id = *end_index;
         *end_index = (*end_index + 1) % REQUEST_QUEUE_LENGTH as u32;
         unsafe {
             let callback = self.callbacks[id as usize];
-            (*(callback as *mut OperationCallback)).status = CallbackState::WaitingForResponse;
+            (*(callback as *mut OperationCallback)).state = CallbackState::WaitingForResponse;
+            // TODO: put data and meta_data to the callback
+            // (*(callback as *mut OperationCallback)).data = data;
+            // (*(callback as *mut OperationCallback)).meta_data = meta_data;
+            (*(callback as *mut OperationCallback)).data_length = data_length;
+            (*(callback as *mut OperationCallback)).meta_data_length = meta_data_length;
         }
         Ok(id)
     }
@@ -203,12 +252,12 @@ impl CircularQueue {
         for i in *start_index..end_flag {
             unsafe {
                 let callback = self.callbacks[i as usize];
-                match (*callback).status {
+                match (*callback).state {
                     CallbackState::Done => {
-                        (*(callback as *mut OperationCallback)).status = CallbackState::Empty;
+                        (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
                     }
                     CallbackState::Timeout => {
-                        (*(callback as *mut OperationCallback)).status = CallbackState::Empty;
+                        (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
                     }
                     CallbackState::WaitingForResponse => {
                         *start_index = i;
@@ -221,19 +270,47 @@ impl CircularQueue {
         Ok(())
     }
 
-    pub fn response(
-        &self,
-        id: u32,
-        data: &[u8],
-        meta_data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn get_data_ref(&self, id: u32) -> Result<&mut [u8], Box<dyn std::error::Error>> {
+        let callback = self.callbacks[id as usize];
+        unsafe {
+            // if (*callback).status != CallbackState::WaitingForResponse {
+            //     Err("Callback status not WaitingForResponse")?;
+            // }
+            // if data_length == 0 {
+            //     Ok(&[])
+            // } else if data_length > (*callback).data.len() as u32 {
+            //     Err("Data length is too large")?;
+            // }
+            // Ok(&(*callback).data[0..data_length as usize])
+
+            Ok(&mut (*(callback as *mut OperationCallback)).data
+                [0..(*callback).data_length as usize])
+        }
+    }
+
+    pub fn get_meta_data_ref(&self, id: u32) -> Result<&mut [u8], Box<dyn std::error::Error>> {
+        let callback = self.callbacks[id as usize];
+        unsafe {
+            // if (*callback).status != CallbackState::WaitingForResponse {
+            //     Err("Callback status not WaitingForResponse")?;
+            // }
+            // if meta_data_length == 0 {
+            //     Ok(&[])
+            // } else if meta_data_length > (*callback).meta_data.len() as u32 {
+            //     Err("Data length is too large")?;
+            // }
+            // Ok(&(*callback).meta_data[0..meta_data_length as usize])
+
+            Ok(&mut (*(callback as *mut OperationCallback)).meta_data
+                [0..(*callback).meta_data_length as usize])
+        }
+    }
+
+    pub fn response(&self, id: u32, status: libc::c_int) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let callback = self.callbacks[id as usize];
-            (*(callback as *mut OperationCallback)).data_length = data.len() as u32;
-            (*(callback as *mut OperationCallback)).meta_data_length = meta_data.len() as u32;
-            (*(callback as *mut OperationCallback)).data = data.to_vec();
-            (*(callback as *mut OperationCallback)).meta_data = meta_data.to_vec();
-            (*(callback as *mut OperationCallback)).status = CallbackState::Done;
+            (*(callback as *mut OperationCallback)).state = CallbackState::Done;
+            (*(callback as *mut OperationCallback)).request_status = status;
             (*(callback as *mut OperationCallback)).channel.0.send(())?;
         }
         self.clean_up()?;
@@ -243,7 +320,7 @@ impl CircularQueue {
     pub fn timeout(&self, id: u32) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let callback = self.callbacks[id as usize];
-            (*(callback as *mut OperationCallback)).status = CallbackState::Timeout;
+            (*(callback as *mut OperationCallback)).state = CallbackState::Timeout;
         }
         self.clean_up()?;
         Ok(())
@@ -261,11 +338,11 @@ impl CircularQueue {
                 .recv_timeout(CLIENT_REQUEST_TIMEOUT);
             match result {
                 Ok(_) => {
-                    (*(callback as *mut OperationCallback)).status = CallbackState::Done;
+                    (*(callback as *mut OperationCallback)).state = CallbackState::Done;
                     Ok(callback)
                 }
                 Err(_) => {
-                    (*(callback as *mut OperationCallback)).status = CallbackState::Timeout;
+                    (*(callback as *mut OperationCallback)).state = CallbackState::Timeout;
                     Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::TimedOut,
                         "timeout",

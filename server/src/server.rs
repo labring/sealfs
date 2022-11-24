@@ -163,6 +163,9 @@ impl Handler {
             .read_body(header.total_length as usize - REQUEST_HEADER_SIZE)
             .await?;
         match header.r#type {
+            OperationType::Unkown => {
+                todo!("response to client, unkown operation type");
+            }
             OperationType::Lookup => {
                 debug!("Lookup");
                 self.response(header.id, 0, 0, 16, None, None, None, None)

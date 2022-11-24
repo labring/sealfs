@@ -10,6 +10,7 @@ use fuser::{
     FileAttr, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
     ReplyWrite,
 };
+use log::info;
 use std::ffi::OsStr;
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, UNIX_EPOCH};
@@ -59,24 +60,72 @@ impl Manager {
         Some(index as i32)
     }
 
-    pub fn temp_init(&'static self, host: &str, port: u16) {
+    pub fn temp_init(
+        &'static self,
+        host: &str,
+        port: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("temp init");
         let connection = Connection::new(host.to_string(), port);
+        info!("add connection");
         self.add_connection(0, connection);
 
+        self.connections.get(&0).unwrap().connect()?;
+
+        info!("spawn parse thread");
         // spawn a thread to handle the connection using self.parse_response
         std::thread::spawn(|| self.parse_response());
+        OK(())
     }
 
     // parse_response
     // try to get response from sequence of connections and write to callbacks
     pub fn parse_response(&self) {
-        loop {}
+        loop {
+            // TODO: use epoll to watch all connections
+            for it in self.connections.iter() {
+                let connection = it.value();
+                log::info!("parse_response: {:?}", connection.host);
+                let result = connection.receive_response_header();
+                match result {
+                    Ok(header) => {
+                        let id = header.id;
+                        let total_length = header.total_length;
+                        let data_result = self.queue.get_data_ref(id);
+                        let meta_data_result = self.queue.get_data_ref(id);
+                        match (data_result, meta_data_result) {
+                            (Ok(data), Ok(meta_data)) => {
+                                let response = connection.receive_response(data, meta_data);
+                                match response {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        println!("Error: {}", e);
+                                    }
+                                }
+                            }
+                            _ => {
+                                let result = connection.clean_response(total_length);
+                                match result {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        println!("Error: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Error: {}", e);
+                    }
+                }
+            }
+        }
     }
 
     pub fn lookup_remote(&self, parent: u64, name: &OsStr, reply: ReplyEntry) {
         log::info!("lookup_remote");
         if self.inodes_reverse.contains_key(&parent) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = format!(
@@ -154,7 +203,7 @@ impl Manager {
     ) {
         log::info!("create_remote");
         if self.inodes_reverse.contains_key(&parent) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = format!(
@@ -217,7 +266,7 @@ impl Manager {
     pub fn getattr_remote(&self, ino: u64, reply: ReplyAttr) {
         log::info!("getattr_remote");
         if self.inodes_reverse.contains_key(&ino) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&ino).unwrap();
@@ -273,7 +322,7 @@ impl Manager {
     pub fn readdir_remote(&self, ino: u64, _offset: i64, reply: ReplyDirectory) {
         log::info!("readdir_remote");
         if self.inodes_reverse.contains_key(&ino) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&ino).unwrap();
@@ -312,7 +361,7 @@ impl Manager {
     pub fn read_remote(&self, ino: u64, _offset: i64, _size: u32, reply: ReplyData) {
         log::info!("read_remote");
         if self.inodes_reverse.contains_key(&ino) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&ino).unwrap();
@@ -351,7 +400,7 @@ impl Manager {
     pub fn write_remote(&self, ino: u64, _offset: i64, _data: &[u8], reply: ReplyWrite) {
         log::info!("write_remote");
         if self.inodes_reverse.contains_key(&ino) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&ino).unwrap();
@@ -390,7 +439,7 @@ impl Manager {
     pub fn mkdir_remote(&self, parent: u64, _name: &OsStr, _mode: u32, reply: ReplyEntry) {
         log::info!("mkdir_remote");
         if self.inodes_reverse.contains_key(&parent) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&parent).unwrap();
@@ -429,7 +478,7 @@ impl Manager {
     pub fn open_remote(&self, ino: u64, _flags: i32, reply: ReplyOpen) {
         log::info!("open_remote");
         if self.inodes_reverse.contains_key(&ino) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&ino).unwrap();
@@ -468,7 +517,7 @@ impl Manager {
     pub fn unlink_remote(&self, parent: u64, _name: &OsStr, reply: ReplyEmpty) {
         log::info!("unlink_remote");
         if self.inodes_reverse.contains_key(&parent) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&parent).unwrap();
@@ -507,7 +556,7 @@ impl Manager {
     pub fn rmdir_remote(&self, parent: u64, _name: &OsStr, reply: ReplyEmpty) {
         log::info!("rmdir_remote");
         if self.inodes_reverse.contains_key(&parent) {
-            let result = self.queue.register_callback();
+            let result = self.queue.register_callback(&[], 0, &[], 0);
             match result {
                 Ok(id) => {
                     let path = self.inodes_reverse.get(&parent).unwrap();
@@ -558,12 +607,16 @@ impl Deref for MANAGER {
 impl MANAGER {
     pub fn get() -> *const Manager {
         unsafe {
+            info!("MANAGER::get");
             if MANAGER.m.is_null() {
+                info!("MANAGER::get is null");
                 MANAGER.m = Box::into_raw(Box::new(Manager::new()));
+                info!("MANAGER::get is null end");
                 // initialize operation_callbacks
                 MANAGER.m.as_mut().unwrap().queue.init();
+                info!("MANAGER::get is null end 2");
             }
-            MANAGER.m as *const MANAGER as *const Manager
+            MANAGER.m as *const Manager
         }
     }
 }

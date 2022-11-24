@@ -5,6 +5,7 @@ pub mod connection;
 pub mod distribute_hash_table;
 pub mod manager;
 
+use crate::connection::Connection;
 use clap::Parser;
 use common::manager_service::manager::manager_client::ManagerClient;
 use common::manager_service::manager::MetadataRequest;
@@ -173,18 +174,29 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let manager_address = config.manager_address;
     let http_manager_address = format!("http://{}", manager_address);
 
-    tokio::spawn(async {
-        let mut client = ManagerClient::connect(http_manager_address).await.unwrap();
-        let request = tonic::Request::new(MetadataRequest { flag: CLIENT_FLAG });
-        let result = client.get_metadata(request).await;
-        if result.is_err() {
-            panic!("get metadata error.");
-        }
-    })
-    .await?;
+    info!("spawn client");
+
+    // tokio::spawn(async {
+    //     let mut client = ManagerClient::connect(http_manager_address).await.unwrap();
+    //     let request = tonic::Request::new(MetadataRequest { flag: CLIENT_FLAG });
+    //     let result = client.get_metadata(request).await;
+    //     if result.is_err() {
+    //         panic!("get metadata error.");
+    //     }
+    // })
+    // .await?;
+
+    info!("init manager");
+
     unsafe {
-        MANAGER.temp_init("127.0.0.1", 8080);
+        let result = MANAGER.temp_init("127.0.0.1", 8080);
+        match result {
+            Ok(_) => info!("init manager success"),
+            Err(e) => panic!("init manager failed, error = {}", e),
+        }
     }
+
+    info!("start fuse");
 
     fuser::mount2(SealFS, mountpoint, &options).unwrap();
     /* TODO
