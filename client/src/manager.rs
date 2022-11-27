@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::connection::Connection;
-use crate::distribute_hash_table::hash;
+use crate::distribute_hash_table::{hash, index_selector};
 use fuser::{
     FileAttr, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
     ReplyWrite,
@@ -19,7 +19,7 @@ const TTL: Duration = Duration::from_secs(1); // 1 second
 
 pub struct Manager {
     // TODO replace with a thread safe data structure
-    pub connections: Arc<RwLock<HashMap<i32, Connection>>>,
+    pub connections: Arc<RwLock<HashMap<String, Connection>>>,
     pub inodes: Arc<Mutex<HashMap<String, FileAttr>>>,
     pub inodes_reverse: Arc<Mutex<HashMap<u64, String>>>,
 }
@@ -39,21 +39,18 @@ impl Manager {
         }
     }
 
-    pub fn add_connection(&self, id: i32, connection: Connection) {
-        self.connections
-            .write()
-            .unwrap()
-            .insert(id as i32, connection);
+    pub fn add_connection(&self, ip: String, connection: Connection) {
+        self.connections.write().unwrap().insert(ip, connection);
     }
 
-    pub fn remove_connection(&self, id: i32) {
-        self.connections.write().unwrap().remove(&(id as i32));
+    pub fn remove_connection(&self, ip: String) {
+        self.connections.write().unwrap().remove(&ip);
     }
 
-    pub fn get_connection_index(&self, path: &str) -> Option<i32> {
+    pub fn get_connection_index(&self, path: &str) -> Option<String> {
         let hash = hash(path);
-        let index = hash % self.connections.read().unwrap().len() as u64;
-        Some(index as i32)
+        let index = index_selector(hash);
+        Some(index)
     }
 
     pub fn lookup_remote(&self, parent: u64, name: &OsStr, reply: ReplyEntry) {
@@ -69,7 +66,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .lookup(&path);
             //let result = connection.lookup(&path).await;
@@ -112,7 +109,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .create(&path, mode, umask, flags);
             match result {
@@ -148,7 +145,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .getattr(&path);
             match result {
@@ -181,7 +178,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .readdir(&path);
             match result {
@@ -219,7 +216,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .read(&path, offset, size);
             match result {
@@ -252,7 +249,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .write(&path, offset, data);
             match result {
@@ -283,7 +280,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .mkdir(&path, mode);
             match result {
@@ -319,7 +316,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .open(&path, flags);
             match result {
@@ -350,7 +347,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .unlink(&path);
             match result {
@@ -381,7 +378,7 @@ impl Manager {
                 .connections
                 .read()
                 .unwrap()
-                .get(&(index as i32))
+                .get(&index)
                 .unwrap()
                 .rmdir(&path);
             match result {
