@@ -12,7 +12,7 @@ use tonic::transport::Channel;
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub local_storage: Arc<Storage>,
-    pub connections: DashMap<String, Option<EnginerpcClient<Channel>>>,
+    pub connections: DashMap<String, EnginerpcClient<Channel>>,
 }
 
 fn path_split(path: String) -> Result<(String, String), EngineError> {
@@ -43,7 +43,7 @@ where
         }
     }
 
-    pub fn add_connection(&self, address: String, connection: Option<EnginerpcClient<Channel>>) {
+    pub fn add_connection(&self, address: String, connection: EnginerpcClient<Channel>) {
         self.connections.insert(address, connection);
     }
 
@@ -56,9 +56,9 @@ where
     }
 
     fn get_connection(&self, address: String) -> Result<EnginerpcClient<Channel>, EngineError> {
-        let connect = { self.connections.get(&address).unwrap().clone() };
+        let connect = { self.connections.get(&address) };
         match connect {
-            Some(value) => Ok(value),
+            Some(value) => Ok(value.value().clone()),
             None => Err(EngineError::StdIo(std::io::Error::from(
                 std::io::ErrorKind::NotConnected,
             ))),

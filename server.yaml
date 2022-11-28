@@ -4,3 +4,13 @@ server_address:
   127.0.0.1:8080
 lifetime:
   long
+database_path:
+  /tmp/database0/
+storage_path:
+  /tmp/storage0/
+local_distributed_address:
+  127.0.0.1:8090
+all_distributed_address:
+ - 127.0.0.1:8090
+ - 127.0.0.1:8091
+ - 127.0.0.1:8092
