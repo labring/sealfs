@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use common::manager_service::{self, ManagerService};
-use manager::heart::healthy_check;
+use manager::manager_service::{self, ManagerService};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tonic::transport::Server;
@@ -22,9 +21,7 @@ async fn main() -> anyhow::Result<()> {
     let address = properties.address;
     let service = ManagerService::default();
 
-    tokio::spawn(async {
-        healthy_check().await;
-    });
+    service.heart.healthy_check().await;
 
     //build rpc server.
     Server::builder()
