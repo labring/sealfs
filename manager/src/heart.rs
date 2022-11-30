@@ -28,7 +28,7 @@ impl Heart {
 
     pub async fn healthy_check(&self) {
         let instances = self.instances.clone();
-        tokio::spawn(async move{
+        tokio::spawn(async move {
             let mut interval = time::interval(time::Duration::from_secs(5));
             interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
