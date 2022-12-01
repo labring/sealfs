@@ -9,6 +9,7 @@ use common::{
     },
 };
 use log::{debug, info};
+use nix::sys::stat::Mode;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -162,13 +163,20 @@ impl Handler {
         let buf = self
             .read_body(header.total_length as usize - REQUEST_HEADER_SIZE)
             .await?;
+        // a temporary implementation
+        let mode = Mode::S_IRUSR
+            | Mode::S_IWUSR
+            | Mode::S_IRGRP
+            | Mode::S_IWGRP
+            | Mode::S_IROTH
+            | Mode::S_IWOTH;
         match header.r#type {
             OperationType::CreateFile => {
                 debug!("Create File");
                 let file_path = self.parse_path(&buf).await?.unwrap();
-                let status = match engine.create_file(file_path).await {
-                    Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                let (_fd, status) = match engine.create_file(file_path, mode).await {
+                    Ok(fd) => (fd, 0),
+                    Err(e) => (-1, EngineErr2Status!(e) as u32),
                 };
                 self.response(header.id, status, 0, 16, None, None, None, None)
                     .await?;
@@ -176,7 +184,7 @@ impl Handler {
             OperationType::CreateDir => {
                 debug!("Create Dir");
                 let dir_path = self.parse_path(&buf).await?.unwrap();
-                let status = match engine.create_dir(dir_path).await {
+                let status = match engine.create_dir(dir_path, mode).await {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e) as u32,
                 };
@@ -214,6 +222,7 @@ impl Handler {
             OperationType::ReadDir => {
                 debug!("Read Dir");
                 let dir_path = self.parse_path(&buf).await?.unwrap();
+                // need to be parse size
                 let (data, status) = match engine.read_dir(dir_path).await {
                     Ok(value) => (value, 0u32),
                     Err(e) => (Vec::new(), EngineErr2Status!(e) as u32),
@@ -234,7 +243,8 @@ impl Handler {
             OperationType::ReadFile => {
                 debug!("Read File");
                 let file_path = self.parse_path(&buf).await?.unwrap();
-                let (data, status) = match engine.read_file(file_path).await {
+                // need to parse size and offset from request
+                let (data, status) = match engine.read_file(file_path, 100, 0).await {
                     Ok(value) => (value, 0),
                     Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
@@ -257,9 +267,10 @@ impl Handler {
                 let (metadata_length, _metadata) = self.parse_metadata(&buf, start).await?;
                 start = start + metadata_length + REQUEST_METADATA_LENGTH_SIZE;
                 let (_data_length, data) = self.parse_data(&buf, start).await?;
-                let status = match engine.write_file(file_path, data.as_slice()).await {
-                    Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                // need to be parse offset
+                let (_size, status) = match engine.write_file(file_path, data.as_slice(), 0).await {
+                    Ok(size) => (size, 0),
+                    Err(e) => (0, EngineErr2Status!(e) as u32),
                 };
                 self.response(header.id, status, 0, 16, None, None, None, None)
                     .await?;

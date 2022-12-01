@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use nix::sys::stat::Mode;
+
 use crate::EngineError;
 
 pub mod default_engine;
@@ -14,9 +16,9 @@ pub trait StorageEngine {
 
     fn read_directory(&self, path: String) -> Result<Vec<String>, EngineError>;
 
-    fn read_file(&self, path: String) -> Result<Vec<u8>, EngineError>;
+    fn read_file(&self, path: String, size: i64, offset: i64) -> Result<Vec<u8>, EngineError>;
 
-    fn write_file(&self, path: String, data: &[u8]) -> Result<(), EngineError>;
+    fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError>;
 
     fn delete_directory_recursive(&self, path: String) -> Result<(), EngineError>;
 
@@ -31,11 +33,11 @@ pub trait StorageEngine {
         file_name: String,
     ) -> Result<(), EngineError>;
 
-    fn create_file(&self, path: String) -> Result<(), EngineError>;
+    fn create_file(&self, path: String, mode: Mode) -> Result<i32, EngineError>;
 
     fn delete_file(&self, path: String) -> Result<(), EngineError>;
 
-    fn create_directory(&self, path: String) -> Result<(), EngineError>;
+    fn create_directory(&self, path: String, mode: Mode) -> Result<(), EngineError>;
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError>;
 }

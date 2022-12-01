@@ -47,6 +47,9 @@ pub enum EngineError {
     StdIo(#[from] std::io::Error),
 
     #[error(transparent)]
+    Nix(#[from] nix::Error),
+
+    #[error(transparent)]
     Rocksdb(#[from] rocksdb::Error),
 }
 impl From<u32> for EngineError {
