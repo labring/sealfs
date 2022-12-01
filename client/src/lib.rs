@@ -4,14 +4,14 @@
 pub mod connection;
 pub mod manager;
 
+use crate::manager::CLIENT;
+use ::manager::manager_service::manager::manager_client::ManagerClient;
+use ::manager::manager_service::manager::MetadataRequest;
 use clap::Parser;
-use common::manager_service::manager::manager_client::ManagerClient;
-use common::manager_service::manager::MetadataRequest;
 use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
-use manager::CLIENT;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 

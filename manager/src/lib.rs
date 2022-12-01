@@ -3,4 +3,5 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod heart;
+pub mod manager_service;
 pub mod uid;

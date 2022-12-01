@@ -4,5 +4,4 @@
 
 pub mod byte;
 pub mod distribute_hash_table;
-pub mod manager_service;
 pub mod request;
