@@ -69,6 +69,7 @@ mod tests {
     use crate::storage_engine::{default_engine::DefaultEngine, StorageEngine};
     use crate::{DistributedEngine, EngineError};
     use common::distribute_hash_table::build_hash_ring;
+    use nix::sys::stat::Mode;
     use std::sync::Arc;
     use tokio::time::sleep;
 
@@ -118,22 +119,28 @@ mod tests {
         sleep(std::time::Duration::from_millis(5000)).await;
         engine0.delete_file("/test".into()).await.unwrap();
 
+        let mode = Mode::S_IRUSR
+            | Mode::S_IWUSR
+            | Mode::S_IRGRP
+            | Mode::S_IWGRP
+            | Mode::S_IROTH
+            | Mode::S_IWOTH;
         // end with '/'
-        match engine0.create_file("/test/".into()).await {
+        match engine0.create_file("/test/".into(), mode).await {
             Err(EngineError::IsDir) => assert!(true),
             _ => assert!(false),
         };
-        match engine0.create_file("/test".into()).await {
-            Ok(()) => assert!(true),
+        match engine0.create_file("/test".into(), mode).await {
+            Ok(_) => assert!(true),
             _ => assert!(false),
         };
         // repeat the same file
-        match engine0.create_file("/test".into()).await {
+        match engine0.create_file("/test".into(), mode).await {
             Err(EngineError::Exist) => assert!(true),
             _ => assert!(false),
         };
         match engine0.delete_file("/test".into()).await {
-            Ok(()) => assert!(true),
+            Ok(_) => assert!(true),
             _ => assert!(false),
         };
     }
@@ -163,23 +170,29 @@ mod tests {
         engine0.delete_file("/test/t1".into()).await.unwrap();
         engine0.delete_dir("/test/".into()).await.unwrap();
 
+        let mode = Mode::S_IRUSR
+            | Mode::S_IWUSR
+            | Mode::S_IRGRP
+            | Mode::S_IWGRP
+            | Mode::S_IROTH
+            | Mode::S_IWOTH;
         // not end with '/'
-        match engine0.create_dir("/test".into()).await {
+        match engine0.create_dir("/test".into(), mode).await {
             Err(EngineError::NotDir) => assert!(true),
             _ => assert!(false),
         };
-        match engine0.create_dir("/test/".into()).await {
+        match engine0.create_dir("/test/".into(), mode).await {
             core::result::Result::Ok(()) => assert!(true),
             _ => assert!(false),
         };
         // repeat the same dir
-        match engine0.create_dir("/test/".into()).await {
+        match engine0.create_dir("/test/".into(), mode).await {
             Err(EngineError::Exist) => assert!(true),
             _ => assert!(false),
         };
         // dir add file
-        match engine0.create_file("/test/t1".into()).await {
-            Ok(()) => assert!(true),
+        match engine0.create_file("/test/t1".into(), mode).await {
+            Ok(_) => assert!(true),
             _ => assert!(false),
         };
         // dir has file
