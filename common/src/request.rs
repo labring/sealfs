@@ -25,6 +25,8 @@ pub enum OperationType {
     OpenFile = 5,
     ReadFile = 6,
     WriteFile = 7,
+    DeleteFile = 8,
+    DeleteDir = 9,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -39,6 +41,8 @@ impl TryFrom<u32> for OperationType {
             5 => Ok(OperationType::OpenFile),
             6 => Ok(OperationType::ReadFile),
             7 => Ok(OperationType::WriteFile),
+            8 => Ok(OperationType::DeleteFile),
+            9 => Ok(OperationType::DeleteDir),
             _ => panic!("Unkown value: {}", value),
         }
     }

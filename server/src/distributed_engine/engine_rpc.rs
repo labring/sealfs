@@ -112,8 +112,7 @@ mod tests {
             let connection = EnginerpcClient::connect(format!("http://{}", address1.clone()))
                 .await
                 .unwrap();
-            arc_engine0.add_connection(address0.clone(), None);
-            arc_engine0.add_connection(address1.clone(), Some(connection));
+            arc_engine0.add_connection(address1.clone(), connection);
             println!("connected");
         });
         sleep(std::time::Duration::from_millis(5000)).await;
@@ -157,8 +156,7 @@ mod tests {
             let connection = EnginerpcClient::connect(format!("http://{}", address1.clone()))
                 .await
                 .unwrap();
-            arc_engine0.add_connection(address0.clone(), None);
-            arc_engine0.add_connection(address1.clone(), Some(connection));
+            arc_engine0.add_connection(address1.clone(), connection);
             println!("connected");
         });
         sleep(std::time::Duration::from_millis(5000)).await;
