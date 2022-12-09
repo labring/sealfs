@@ -21,11 +21,13 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9.14"
 tonic-health = "0.7.1"
 dashmap = "5.4.0"
+async-trait = "0.1.59"
 
 client = {path = "client"}
 server = {path = "server"}
 manager = {path = "manager"}
 common = {path = "common"}
+rpc = {path = "rpc"}
 
 [build-dependencies]
 tonic-build = "0.8"
@@ -48,4 +50,5 @@ members = [
     "client",
     "common",
     "manager",
+    "rpc",
 ]
