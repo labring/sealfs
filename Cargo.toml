@@ -48,4 +48,5 @@ members = [
     "client",
     "common",
     "manager",
+    "intercept",
 ]
