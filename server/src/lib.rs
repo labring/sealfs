@@ -10,15 +10,16 @@ use std::sync::Arc;
 
 use crate::storage_engine::StorageEngine;
 
-use crate::server::Server;
+use rpc::server::Server;
 use common::distribute_hash_table::build_hash_ring;
 use distributed_engine::{
     engine_rpc::{self, enginerpc::enginerpc_client::EnginerpcClient, RPCService},
     DistributedEngine,
 };
+use server::FileRequestHandler;
 use std::error::Error;
 use storage_engine::default_engine::DefaultEngine;
-use tokio::{net::TcpListener, time};
+use tokio::time;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -78,7 +79,7 @@ pub async fn run(
     local_distributed_address: String,
     all_servers_address: Vec<String>,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(&address).await?;
+    //let listener = TcpListener::bind(&address).await?;
     let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
     local_storage.init();
     build_hash_ring(all_servers_address.clone());
@@ -122,7 +123,8 @@ pub async fn run(
             }
         });
     }
-    let mut server = Server::new(address, listener, engine);
+    let handler = Arc::new(FileRequestHandler::new(engine));
+    let server = Server::new(handler, &address);
     server.run().await?;
     Ok(())
 }

@@ -1,21 +1,20 @@
 // Copyright 2022 labring. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub mod connection;
-pub mod manager;
 
-use crate::manager::CLIENT;
-use ::manager::manager_service::manager::manager_client::ManagerClient;
-use ::manager::manager_service::manager::MetadataRequest;
+pub mod client;
+
 use clap::Parser;
+use client::MANAGER;
 use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
-const CLIENT_FLAG: u32 = 2;
+const _CLIENT_FLAG: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
@@ -26,7 +25,8 @@ struct SealFS;
 
 impl Filesystem for SealFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        CLIENT.lookup_remote(parent, name, reply);
+        info!("lookup, parent = {}, name = {:?}", parent, name);
+        MANAGER.lookup_remote(parent, name, reply);
     }
 
     fn create(
@@ -39,15 +39,21 @@ impl Filesystem for SealFS {
         flags: i32,
         reply: ReplyCreate,
     ) {
-        CLIENT.create_remote(parent, name, mode, umask, flags, reply);
+        info!(
+            "create, parent = {}, name = {:?}, mode = {}, umask = {}, flags = {}",
+            parent, name, mode, umask, flags
+        );
+        MANAGER.create_remote(parent, name, mode, umask, flags, reply);
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        CLIENT.getattr_remote(ino, reply);
+        info!("getattr, ino = {}", ino);
+        MANAGER.getattr_remote(ino, reply);
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, reply: ReplyDirectory) {
-        CLIENT.readdir_remote(ino, offset, reply);
+        info!("readdir, ino = {}, offset = {}", ino, offset);
+        MANAGER.readdir_remote(ino, offset, reply);
     }
 
     fn read(
@@ -61,7 +67,8 @@ impl Filesystem for SealFS {
         _lock_owner: Option<u64>,
         reply: ReplyData,
     ) {
-        CLIENT.read_remote(ino, offset, size, reply);
+        info!("read, ino = {}, offset = {}, size = {}", ino, offset, size);
+        MANAGER.read_remote(ino, offset, size, reply);
     }
 
     fn write(
@@ -76,7 +83,11 @@ impl Filesystem for SealFS {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
-        CLIENT.write_remote(ino, offset, data, reply);
+        info!(
+            "write, ino = {}, offset = {}, data = {:?}",
+            ino, offset, data
+        );
+        MANAGER.write_remote(ino, offset, data, reply);
     }
 
     fn mkdir(
@@ -88,11 +99,16 @@ impl Filesystem for SealFS {
         _umask: u32,
         reply: ReplyEntry,
     ) {
-        CLIENT.mkdir_remote(parent, name, mode, reply);
+        info!(
+            "mkdir, parent = {}, name = {:?}, mode = {}",
+            parent, name, mode
+        );
+        MANAGER.mkdir_remote(parent, name, mode, reply);
     }
 
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
-        CLIENT.open_remote(ino, flags, reply);
+        println!("open, ino = {}, flags = {}", ino, flags);
+        MANAGER.open_remote(ino, flags, reply);
     }
 
     fn unlink(
@@ -102,17 +118,24 @@ impl Filesystem for SealFS {
         _name: &OsStr,
         reply: fuser::ReplyEmpty,
     ) {
-        CLIENT.unlink_remote(_parent, _name, reply);
+        info!("unlink");
+        MANAGER.unlink_remote(_parent, _name, reply);
     }
 
     fn rmdir(&mut self, _req: &Request<'_>, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
-        CLIENT.rmdir_remote(_parent, _name, reply);
+        info!("rmdir");
+        MANAGER.rmdir_remote(_parent, _name, reply);
     }
 }
 
 pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    env_logger::init();
+    let mut builder = env_logger::Builder::from_default_env();
+    builder
+        .format_timestamp(None)
+        .filter(None, log::LevelFilter::Debug);
+    builder.init();
+    info!("starting up");
     let mountpoint = cli.mount_point.unwrap();
     let mut options = vec![MountOption::RO, MountOption::FSName("seal".to_string())];
     if cli.auto_unmount {
@@ -125,17 +148,29 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let attr = include_str!("../../client.yaml");
     let config: Config = serde_yaml::from_str(attr).expect("client.yaml read failed!");
     let manager_address = config.manager_address;
-    let http_manager_address = format!("http://{}", manager_address);
+    let _http_manager_address = format!("http://{}", manager_address);
 
-    tokio::spawn(async {
-        let mut client = ManagerClient::connect(http_manager_address).await.unwrap();
-        let request = tonic::Request::new(MetadataRequest { flag: CLIENT_FLAG });
-        let result = client.get_metadata(request).await;
-        if result.is_err() {
-            panic!("get metadata error.");
-        }
-    })
-    .await?;
+    info!("spawn client");
+
+    // tokio::spawn(async {
+    //     let mut client = ManagerClient::connect(http_manager_address).await.unwrap();
+    //     let request = tonic::Request::new(MetadataRequest { flag: CLIENT_FLAG });
+    //     let result = client.get_metadata(request).await;
+    //     if result.is_err() {
+    //         panic!("get metadata error.");
+    //     }
+    // })
+    // .await?;
+
+    info!("init manager");
+
+    let result = MANAGER.temp_init("127.0.0.1:8085");
+    match result {
+        Ok(_) => info!("init manager success"),
+        Err(e) => panic!("init manager failed, error = {}", e),
+    }
+
+    info!("start fuse");
 
     fuser::mount2(SealFS, mountpoint, &options).unwrap();
     /* TODO

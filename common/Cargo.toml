@@ -14,6 +14,7 @@ lazy_static = "1.4.0"
 dashmap = "5.4.0"
 fasthash = "0.4.0"
 parking_lot = "0.12.1"
+fuser = "0.11.1"
 
 manager = {path = "../manager"}
 

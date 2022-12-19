@@ -127,6 +127,24 @@ impl TryFrom<u32> for OperationType {
     }
 }
 
+impl Into<u32> for OperationType {
+    fn into(self) -> u32 {
+        match self {
+            OperationType::Unkown => 0,
+            OperationType::Lookup => 1,
+            OperationType::CreateFile => 2,
+            OperationType::CreateDir => 3,
+            OperationType::GetFileAttr => 4,
+            OperationType::ReadDir => 5,
+            OperationType::OpenFile => 6,
+            OperationType::ReadFile => 7,
+            OperationType::WriteFile => 8,
+            OperationType::DeleteFile => 9,
+            OperationType::DeleteDir => 10,
+        }
+    }
+}
+
 impl OperationType {
     pub fn to_le_bytes(&self) -> [u8; 4] {
         match self {

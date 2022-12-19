@@ -5,3 +5,4 @@
 pub mod byte;
 pub mod distribute_hash_table;
 pub mod request;
+pub mod fuse;
