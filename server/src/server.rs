@@ -103,9 +103,12 @@ impl Handler {
             Ok(n) if n == REQUEST_HEADER_SIZE => {
                 let header = RequestHeader {
                     id: array2u32(&header_buf[0..4]),
-                    r#type: array2u32(&header_buf[4..8]).try_into().unwrap(),
+                    r#type: array2u32(&header_buf[4..8]),
                     flags: array2u32(&header_buf[8..12]),
                     total_length: array2u32(&header_buf[12..16]),
+                    file_path_length: array2u32(&header_buf[16..20]),
+                    meta_data_length: array2u32(&header_buf[20..24]),
+                    data_length: array2u32(&header_buf[24..28]),
                 };
                 Some(header)
             }
@@ -170,7 +173,10 @@ impl Handler {
             | Mode::S_IWGRP
             | Mode::S_IROTH
             | Mode::S_IWOTH;
-        match header.r#type {
+        let operation_type = OperationType::try_from(header.r#type).unwrap();
+        match operation_type {
+            OperationType::Unkown => todo!(),
+            OperationType::Lookup => todo!(),
             OperationType::CreateFile => {
                 debug!("Create File");
                 let file_path = self.parse_path(&buf).await?.unwrap();
