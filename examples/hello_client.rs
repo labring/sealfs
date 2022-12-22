@@ -10,8 +10,9 @@ pub fn main() {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
+    let server_address = "127.0.0.1:50051";
     let client = Arc::new(Client::new());
-    client.add_connection(0, "127.0.0.1:50051");
+    client.add_connection(server_address);
     let p = client.clone();
     std::thread::spawn(move || p.parse_response());
     for i in 0..50 {
@@ -23,7 +24,7 @@ pub fn main() {
             let mut recv_data = vec![0u8; 1024];
             debug!("call_remote, start");
             let result = new_client.call_remote(
-                0,
+                server_address,
                 0,
                 0,
                 "",

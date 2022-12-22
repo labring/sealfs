@@ -8,7 +8,7 @@ use log::debug;
 use std::sync::Arc;
 use tokio::net::tcp::OwnedReadHalf;
 pub struct Client {
-    connections: DashMap<i32, Arc<ClientConnection>>,
+    connections: DashMap<String, Arc<ClientConnection>>,
     queue: CircularQueue,
 }
 
@@ -31,7 +31,7 @@ impl Client {
         }
     }
 
-    pub fn add_connection(&self, connection_id: i32, server_address: &str) {
+    pub fn add_connection(&self, server_address: &str) {
         let mut connection = ClientConnection::new(server_address);
         let result = connection.connect();
         match result {
@@ -43,11 +43,12 @@ impl Client {
             }
         }
         let connection = Arc::new(connection);
-        self.connections.insert(connection_id, connection);
+        self.connections
+            .insert(server_address.to_string(), connection);
     }
 
-    pub fn remove_connection(&self, connection_id: i32) {
-        self.connections.remove(&connection_id);
+    pub fn remove_connection(&self, server_address: &str) {
+        self.connections.remove(server_address);
     }
 
     // pub fn get_connection(
@@ -117,7 +118,7 @@ impl Client {
     #[allow(clippy::too_many_arguments)]
     pub fn call_remote(
         &self,
-        connection_index: i32,
+        server_address: &str,
         operation_type: u32,
         req_flags: u32,
         path: &str,
@@ -128,8 +129,8 @@ impl Client {
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("call_remote on connection: {}", connection_index);
-        let connection = self.connections.get(&connection_index).unwrap();
+        debug!("call_remote on connection: {}", server_address);
+        let connection = self.connections.get(server_address).unwrap();
         debug!(
             "call_remote on connection: {:?}",
             connection.value().server_address
@@ -182,7 +183,7 @@ impl Client {
 }
 
 pub struct ClientAsync {
-    connections: DashMap<i32, Arc<ClientConnectionAsync>>,
+    connections: DashMap<String, Arc<ClientConnectionAsync>>,
     queue: CircularQueue,
 }
 
@@ -205,13 +206,13 @@ impl ClientAsync {
         }
     }
     // Client must be static to tokio::spawn
-    pub async fn add_connection(&'static self, connection_id: i32, server_address: &str) {
+    pub async fn add_connection(&'static self, server_address: &str) {
         let result = tokio::net::TcpStream::connect(server_address).await;
         let connection = match result {
             Ok(stream) => {
                 debug!("connect success");
                 let (read_stream, write_stream) = stream.into_split();
-                tokio::spawn(self.parse_response(connection_id, read_stream));
+                tokio::spawn(self.parse_response(server_address.to_string(), read_stream));
                 Arc::new(ClientConnectionAsync::new(
                     server_address,
                     Some(tokio::sync::Mutex::new(write_stream)),
@@ -222,18 +223,19 @@ impl ClientAsync {
                 Arc::new(ClientConnectionAsync::new(server_address, None))
             }
         };
-        self.connections.insert(connection_id, connection);
+        self.connections
+            .insert(server_address.to_string(), connection);
     }
 
-    pub fn remove_connection(&self, connection_id: i32) {
-        self.connections.remove(&connection_id);
+    pub fn remove_connection(&self, server_address: &str) {
+        self.connections.remove(server_address);
     }
 
     // parse_response
     // try to get response from sequence of connections and write to callbacks
-    pub async fn parse_response(&self, connection_id: i32, mut read_stream: OwnedReadHalf) {
+    pub async fn parse_response(&self, server_address: String, mut read_stream: OwnedReadHalf) {
         loop {
-            let connection = match self.connections.get(&connection_id) {
+            let connection = match self.connections.get(&server_address) {
                 Some(connection) => connection,
                 None => {
                     return;
@@ -306,7 +308,7 @@ impl ClientAsync {
     #[allow(clippy::too_many_arguments)]
     pub async fn call_remote(
         &self,
-        connection_index: i32,
+        server_address: &str,
         operation_type: u32,
         req_flags: u32,
         path: &str,
@@ -317,8 +319,8 @@ impl ClientAsync {
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("call_remote on connection: {}", connection_index);
-        let connection = self.connections.get(&connection_index).unwrap();
+        debug!("call_remote on connection: {}", server_address);
+        let connection = self.connections.get(server_address).unwrap();
         debug!(
             "call_remote on connection: {:?}",
             connection.value().server_address
