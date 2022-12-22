@@ -17,7 +17,8 @@ pub async fn main() {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
-    CLIENT.add_connection(0, "127.0.0.1:50051").await;
+    let server_address = "127.0.0.1:50051";
+    CLIENT.add_connection(server_address).await;
     for i in 0..50 {
         let new_client = CLIENT.clone();
         tokio::spawn(async move {
@@ -28,7 +29,7 @@ pub async fn main() {
             debug!("call_remote, start");
             let result = new_client
                 .call_remote(
-                    0,
+                    server_address,
                     0,
                     0,
                     "",
