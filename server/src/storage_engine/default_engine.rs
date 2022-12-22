@@ -13,7 +13,7 @@ use nix::{
     },
     unistd::{self, mkdir},
 };
-use rocksdb::{Options, DB};
+use rocksdb::{IteratorMode, Options, DB};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{hash_map::DefaultHasher, HashMap},
@@ -85,12 +85,19 @@ impl StorageEngine for DefaultEngine {
 
     fn init(&self) {
         let root_sub_dir = SubDirectory::new();
-        let _ = self
-            .dir_db
-            .db
-            .put(b"/", bincode::serialize(&root_sub_dir).unwrap());
-        let _ = self.file_attr_db.db.put(b"/", b"d");
-        let _ = self.file_db.db.put(b"/", b"");
+        if !self.dir_db.db.key_may_exist(b"/") {
+            let _ = self
+                .dir_db
+                .db
+                .put(b"/", bincode::serialize(&root_sub_dir).unwrap());
+        }
+        if !self.file_attr_db.db.key_may_exist(b"/") {
+            let _ = self.file_attr_db.db.put(b"/", b"d");
+        }
+        if !self.file_db.db.key_may_exist(b"/") {
+            let _ = self.file_db.db.put(b"/", b"");
+        }
+        self.fsck().unwrap();
     }
 
     fn get_file_attributes(&self, path: String) -> Result<Option<Vec<String>>, EngineError> {
@@ -137,12 +144,7 @@ impl StorageEngine for DefaultEngine {
             }
         }
 
-        let local_file_name: String = match self.file_db.db.get(path.as_bytes())? {
-            Some(value) => String::from_utf8(value).unwrap(),
-            None => {
-                return Err(EngineError::NoEntry);
-            }
-        };
+        let local_file_name = generate_local_file_name(&self.root, &path);
         let oflag = OFlag::O_RDONLY;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
@@ -167,12 +169,7 @@ impl StorageEngine for DefaultEngine {
                 return Err(EngineError::NoEntry);
             }
         }
-        let local_file_name = match self.file_db.db.get(path.as_bytes())? {
-            Some(value) => String::from_utf8(value).unwrap(),
-            None => {
-                return Err(EngineError::NoEntry);
-            }
-        };
+        let local_file_name = generate_local_file_name(&self.root, &path);
         let oflags = OFlag::O_WRONLY | OFlag::O_SYNC;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
@@ -247,25 +244,18 @@ impl StorageEngine for DefaultEngine {
         let local_file_name = generate_local_file_name(&self.root, &path);
         let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
         let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+        self.file_db.db.put(&local_file_name, &path)?;
         let attr = FileAttr::new().with_nlink(1);
         self.add_file_attr(&path, attr)?;
-        self.file_db
-            .db
-            .put(&path.as_bytes(), local_file_name.as_bytes())?;
         Ok(fd)
     }
 
     fn delete_file(&self, path: String) -> Result<(), EngineError> {
-        match self.file_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                let local_file_name = String::from_utf8(value).unwrap();
-                unistd::unlink(local_file_name.as_str())?;
-            }
-            None => {}
-        }
+        let local_file_name = generate_local_file_name(&self.root, &path);
+        unistd::unlink(local_file_name.as_str())?;
         let attr = FileAttr::new().with_nlink(1);
         self.delete_file_attr(&path, attr)?;
-        self.file_db.db.delete(path.as_bytes())?;
+        self.file_db.db.delete(local_file_name)?;
         Ok(())
     }
 
@@ -298,6 +288,37 @@ impl StorageEngine for DefaultEngine {
 }
 
 impl DefaultEngine {
+    fn fsck(&self) -> Result<(), EngineError> {
+        for entry in std::fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let mut file_str = String::new();
+            if self.file_db.db.key_may_exist(file_name.to_str().unwrap()) {
+                let file_vec = self
+                    .file_db
+                    .db
+                    .get(file_name.to_str().unwrap())
+                    .unwrap()
+                    .unwrap();
+                file_str = String::from_utf8(file_vec).unwrap();
+                if self.file_attr_db.db.key_may_exist(&file_str) {
+                    continue;
+                }
+            }
+            let _ = self.file_db.db.delete(file_name.to_str().unwrap());
+            let _ = self.file_attr_db.db.delete(file_str);
+            let _ = std::fs::remove_file(entry.path());
+        }
+
+        for item in self.dir_db.db.iterator(IteratorMode::End) {
+            let (key, _value) = item.unwrap();
+            if !self.file_attr_db.db.key_may_exist(&key) {
+                let _ = self.dir_db.db.delete(&key);
+            }
+        }
+        Ok(())
+    }
+
     fn delete_from_parent(&self, path: String) -> Result<(), EngineError> {
         let l = path.len() - 1;
         let (index, _) = path
@@ -426,11 +447,41 @@ fn generate_local_file_name(root: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use nix::sys::stat::Mode;
+    use std::path::Path;
+
+    use nix::{
+        fcntl::{self, OFlag},
+        sys::stat::Mode,
+    };
 
     use crate::storage_engine::{default_engine::generate_local_file_name, StorageEngine};
 
     use super::{DefaultEngine, SubDirectory};
+
+    #[test]
+    fn test_init() {
+        {
+            let engine = DefaultEngine::new("/tmp/test_db", "/tmp/test");
+            engine.init();
+
+            let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
+            let mode = Mode::S_IRUSR
+                | Mode::S_IWUSR
+                | Mode::S_IRGRP
+                | Mode::S_IWGRP
+                | Mode::S_IROTH
+                | Mode::S_IWOTH;
+            let _fd = fcntl::open("/tmp/test/test.txt", oflag, mode);
+            assert_eq!(Path::new("/tmp/test/test.txt").is_file(), true);
+        }
+
+        {
+            let engine = DefaultEngine::new("/tmp/test_db", "/tmp/test");
+            engine.init();
+            assert_eq!(Path::new("/tmp/test/test.txt").is_file(), false);
+        }
+    }
+
     #[test]
     fn test_create_delete_dir() {
         {
@@ -534,14 +585,10 @@ mod tests {
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
             engine.create_file("/a.txt".to_string(), mode).unwrap();
-            let v = engine.file_db.db.get(b"/a.txt").unwrap().unwrap();
-            let local_file_name = String::from_utf8(v).unwrap();
-            assert_eq!(
-                local_file_name,
-                generate_local_file_name("/tmp/test", "/a.txt")
-            );
+            let local_file_name = generate_local_file_name("/tmp/test", "/a.txt");
+            assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("/a.txt".to_string()).unwrap();
-            assert_eq!(None, engine.file_db.db.get(b"/a.txt").unwrap());
+            assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
 
         {
@@ -562,14 +609,10 @@ mod tests {
             engine
                 .create_file("/test_a/a/a.txt".to_string(), mode)
                 .unwrap();
-            let v = engine.file_db.db.get(b"/test_a/a/a.txt").unwrap().unwrap();
-            let local_file_name = String::from_utf8(v).unwrap();
-            assert_eq!(
-                local_file_name,
-                generate_local_file_name("/tmp/test", "/test_a/a/a.txt")
-            );
+            let local_file_name = generate_local_file_name("/tmp/test", "/test_a/a/a.txt");
+            assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("/test_a/a/a.txt".to_string()).unwrap();
-            assert_eq!(None, engine.file_db.db.get(b"/test_a/a/a.txt").unwrap());
+            assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
 
         rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_dir").unwrap();
