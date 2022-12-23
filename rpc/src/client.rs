@@ -126,6 +126,8 @@ impl Client {
         send_data: &[u8],
         status: &mut i32,
         rsp_flags: &mut u32,
+        recv_meta_data_length: &mut usize,
+        recv_data_length: &mut usize,
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -151,9 +153,11 @@ impl Client {
                     Ok(_) => {
                         let result = self.queue.wait_for_callback(id);
                         match result {
-                            Ok(_) => {
-                                *status = self.queue.get_status(id).unwrap();
-                                *rsp_flags = self.queue.get_rsp_flags(id).unwrap();
+                            Ok((s, f, meta_data_length, data_length)) => {
+                                *status = s;
+                                *rsp_flags = f;
+                                *recv_meta_data_length = meta_data_length;
+                                *recv_data_length = data_length;
                                 Ok(())
                             }
                             Err(_) => {
@@ -316,6 +320,8 @@ impl ClientAsync {
         send_data: &[u8],
         status: &mut i32,
         rsp_flags: &mut u32,
+        recv_meta_data_length: &mut usize,
+        recv_data_length: &mut usize,
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -349,9 +355,11 @@ impl ClientAsync {
                     Ok(_) => {
                         let result = self.queue.wait_for_callback(id);
                         match result {
-                            Ok(_) => {
-                                *status = self.queue.get_status(id).unwrap();
-                                *rsp_flags = self.queue.get_rsp_flags(id).unwrap();
+                            Ok((s, f, meta_data_length, data_length)) => {
+                                *status = s;
+                                *rsp_flags = f;
+                                *recv_meta_data_length = meta_data_length;
+                                *recv_data_length = data_length;
                                 Ok(())
                             }
                             Err(_) => {
