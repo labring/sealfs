@@ -133,13 +133,13 @@ impl ClientConnection {
 
     pub fn receive_response(
         &self,
-        data: &mut [u8],
         meta_data: &mut [u8],
+        data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let data_length = data.len();
         let meta_data_length = meta_data.len();
-        self.receive(&mut data[0..data_length as usize])?;
+        let data_length = data.len();
         self.receive(&mut meta_data[0..meta_data_length as usize])?;
+        self.receive(&mut data[0..data_length as usize])?;
         Ok(())
     }
 
@@ -282,32 +282,29 @@ impl ClientConnectionAsync {
     pub async fn receive_response(
         &self,
         read_stream: &mut OwnedReadHalf,
-        data: &mut [u8],
         meta_data: &mut [u8],
+        data: &mut [u8],
     ) -> Result<()> {
-        let data_length = data.len();
         let meta_data_length = meta_data.len();
-        self.receive(read_stream, &mut data[0..data_length as usize])
-            .await?;
+        let data_length = data.len();
         self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
+            .await?;
+        self.receive(read_stream, &mut data[0..data_length as usize])
             .await?;
         Ok(())
     }
 
     pub async fn receive(&self, read_stream: &mut OwnedReadHalf, data: &mut [u8]) -> Result<()> {
-        let mut buf_len = 0;
         debug!("waiting for response, data length: {}", data.len());
-        let result = read_stream.read(data).await;
+        let result = read_stream.read_exact(data).await;
         match result {
             Ok(len) => {
-                buf_len += len;
-                debug!("received {} bytes, total: {}", len, buf_len);
+                debug!("received {} bytes", len);
             }
             Err(_) => {
                 return Err(anyhow::anyhow!("failed to receive response"));
             }
         }
-        debug!("received response, data length: {}", buf_len);
         Ok(())
     }
 
@@ -354,8 +351,8 @@ impl ServerConnection {
         id: u32,
         status: i32,
         flags: u32,
-        data: &[u8],
         meta_data: &[u8],
+        data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("send response, id: {}", id);
         let response = {
@@ -550,8 +547,8 @@ impl CircularQueue {
 
     pub fn register_callback(
         &self,
-        rsp_data: &mut [u8],
         rsp_meta_data: &mut [u8],
+        rsp_data: &mut [u8],
     ) -> Result<u32, Box<dyn std::error::Error>> {
         let id = {
             let mut end_index = self.end_index.lock().unwrap();

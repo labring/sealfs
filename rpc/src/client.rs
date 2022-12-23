@@ -78,7 +78,7 @@ impl Client {
                         let data_result = self.queue.get_data_ref(id, header.data_length as usize);
                         match (data_result, meta_data_result) {
                             (Ok(data), Ok(meta_data)) => {
-                                let response = connection.receive_response(data, meta_data);
+                                let response = connection.receive_response(meta_data, data);
                                 match response {
                                     Ok(_) => {
                                         let result = self.queue.response(id, 0);
@@ -236,7 +236,7 @@ impl ClientAsync {
     pub async fn parse_response(&self, server_address: String, mut read_stream: OwnedReadHalf) {
         loop {
             let connection = match self.connections.get(&server_address) {
-                Some(connection) => connection,
+                Some(connection) => connection.clone(),
                 None => {
                     return;
                 }
@@ -266,7 +266,7 @@ impl ClientAsync {
                     match (data_result, meta_data_result) {
                         (Ok(data), Ok(meta_data)) => {
                             let response = connection
-                                .receive_response(&mut read_stream, data, meta_data)
+                                .receive_response(&mut read_stream, meta_data, data)
                                 .await;
                             match response {
                                 Ok(_) => {
