@@ -591,16 +591,6 @@ impl CircularQueue {
         Ok(())
     }
 
-    pub fn get_status(&self, id: u32) -> Result<i32, Box<dyn std::error::Error>> {
-        let callback = self.callbacks[id as usize];
-        unsafe { Ok((*callback).request_status as i32) }
-    }
-
-    pub fn get_rsp_flags(&self, id: u32) -> Result<u32, Box<dyn std::error::Error>> {
-        let callback = self.callbacks[id as usize];
-        unsafe { Ok((*callback).flags) }
-    }
-
     pub fn get_data_ref(
         &self,
         id: u32,
@@ -649,7 +639,12 @@ impl CircularQueue {
         Ok(())
     }
 
-    pub fn wait_for_callback(&self, id: u32) -> Result<(), Box<dyn std::error::Error>> {
+    // wait_for_callback
+    // return: (status, flags, data_length, meta_data_length)
+    pub fn wait_for_callback(
+        &self,
+        id: u32,
+    ) -> Result<(i32, u32, usize, usize), Box<dyn std::error::Error>> {
         unsafe {
             let callback = self.callbacks[id as usize];
             let result = (*(callback as *mut OperationCallback))
@@ -659,7 +654,12 @@ impl CircularQueue {
             match result {
                 Ok(_) => {
                     (*(callback as *mut OperationCallback)).state = CallbackState::Done;
-                    Ok(())
+                    Ok((
+                        (*(callback as *mut OperationCallback)).request_status,
+                        (*(callback as *mut OperationCallback)).flags,
+                        (*(callback as *mut OperationCallback)).data_length,
+                        (*(callback as *mut OperationCallback)).meta_data_length,
+                    ))
                 }
                 Err(_) => {
                     self.error(id)?;

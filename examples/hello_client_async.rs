@@ -24,6 +24,8 @@ pub async fn main() {
         tokio::spawn(async move {
             let mut status = 0;
             let mut rsp_flags = 0;
+            let mut recv_meta_data_length = 0;
+            let mut recv_data_length = 0;
             let mut recv_meta_data = vec![];
             let mut recv_data = vec![0u8; 1024];
             debug!("call_remote, start");
@@ -37,6 +39,8 @@ pub async fn main() {
                     &[],
                     &mut status,
                     &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut recv_data,
                 )
