@@ -409,8 +409,8 @@ impl ServerConnection {
         header: &RequestHeader,
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Box<dyn std::error::Error>> {
         let path_length = u32::from_le_bytes(header.file_path_length.to_le_bytes());
-        let data_length = u32::from_le_bytes(header.data_length.to_le_bytes());
         let meta_data_length = u32::from_le_bytes(header.meta_data_length.to_le_bytes());
+        let data_length = u32::from_le_bytes(header.data_length.to_le_bytes());
         if path_length > MAX_FILENAME_LENGTH.try_into().unwrap()
             || data_length > MAX_DATA_LENGTH.try_into().unwrap()
             || meta_data_length > MAX_METADATA_LENGTH.try_into().unwrap()
@@ -422,9 +422,9 @@ impl ServerConnection {
         let mut meta_data = vec![0u8; meta_data_length as usize];
         self.receive(read_stream, &mut path[0..path_length as usize])
             .await?;
-        self.receive(read_stream, &mut data[0..data_length as usize])
-            .await?;
         self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
+            .await?;
+        self.receive(read_stream, &mut data[0..data_length as usize])
             .await?;
         Ok((path, data, meta_data))
     }
