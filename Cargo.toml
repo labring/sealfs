@@ -44,6 +44,10 @@ path = "src/bin/server.rs"
 name = "manager"
 path = "src/bin/manager.rs"
 
+[[examples]]
+name = "manager"
+path = "examples/client"
+
 [workspace]
 members = [
     "server",

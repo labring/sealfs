@@ -10,8 +10,6 @@ use log::{debug, error};
 use std::{
     io::{Read, Write},
     sync::{mpsc, Arc, Mutex, RwLock},
-    thread::sleep,
-    time::Duration,
     vec,
 };
 use tokio::{
@@ -160,7 +158,7 @@ impl ClientConnection {
                     return Err("failed to receive response".into());
                 }
             }
-            sleep(Duration::from_millis(100));
+            // sleep(Duration::from_millis(100));
         }
         debug!("received response, data length: {}", buf_len);
         Ok(())
@@ -449,7 +447,7 @@ impl ServerConnection {
                     return Err(e.into());
                 }
             }
-            sleep(Duration::from_millis(100));
+            // sleep(Duration::from_millis(100));
         }
         debug!("received request, data length: {}", buf_len);
         Ok(())
