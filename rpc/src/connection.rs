@@ -190,7 +190,7 @@ impl ClientConnectionAsync {
         Self {
             server_address: server_address.to_string(),
             write_stream,
-            status: RwLock::new(ConnectionStatus::Disconnected),
+            status: RwLock::new(ConnectionStatus::Connected),
             _send_lock: Mutex::new(()),
         }
     }

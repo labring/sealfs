@@ -1,13 +1,7 @@
-#[macro_use]
-extern crate lazy_static;
 use std::sync::Arc;
 
 use log::debug;
 use rpc::client::ClientAsync;
-
-lazy_static! {
-    static ref CLIENT: Arc<ClientAsync> = Arc::new(ClientAsync::new());
-}
 
 #[tokio::main]
 pub async fn main() {
@@ -17,10 +11,11 @@ pub async fn main() {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
+    let client = Arc::new(ClientAsync::new());
     let server_address = "127.0.0.1:50051";
-    CLIENT.add_connection(server_address).await;
+    client.add_connection(server_address).await;
     for i in 0..50 {
-        let new_client = CLIENT.clone();
+        let new_client = client.clone();
         tokio::spawn(async move {
             let mut status = 0;
             let mut rsp_flags = 0;
