@@ -14,10 +14,7 @@ pub struct Client {
 
 impl Default for Client {
     fn default() -> Self {
-        Self {
-            connections: DashMap::new(),
-            queue: CircularQueue::new(),
-        }
+        Self::new()
     }
 }
 
@@ -50,14 +47,6 @@ impl Client {
     pub fn remove_connection(&self, server_address: &str) {
         self.connections.remove(server_address);
     }
-
-    // pub fn get_connection(
-    //     &self,
-    //     connection_id: i32,
-    // ) -> Result<Arc<ClientConnection>, Box<dyn std::error::Error>> {
-    //     let connection = self.connections.get(&connection_id).unwrap();
-    //     Ok(connection.value().clone())
-    // }
 
     // parse_response
     // try to get response from sequence of connections and write to callbacks
@@ -188,14 +177,83 @@ impl Client {
 
 pub struct ClientAsync {
     connections: DashMap<String, Arc<ClientConnectionAsync>>,
-    queue: CircularQueue,
+    queue: Arc<CircularQueue>,
 }
 
 impl Default for ClientAsync {
     fn default() -> Self {
-        Self {
-            connections: DashMap::new(),
-            queue: CircularQueue::new(),
+        Self::new()
+    }
+}
+
+// parse_response
+// try to get response from sequence of connections and write to callbacks
+pub async fn parse_response(
+    mut read_stream: OwnedReadHalf,
+    connection: Arc<ClientConnectionAsync>,
+    queue: Arc<CircularQueue>,
+) {
+    loop {
+        if !connection.is_connected() {
+            break;
+        }
+        debug!("parse_response: {:?}", connection.server_address);
+        let result = connection.receive_response_header(&mut read_stream).await;
+        match result {
+            Ok(header) => {
+                let id = header.id;
+                let total_length = header.total_length;
+                let meta_data_result = {
+                    match queue.get_meta_data_ref(id, header.meta_data_length as usize) {
+                        Ok(meta_data_result) => Ok(meta_data_result),
+                        Err(_) => Err("meta_data_result error"),
+                    }
+                };
+                let data_result = {
+                    match queue.get_data_ref(id, header.data_length as usize) {
+                        Ok(data_result) => Ok(data_result),
+                        Err(_) => Err("data_result error"),
+                    }
+                };
+
+                match (data_result, meta_data_result) {
+                    (Ok(data), Ok(meta_data)) => {
+                        let response = connection
+                            .receive_response(&mut read_stream, meta_data, data)
+                            .await;
+                        match response {
+                            Ok(_) => {
+                                let result = queue.response(id, 0);
+                                match result {
+                                    Ok(_) => {
+                                        debug!("Response success");
+                                    }
+                                    Err(e) => {
+                                        debug!("Error writing response back: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                debug!("Error receiving response: {}", e);
+                            }
+                        }
+                    }
+                    _ => {
+                        let result = connection
+                            .clean_response(&mut read_stream, total_length)
+                            .await;
+                        match result {
+                            Ok(_) => {}
+                            Err(e) => {
+                                debug!("Error cleaning up response: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                debug!("Error parsing header: {}", e);
+            }
         }
     }
 }
@@ -206,21 +264,26 @@ impl ClientAsync {
         queue.init();
         Self {
             connections: DashMap::new(),
-            queue,
+            queue: Arc::new(queue),
         }
     }
-    // Client must be static to tokio::spawn
-    pub async fn add_connection(&'static self, server_address: &str) {
+
+    pub async fn add_connection(&self, server_address: &str) {
         let result = tokio::net::TcpStream::connect(server_address).await;
         let connection = match result {
             Ok(stream) => {
                 debug!("connect success");
                 let (read_stream, write_stream) = stream.into_split();
-                tokio::spawn(self.parse_response(server_address.to_string(), read_stream));
-                Arc::new(ClientConnectionAsync::new(
+                let connection = Arc::new(ClientConnectionAsync::new(
                     server_address,
                     Some(tokio::sync::Mutex::new(write_stream)),
-                ))
+                ));
+                tokio::spawn(parse_response(
+                    read_stream,
+                    connection.clone(),
+                    self.queue.clone(),
+                ));
+                connection
             }
             Err(e) => {
                 debug!("connect error: {}", e);
@@ -233,80 +296,6 @@ impl ClientAsync {
 
     pub fn remove_connection(&self, server_address: &str) {
         self.connections.remove(server_address);
-    }
-
-    // parse_response
-    // try to get response from sequence of connections and write to callbacks
-    pub async fn parse_response(&self, server_address: String, mut read_stream: OwnedReadHalf) {
-        loop {
-            let connection = match self.connections.get(&server_address) {
-                Some(connection) => connection.clone(),
-                None => {
-                    return;
-                }
-            };
-            debug!("parse_response: {:?}", connection.server_address);
-            let result = connection.receive_response_header(&mut read_stream).await;
-            match result {
-                Ok(header) => {
-                    let id = header.id;
-                    let total_length = header.total_length;
-                    let meta_data_result = {
-                        match self
-                            .queue
-                            .get_meta_data_ref(id, header.meta_data_length as usize)
-                        {
-                            Ok(meta_data_result) => Ok(meta_data_result),
-                            Err(_) => Err("meta_data_result error"),
-                        }
-                    };
-                    let data_result = {
-                        match self.queue.get_data_ref(id, header.data_length as usize) {
-                            Ok(data_result) => Ok(data_result),
-                            Err(_) => Err("data_result error"),
-                        }
-                    };
-
-                    match (data_result, meta_data_result) {
-                        (Ok(data), Ok(meta_data)) => {
-                            let response = connection
-                                .receive_response(&mut read_stream, meta_data, data)
-                                .await;
-                            match response {
-                                Ok(_) => {
-                                    let result = self.queue.response(id, 0);
-                                    match result {
-                                        Ok(_) => {
-                                            debug!("Response success");
-                                        }
-                                        Err(e) => {
-                                            debug!("Error writing response back: {}", e);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    debug!("Error receiving response: {}", e);
-                                }
-                            }
-                        }
-                        _ => {
-                            let result = connection
-                                .clean_response(&mut read_stream, total_length)
-                                .await;
-                            match result {
-                                Ok(_) => {}
-                                Err(e) => {
-                                    debug!("Error cleaning up response: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Error parsing header: {}", e);
-                }
-            }
-        }
     }
 
     #[allow(clippy::too_many_arguments)]
