@@ -12,13 +12,9 @@ use crate::storage_engine::StorageEngine;
 
 use crate::server::Server;
 use common::distribute_hash_table::build_hash_ring;
-use distributed_engine::{
-    engine_rpc::{self, enginerpc::enginerpc_client::EnginerpcClient, RPCService},
-    DistributedEngine,
-};
-use std::error::Error;
+use distributed_engine::DistributedEngine;
 use storage_engine::default_engine::DefaultEngine;
-use tokio::{net::TcpListener, time};
+use tokio::net::TcpListener;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -82,14 +78,7 @@ pub async fn run(
     let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
     local_storage.init();
     build_hash_ring(all_servers_address.clone());
-    let service = RPCService::new(local_storage.clone());
-    let local = local_distributed_address.clone();
-    tokio::spawn(async move {
-        tonic::transport::Server::builder()
-            .add_service(engine_rpc::new_manager_service(service))
-            .serve((&local).parse().unwrap())
-            .await
-    });
+
     let engine = Arc::new(DistributedEngine::new(
         local_distributed_address.clone(),
         local_storage.clone(),
@@ -98,28 +87,10 @@ pub async fn run(
         if &local_distributed_address == value {
             continue;
         }
-        let server_address = format!("http://{}", value);
         let arc_engine = engine.clone();
         let key_address = value.clone();
         tokio::spawn(async move {
-            let mut interval = time::interval(time::Duration::from_millis(1000));
-            interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
-            loop {
-                let result = EnginerpcClient::connect(server_address.clone()).await;
-                match result {
-                    Ok(connection) => {
-                        arc_engine.add_connection(key_address, connection);
-                        break;
-                    }
-                    Err(err) => {
-                        if err.source().unwrap().to_string().find("Connection refused") != None {
-                            interval.tick().await;
-                        } else {
-                            break;
-                        }
-                    }
-                };
-            }
+            arc_engine.add_connection(key_address).await;
         });
     }
     let mut server = Server::new(address, listener, engine);

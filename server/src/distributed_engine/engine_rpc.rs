@@ -1,71 +1,79 @@
-use self::enginerpc::{
-    enginerpc_server::Enginerpc, enginerpc_server::EnginerpcServer, EngineRequest, EngineResponse,
-};
-
 use crate::storage_engine::StorageEngine;
+use common::request::OperationType;
+use rpc::server::Handler;
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
-pub mod enginerpc {
-    tonic::include_proto!("enginerpc");
-}
-
-pub struct RPCService<Storage: StorageEngine> {
+pub struct DistributedHandler<Storage: StorageEngine> {
     pub local_storage: Arc<Storage>,
 }
 
-pub fn new_manager_service<
-    Storage: StorageEngine + std::marker::Send + std::marker::Sync + 'static,
->(
-    service: RPCService<Storage>,
-) -> EnginerpcServer<RPCService<Storage>> {
-    EnginerpcServer::new(service)
-}
-impl<Storage: StorageEngine> RPCService<Storage> {
+impl<Storage: StorageEngine> DistributedHandler<Storage> {
     pub fn new(local_storage: Arc<Storage>) -> Self {
         Self { local_storage }
     }
-}
-#[tonic::async_trait]
-impl<Storage: StorageEngine + std::marker::Send + std::marker::Sync + 'static> Enginerpc
-    for RPCService<Storage>
-{
-    async fn directory_add_entry(
-        &self,
-        request: Request<EngineRequest>,
-    ) -> Result<Response<EngineResponse>, Status> {
-        let message = request.get_ref();
-        println!("add_entry {:?}", message);
-        let result = self
-            .local_storage
-            .directory_add_entry(message.parentdir.clone(), message.filename.clone());
+    fn directory_add_entry(&self, parentdir: String, filename: String) -> i32 {
+        let result = self.local_storage.directory_add_entry(parentdir, filename);
         let status = match result {
             Ok(()) => 0,
             Err(value) => value.into(),
         };
-        let response = EngineResponse { status };
-        Ok(Response::new(response))
+        status as i32
     }
-    async fn directory_delete_entry(
-        &self,
-        request: Request<EngineRequest>,
-    ) -> Result<Response<EngineResponse>, Status> {
-        let message = request.get_ref();
-        println!("del_entry {:?}", message);
+
+    fn directory_delete_entry(&self, parentdir: String, filename: String) -> i32 {
         let result = self
             .local_storage
-            .directory_delete_entry(message.parentdir.clone(), message.filename.clone());
+            .directory_delete_entry(parentdir, filename);
         let status = match result {
             Ok(()) => 0,
             Err(value) => value.into(),
         };
-        let response = EngineResponse { status };
-        Ok(Response::new(response))
+        status as i32
+    }
+}
+
+#[tonic::async_trait]
+impl<Storage: StorageEngine + std::marker::Send + std::marker::Sync + 'static> Handler
+    for DistributedHandler<Storage>
+{
+    async fn dispatch(
+        &self,
+        operation_type: u32,
+        _flags: u32,
+        path: Vec<u8>,
+        _data: Vec<u8>,
+        metadata: Vec<u8>,
+    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+        let operation_type = OperationType::try_from(operation_type).unwrap();
+        match operation_type {
+            OperationType::DirectoryAddEntry => {
+                let parentdir = String::from_utf8(path).unwrap();
+                let filename = String::from_utf8(metadata).unwrap();
+                Ok((
+                    self.directory_add_entry(parentdir, filename),
+                    0,
+                    vec![],
+                    vec![],
+                ))
+            }
+            OperationType::DirectoryDeleteEntry => {
+                let parentdir = String::from_utf8(path).unwrap();
+                let filename = String::from_utf8(metadata).unwrap();
+                Ok((
+                    self.directory_delete_entry(parentdir, filename),
+                    0,
+                    vec![],
+                    vec![],
+                ))
+            }
+            _ => Ok((-1, 0, vec![], vec![])),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{enginerpc::enginerpc_client::EnginerpcClient, RPCService};
+    use super::DistributedHandler;
+    // use super::{enginerpc::enginerpc_client::EnginerpcClient, RPCService};
     use crate::storage_engine::{default_engine::DefaultEngine, StorageEngine};
     use crate::{DistributedEngine, EngineError};
     use common::distribute_hash_table::build_hash_ring;
@@ -80,45 +88,22 @@ mod tests {
     ) -> Arc<DistributedEngine<DefaultEngine>> {
         let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
         local_storage.init();
-        let service = RPCService::new(local_storage.clone());
+
+        let service = local_storage.clone();
         let local = local_distributed_address.clone();
         tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(super::new_manager_service(service))
-                .serve((&local).parse().unwrap())
-                .await
+            let server =
+                rpc::server::Server::new(Arc::new(DistributedHandler::new(service)), &local);
+            server.run().await.unwrap();
         });
-
+        sleep(std::time::Duration::from_millis(3000)).await;
         Arc::new(DistributedEngine::new(
             local_distributed_address,
             local_storage,
         ))
     }
 
-    async fn test_file(address0: String, address1: String) {
-        let engine0 = add_server(
-            "/tmp/test_file_db0".into(),
-            "/tmp/test0".into(),
-            address0.clone(),
-        )
-        .await;
-        add_server(
-            "/tmp/test_file_db1".into(),
-            "/tmp/test1".into(),
-            address1.clone(),
-        )
-        .await;
-        let arc_engine0 = engine0.clone();
-        tokio::spawn(async move {
-            let connection = EnginerpcClient::connect(format!("http://{}", address1.clone()))
-                .await
-                .unwrap();
-            arc_engine0.add_connection(address1.clone(), connection);
-            println!("connected");
-        });
-        sleep(std::time::Duration::from_millis(5000)).await;
-        engine0.delete_file("/test".into()).await.unwrap();
-
+    async fn test_file(engine0: Arc<DistributedEngine<DefaultEngine>>) {
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
@@ -143,33 +128,13 @@ mod tests {
             Ok(_) => assert!(true),
             _ => assert!(false),
         };
+        println!("OK test_file");
     }
 
-    async fn test_dir(address0: String, address1: String) {
-        let engine0 = add_server(
-            "/tmp/test_dir_db0".into(),
-            "/tmp/test2".into(),
-            address0.clone(),
-        )
-        .await;
-        add_server(
-            "/tmp/test_dir_db1".into(),
-            "/tmp/test3".into(),
-            address1.clone(),
-        )
-        .await;
-        let arc_engine0 = engine0.clone();
-        tokio::spawn(async move {
-            let connection = EnginerpcClient::connect(format!("http://{}", address1.clone()))
-                .await
-                .unwrap();
-            arc_engine0.add_connection(address1.clone(), connection);
-            println!("connected");
-        });
-        sleep(std::time::Duration::from_millis(5000)).await;
-        engine0.delete_file("/test/t1".into()).await.unwrap();
-        engine0.delete_dir("/test/".into()).await.unwrap();
-
+    async fn test_dir(
+        engine0: Arc<DistributedEngine<DefaultEngine>>,
+        engine1: Arc<DistributedEngine<DefaultEngine>>,
+    ) {
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
@@ -177,16 +142,16 @@ mod tests {
             | Mode::S_IROTH
             | Mode::S_IWOTH;
         // not end with '/'
-        match engine0.create_dir("/test".into(), mode).await {
+        match engine1.create_dir("/test".into(), mode).await {
             Err(EngineError::NotDir) => assert!(true),
             _ => assert!(false),
         };
-        match engine0.create_dir("/test/".into(), mode).await {
+        match engine1.create_dir("/test/".into(), mode).await {
             core::result::Result::Ok(()) => assert!(true),
             _ => assert!(false),
         };
         // repeat the same dir
-        match engine0.create_dir("/test/".into(), mode).await {
+        match engine1.create_dir("/test/".into(), mode).await {
             Err(EngineError::Exist) => assert!(true),
             _ => assert!(false),
         };
@@ -196,7 +161,7 @@ mod tests {
             _ => assert!(false),
         };
         // dir has file
-        match engine0.delete_dir("/test/".into()).await {
+        match engine1.delete_dir("/test/".into()).await {
             Err(EngineError::NotEmpty) => assert!(true),
             _ => assert!(false),
         };
@@ -204,18 +169,35 @@ mod tests {
             Ok(()) => assert!(true),
             _ => assert!(false),
         };
-        match engine0.delete_dir("/test/".into()).await {
+        match engine1.delete_dir("/test/".into()).await {
             Ok(()) => assert!(true),
             _ => assert!(false),
         };
+        println!("OK test_dir");
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_all() {
-        let address0 = "127.0.0.1:8080".to_string();
-        let address1 = "127.0.0.1:8081".to_string();
+        let address0 = "127.0.0.1:18080".to_string();
+        let address1 = "127.0.0.1:18081".to_string();
         build_hash_ring(vec![address0.clone(), address1.clone()]);
-        test_file(address0.clone(), address1.clone()).await;
-        test_dir(address0, address1).await;
+        let engine0 = add_server(
+            "/tmp/test_file_db0".into(),
+            "/tmp/test0".into(),
+            address0.clone(),
+        )
+        .await;
+        let engine1 = add_server(
+            "/tmp/test_file_db1".into(),
+            "/tmp/test1".into(),
+            address1.clone(),
+        )
+        .await;
+        println!("add_server success!");
+        engine0.add_connection(address1).await;
+        engine1.add_connection(address0).await;
+        println!("add_connection success!");
+        test_file(engine0.clone()).await;
+        test_dir(engine0, engine1).await;
     }
 }

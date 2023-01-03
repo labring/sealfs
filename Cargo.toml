@@ -22,6 +22,7 @@ serde_yaml = "0.9.14"
 tonic-health = "0.7.1"
 dashmap = "5.4.0"
 async-trait = "0.1.59"
+nix = "0.26.1"
 
 client = {path = "client"}
 server = {path = "server"}

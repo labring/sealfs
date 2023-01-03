@@ -301,6 +301,8 @@ impl Handler {
                 self.response(header.id, status, 0, 16, None, None, None, None)
                     .await?;
             }
+            OperationType::DirectoryAddEntry => {}
+            OperationType::DirectoryDeleteEntry => {}
         }
         Ok(())
     }
