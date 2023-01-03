@@ -195,6 +195,7 @@ pub async fn parse_response(
 ) {
     loop {
         if !connection.is_connected() {
+            debug!("parse_response: connection closed");
             break;
         }
         debug!("parse_response: {:?}", connection.server_address);
