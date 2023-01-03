@@ -2,18 +2,18 @@ pub mod engine_rpc;
 
 use crate::storage_engine::StorageEngine;
 use crate::EngineError;
-use common::distribute_hash_table::{hash, index_selector};
+use common::{
+    distribute_hash_table::{hash, index_selector},
+    request::OperationType,
+};
 
-use dashmap::DashMap;
-use engine_rpc::enginerpc::{enginerpc_client::EnginerpcClient, EngineRequest};
 use nix::sys::stat::Mode;
-use std::sync::Arc;
-use tonic::transport::Channel;
-
+use rpc::client::ClientAsync;
+use std::{sync::Arc, vec};
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub local_storage: Arc<Storage>,
-    pub connections: DashMap<String, EnginerpcClient<Channel>>,
+    pub client: ClientAsync,
 }
 
 fn path_split(path: String) -> Result<(String, String), EngineError> {
@@ -32,6 +32,10 @@ fn path_split(path: String) -> Result<(String, String), EngineError> {
     }
 }
 
+pub fn get_connection_address(path: &str) -> Option<String> {
+    Some(index_selector(hash(path)))
+}
+
 impl<Storage> DistributedEngine<Storage>
 where
     Storage: StorageEngine,
@@ -40,30 +44,16 @@ where
         Self {
             address,
             local_storage,
-            connections: DashMap::new(),
+            client: ClientAsync::new(),
         }
     }
 
-    pub fn add_connection(&self, address: String, connection: EnginerpcClient<Channel>) {
-        self.connections.insert(address, connection);
+    pub async fn add_connection(&self, address: String) {
+        self.client.add_connection(&address).await;
     }
 
     pub fn remove_connection(&self, address: String) {
-        self.connections.remove(&address);
-    }
-
-    pub fn get_connection_address(&self, path: &str) -> Option<String> {
-        Some(index_selector(hash(path)))
-    }
-
-    fn get_connection(&self, address: String) -> Result<EnginerpcClient<Channel>, EngineError> {
-        let connect = { self.connections.get(&address) };
-        match connect {
-            Some(value) => Ok(value.value().clone()),
-            None => Err(EngineError::StdIo(std::io::Error::from(
-                std::io::ErrorKind::NotConnected,
-            ))),
-        }
+        self.client.remove_connection(&address);
     }
 
     pub async fn create_dir(&self, path: String, mode: Mode) -> Result<(), EngineError> {
@@ -75,29 +65,45 @@ where
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let address = self.get_connection_address(parent_dir.as_str()).unwrap();
+        let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             self.local_storage
                 .directory_add_entry(parent_dir, file_name)?;
         } else {
-            let request = tonic::Request::new(EngineRequest {
-                parentdir: parent_dir,
-                filename: file_name,
-            });
-            let mut connect = self.get_connection(address)?;
-            let response = connect.directory_add_entry(request).await;
+            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
+                (0, 0, 0, 0);
+            let mut recv_meta_data = vec![];
+            let mut recv_data = vec![];
+            let result = self
+                .client
+                .call_remote(
+                    &address,
+                    OperationType::DirectoryAddEntry as u32,
+                    0,
+                    &parent_dir,
+                    file_name.as_bytes(),
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut recv_meta_data,
+                    &mut recv_data,
+                )
+                .await;
 
-            let status = match response {
-                Ok(value) => value.get_ref().status,
+            match result {
+                Ok(_) => {
+                    if status != 0 {
+                        return Err(EngineError::from(status as u32));
+                    }
+                }
                 _ => {
                     return Err(EngineError::StdIo(std::io::Error::from(
                         std::io::ErrorKind::NotConnected,
                     )))
                 }
             };
-            if status != 0 {
-                return Err(EngineError::from(status));
-            }
         }
 
         self.local_storage.create_directory(path, mode)
@@ -111,29 +117,44 @@ where
             return Ok(());
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let address = self.get_connection_address(parent_dir.as_str()).unwrap();
+        let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             self.local_storage
                 .directory_delete_entry(parent_dir.clone(), file_name.clone())?;
         } else {
-            let request = tonic::Request::new(EngineRequest {
-                parentdir: parent_dir.clone(),
-                filename: file_name.clone(),
-            });
-            let mut connect = self.get_connection(address.clone())?;
-            let response = connect.directory_delete_entry(request).await;
-
-            let status = match response {
-                Ok(value) => value.get_ref().status,
+            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
+                (0, 0, 0, 0);
+            let mut recv_meta_data = vec![];
+            let mut recv_data = vec![];
+            let result = self
+                .client
+                .call_remote(
+                    &address,
+                    OperationType::DirectoryDeleteEntry as u32,
+                    0,
+                    &parent_dir,
+                    file_name.as_bytes(),
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut recv_meta_data,
+                    &mut recv_data,
+                )
+                .await;
+            match result {
+                Ok(_) => {
+                    if status != 0 {
+                        return Err(EngineError::from(status as u32));
+                    }
+                }
                 _ => {
                     return Err(EngineError::StdIo(std::io::Error::from(
                         std::io::ErrorKind::NotConnected,
                     )))
                 }
             };
-            if status != 0 {
-                return Err(EngineError::from(status));
-            }
         }
         self.local_storage.delete_directory(path.clone())
     }
@@ -152,29 +173,44 @@ where
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let address = self.get_connection_address(parent_dir.as_str()).unwrap();
+        let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             self.local_storage
                 .directory_add_entry(parent_dir, file_name)?;
         } else {
-            let request = tonic::Request::new(EngineRequest {
-                parentdir: parent_dir,
-                filename: file_name,
-            });
-            let mut connect = self.get_connection(address)?;
-            let response = connect.directory_add_entry(request).await;
-
-            let status = match response {
-                Ok(value) => value.get_ref().status,
+            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
+                (0, 0, 0, 0);
+            let mut recv_meta_data = vec![];
+            let mut recv_data = vec![];
+            let result = self
+                .client
+                .call_remote(
+                    &address,
+                    OperationType::DirectoryAddEntry as u32,
+                    0,
+                    &parent_dir,
+                    file_name.as_bytes(),
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut recv_meta_data,
+                    &mut recv_data,
+                )
+                .await;
+            match result {
+                Ok(_) => {
+                    if status != 0 {
+                        return Err(EngineError::from(status as u32));
+                    }
+                }
                 _ => {
                     return Err(EngineError::StdIo(std::io::Error::from(
                         std::io::ErrorKind::NotConnected,
                     )))
                 }
             };
-            if status != 0 {
-                return Err(EngineError::from(status));
-            }
         }
 
         self.local_storage.create_file(path, mode)
@@ -189,29 +225,44 @@ where
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
-        let address = self.get_connection_address(parent_dir.as_str()).unwrap();
+        let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             self.local_storage
                 .directory_delete_entry(parent_dir, file_name)?;
         } else {
-            let request = tonic::Request::new(EngineRequest {
-                parentdir: parent_dir,
-                filename: file_name,
-            });
-            let mut connect = self.get_connection(address)?;
-            let response = connect.directory_delete_entry(request).await;
-
-            let status = match response {
-                Ok(value) => value.get_ref().status,
+            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
+                (0, 0, 0, 0);
+            let mut recv_meta_data = vec![];
+            let mut recv_data = vec![];
+            let result = self
+                .client
+                .call_remote(
+                    &address,
+                    OperationType::DirectoryDeleteEntry as u32,
+                    0,
+                    &parent_dir,
+                    file_name.as_bytes(),
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut recv_meta_data,
+                    &mut recv_data,
+                )
+                .await;
+            match result {
+                Ok(_) => {
+                    if status != 0 {
+                        return Err(EngineError::from(status as u32));
+                    }
+                }
                 _ => {
                     return Err(EngineError::StdIo(std::io::Error::from(
                         std::io::ErrorKind::NotConnected,
                     )))
                 }
             };
-            if status != 0 {
-                return Err(EngineError::from(status));
-            }
         }
 
         self.local_storage.delete_file(path)

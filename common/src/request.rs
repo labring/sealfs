@@ -103,6 +103,8 @@ pub enum OperationType {
     WriteFile = 8,
     DeleteFile = 9,
     DeleteDir = 10,
+    DirectoryAddEntry = 11,
+    DirectoryDeleteEntry = 12,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -122,6 +124,8 @@ impl TryFrom<u32> for OperationType {
             8 => Ok(OperationType::WriteFile),
             9 => Ok(OperationType::DeleteFile),
             10 => Ok(OperationType::DeleteDir),
+            11 => Ok(OperationType::DirectoryAddEntry),
+            12 => Ok(OperationType::DirectoryDeleteEntry),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -141,6 +145,8 @@ impl OperationType {
             OperationType::WriteFile => 8u32.to_le_bytes(),
             OperationType::DeleteFile => 9u32.to_le_bytes(),
             OperationType::DeleteDir => 10u32.to_le_bytes(),
+            OperationType::DirectoryAddEntry => 11u32.to_le_bytes(),
+            OperationType::DirectoryDeleteEntry => 12u32.to_le_bytes(),
         }
     }
 }
