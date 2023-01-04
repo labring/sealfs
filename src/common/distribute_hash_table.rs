@@ -65,7 +65,7 @@ fn binary_search(hash_vec: Vec<&u64>, file_hash: u64) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::distribute_hash_table::{binary_search, index_selector};
+    use crate::common::distribute_hash_table::{binary_search, index_selector};
     use std::collections::BTreeMap;
 
     #[test]

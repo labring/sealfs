@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use log::{debug, info};
 use tokio::net::{tcp::OwnedReadHalf, TcpListener};
 
-use crate::connection::ServerConnection;
+use super::connection::ServerConnection;
 
 #[async_trait]
 pub trait Handler {

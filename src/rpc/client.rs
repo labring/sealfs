@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::connection::{CircularQueue, ClientConnection, ClientConnectionAsync};
+use super::connection::{CircularQueue, ClientConnection, ClientConnectionAsync};
 use dashmap::DashMap;
 use log::debug;
 use std::sync::Arc;

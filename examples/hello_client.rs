@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use log::debug;
-use rpc::client::Client;
+use sealfs::rpc::client::Client;
 
 pub fn main() {
     let mut builder = env_logger::Builder::from_default_env();

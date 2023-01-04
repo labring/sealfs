@@ -4,6 +4,7 @@
 
 use log::info;
 use manager_service::{manager_client::ManagerClient, HeartRequest};
+use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tokio::time;
@@ -36,7 +37,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //read from command line.
 
     //read from yaml
-    let yaml_str = include_str!("../../server.yaml");
+    let yaml_str = include_str!("../../examples/server.yaml");
     let properties: Properties = serde_yaml::from_str(yaml_str).expect("server.yaml read failed!");
     let manager_address = properties.manager_address;
     let http_manager_address = format!("http://{}", manager_address);
