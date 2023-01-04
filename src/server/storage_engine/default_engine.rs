@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::EngineError;
+use super::EngineError;
 
 use super::StorageEngine;
 use nix::{
@@ -454,7 +454,7 @@ mod tests {
         sys::stat::Mode,
     };
 
-    use crate::storage_engine::{default_engine::generate_local_file_name, StorageEngine};
+    use crate::server::storage_engine::{default_engine::generate_local_file_name, StorageEngine};
 
     use super::{DefaultEngine, SubDirectory};
 

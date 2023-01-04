@@ -4,7 +4,7 @@
 
 use nix::sys::stat::Mode;
 
-use crate::EngineError;
+use super::EngineError;
 
 pub mod default_engine;
 pub trait StorageEngine {

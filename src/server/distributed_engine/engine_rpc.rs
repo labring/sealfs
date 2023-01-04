@@ -1,6 +1,6 @@
-use crate::storage_engine::StorageEngine;
-use common::request::OperationType;
-use rpc::server::Handler;
+use crate::common::request::OperationType;
+use crate::rpc::server::Handler;
+use crate::server::storage_engine::StorageEngine;
 use std::sync::Arc;
 pub struct DistributedHandler<Storage: StorageEngine> {
     pub local_storage: Arc<Storage>,
@@ -73,10 +73,11 @@ impl<Storage: StorageEngine + std::marker::Send + std::marker::Sync + 'static> H
 #[cfg(test)]
 mod tests {
     use super::DistributedHandler;
+    use crate::rpc;
     // use super::{enginerpc::enginerpc_client::EnginerpcClient, RPCService};
-    use crate::storage_engine::{default_engine::DefaultEngine, StorageEngine};
-    use crate::{DistributedEngine, EngineError};
-    use common::distribute_hash_table::build_hash_ring;
+    use crate::common::distribute_hash_table::build_hash_ring;
+    use crate::server::storage_engine::{default_engine::DefaultEngine, StorageEngine};
+    use crate::server::{DistributedEngine, EngineError};
     use nix::sys::stat::Mode;
     use std::sync::Arc;
     use tokio::time::sleep;

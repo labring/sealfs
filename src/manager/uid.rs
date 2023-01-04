@@ -84,7 +84,7 @@ impl Default for Uid {
 
 #[cfg(test)]
 mod tests {
-    use crate::uid::Uid;
+    use crate::manager::uid::Uid;
 
     #[test]
     fn uid_test() {

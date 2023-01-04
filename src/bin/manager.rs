@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use manager::manager_service::{self, ManagerService};
+use sealfs::manager::manager_service::{self, ManagerService};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tonic::transport::Server;
@@ -16,7 +16,7 @@ struct Properties {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     //read from yaml.
-    let yaml_str = include_str!("../../manager.yaml");
+    let yaml_str = include_str!("../../examples/manager.yaml");
     let properties: Properties = serde_yaml::from_str(yaml_str).expect("manager.yaml read failed!");
     let address = properties.address;
     let service = ManagerService::default();

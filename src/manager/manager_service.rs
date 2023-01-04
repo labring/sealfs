@@ -2,7 +2,7 @@ use self::manager::{
     manager_server::Manager, manager_server::ManagerServer, HeartRequest, HeartResponse,
     MetadataRequest, MetadataResponse,
 };
-use crate::heart::Heart;
+use super::heart::Heart;
 use tonic::{Request, Response, Status};
 
 pub mod manager {

@@ -1,10 +1,9 @@
-use rpc::server::Server;
+use sealfs::rpc::server::{Handler, Server};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use async_trait::async_trait;
 use log::debug;
-use rpc::server::Handler;
 pub struct HelloHandler {}
 
 impl HelloHandler {

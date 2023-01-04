@@ -4,14 +4,13 @@
 pub mod connection;
 pub mod manager;
 
-use crate::manager::CLIENT;
-use ::manager::manager_service::manager::manager_client::ManagerClient;
-use ::manager::manager_service::manager::MetadataRequest;
+use crate::manager::manager_service::manager::{manager_client::ManagerClient, MetadataRequest};
 use clap::Parser;
 use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
+use manager::CLIENT;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
@@ -122,7 +121,7 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
         options.push(MountOption::AllowRoot);
     }
 
-    let attr = include_str!("../../client.yaml");
+    let attr = include_str!("../../examples/client.yaml");
     let config: Config = serde_yaml::from_str(attr).expect("client.yaml read failed!");
     let manager_address = config.manager_address;
     let http_manager_address = format!("http://{}", manager_address);

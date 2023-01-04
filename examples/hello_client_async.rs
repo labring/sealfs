@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use log::debug;
-use rpc::client::ClientAsync;
+use sealfs::rpc::client::ClientAsync;
 
 #[tokio::main]
 pub async fn main() {

@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::connection::Connection;
-use common::distribute_hash_table::hash;
+use super::connection::Connection;
+use crate::common::distribute_hash_table::hash;
 use fuser::{
     FileAttr, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
     ReplyWrite,
