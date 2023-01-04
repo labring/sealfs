@@ -105,8 +105,6 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
                 metadata,
             ));
         }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await; // due to the bug of tokio
     }
 }
 
