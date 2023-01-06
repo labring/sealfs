@@ -108,9 +108,11 @@ Different SSDs have different characteristics. We will adapt different hardware,
 
 - Data reliability and high availability
 
--Data expansion
-Capacity expansion and reduction are implemented based on consistency hash.
+- Data expansion
 
--Tenant Management
-For the disks that different clients apply to mount, perform capacity limitation isolation
+  Capacity expansion and reduction are implemented based on consistency hash.
+
+- Tenant Management
+
+  For the disks that different clients apply to mount, perform capacity limitation isolation
 
