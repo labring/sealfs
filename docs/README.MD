@@ -105,12 +105,19 @@ To improve performance, sealfs directly stores files across file systems. Of cou
 Different SSDs have different characteristics. We will adapt different hardware, design different data structures, and hope to achieve better results for each type of hardware used by users.
 
 ## Some Other Extensions
-
+These expansion points are not implemented in the first version of the plan
 - Data reliability and high availability
-
+  - multi-replica
+    
+    The multi replica is temporarily planned to use the raft protocol, and the consistent hash algorithm is used to calculate the replica locations and distribute them to multiple nodes to achieve replica.
+  - erasure coding
 - Data expansion
 
-  Capacity expansion and reduction are implemented based on consistency hash.
+Capacity expansion and reduction are implemented based on consistency hash. The details will not be discussed for the time being. It needs to be clear that after adding or deleting nodes, the cluster will be rebalanced. This is what consistency hash itself needs to do without additional design. Rebalance will cause the cluster performance to decline and may take a long time, but it can provide services continuously. The work to be done during rebalance is as follows:
+
+| Start capacity expansion | Migrate data | Complete capacity expansion |
+| ---- | ---- | ---- |
+|Updating cluster metadata | The client makes a second request to confirm the consistency of the data after migration and the data before migration, and writes the data to the new node; Simultaneous migration task for data migration and synchronization | Confirm cluster metadata|
 
 - Tenant Management
 
