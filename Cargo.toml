@@ -44,3 +44,8 @@ path = "src/bin/server.rs"
 [[bin]]
 name = "manager"
 path = "src/bin/manager.rs"
+
+[workspace]
+members = [
+    "intercept",
+]
