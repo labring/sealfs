@@ -457,6 +457,17 @@ pub enum CallbackState {
     Error = 3,
 }
 
+impl std::fmt::Display for CallbackState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CallbackState::Empty => write!(f, "Empty"),
+            CallbackState::WaitingForResponse => write!(f, "WaitingForResponse"),
+            CallbackState::Done => write!(f, "Done"),
+            CallbackState::Error => write!(f, "Error"),
+        }
+    }
+}
+
 pub struct OperationCallback {
     pub data: *const u8,
     pub meta_data: *const u8,
@@ -552,8 +563,6 @@ impl CircularQueue {
             (*(callback as *mut OperationCallback)).state = CallbackState::WaitingForResponse;
             (*(callback as *mut OperationCallback)).data = rsp_data.as_ptr();
             (*(callback as *mut OperationCallback)).meta_data = rsp_meta_data.as_ptr();
-            (*(callback as *mut OperationCallback)).data_length = rsp_data.len();
-            (*(callback as *mut OperationCallback)).meta_data_length = rsp_meta_data.len();
         }
         Ok(id)
     }
@@ -575,7 +584,11 @@ impl CircularQueue {
                         *start_index = i;
                         break;
                     }
-                    _ => Err("Invalid callback state")?,
+                    _ => Err(format!(
+                        "Invalid callback state, id: {}, state: {}",
+                        i,
+                        (*callback).state
+                    ))?,
                 }
             }
         }
@@ -610,11 +623,19 @@ impl CircularQueue {
         }
     }
 
-    pub fn response(&self, id: u32, status: libc::c_int) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn response(
+        &self,
+        id: u32,
+        status: libc::c_int,
+        meta_data_length: usize,
+        data_lenght: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let callback = self.callbacks[id as usize];
             (*(callback as *mut OperationCallback)).state = CallbackState::Done;
             (*(callback as *mut OperationCallback)).request_status = status;
+            (*(callback as *mut OperationCallback)).meta_data_length = meta_data_length;
+            (*(callback as *mut OperationCallback)).data_length = data_lenght;
             (*(callback as *mut OperationCallback)).channel.0.send(())?;
         }
         self.clean_up()?;
@@ -626,12 +647,13 @@ impl CircularQueue {
             let callback = self.callbacks[id as usize];
             (*(callback as *mut OperationCallback)).state = CallbackState::Error;
         }
+        debug!("error callback, id: {}", id);
         self.clean_up()?;
         Ok(())
     }
 
     // wait_for_callback
-    // return: (status, flags, data_length, meta_data_length)
+    // return: (status, flags, meta_data_length, data_length)
     pub fn wait_for_callback(
         &self,
         id: u32,
@@ -645,11 +667,19 @@ impl CircularQueue {
             match result {
                 Ok(_) => {
                     (*(callback as *mut OperationCallback)).state = CallbackState::Done;
+                    debug!(
+                        "callback meta data length: {}",
+                        (*(callback as *mut OperationCallback)).meta_data_length
+                    );
+                    debug!(
+                        "callback data length: {}",
+                        (*(callback as *mut OperationCallback)).data_length
+                    );
                     Ok((
                         (*(callback as *mut OperationCallback)).request_status,
                         (*(callback as *mut OperationCallback)).flags,
-                        (*(callback as *mut OperationCallback)).data_length,
                         (*(callback as *mut OperationCallback)).meta_data_length,
+                        (*(callback as *mut OperationCallback)).data_length,
                     ))
                 }
                 Err(_) => {
