@@ -304,9 +304,11 @@ impl DefaultEngine {
                 if self.file_attr_db.db.key_may_exist(&file_str) {
                     continue;
                 }
+                let _ = self.file_db.db.delete(file_name.to_str().unwrap());
             }
-            let _ = self.file_db.db.delete(file_name.to_str().unwrap());
-            let _ = self.file_attr_db.db.delete(file_str);
+            if self.file_attr_db.db.key_may_exist(&file_str) {
+                let _ = self.file_attr_db.db.delete(file_str);
+            }
             let _ = std::fs::remove_file(entry.path());
         }
 
