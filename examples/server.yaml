@@ -1,7 +1,7 @@
 manager_address:
   127.0.0.1:8081
 server_address:
-  127.0.0.1:8080
+  127.0.0.1:8085
 lifetime:
   long
 database_path:
@@ -12,5 +12,5 @@ local_distributed_address:
   127.0.0.1:8090
 all_distributed_address:
  - 127.0.0.1:8090
- - 127.0.0.1:8091
- - 127.0.0.1:8092
+heartbeat:
+  false

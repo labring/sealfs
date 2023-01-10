@@ -159,7 +159,7 @@ where
         self.local_storage.delete_directory(path.clone())
     }
 
-    pub async fn read_dir(&self, path: String) -> Result<Vec<String>, EngineError> {
+    pub async fn read_dir(&self, path: String) -> Result<Vec<u8>, EngineError> {
         // a temporary implementation
         self.local_storage.read_directory(path)
     }
@@ -287,7 +287,7 @@ where
         self.local_storage.write_file(path, data, offset)
     }
 
-    pub async fn get_file_attr(&self, path: String) -> Result<Option<Vec<String>>, EngineError> {
+    pub async fn get_file_attr(&self, path: String) -> Result<Vec<u8>, EngineError> {
         // a temporary implementation
         self.local_storage.get_file_attributes(path)
     }

@@ -47,9 +47,39 @@ sealfs的架构为无中心架构，且无独立的元数据节点，我们希�
     - [ ] IO500
     - [ ] 功能测试
 
-## 安装
+## 编译
 
-## 快速开始
+```bash
+cargo build
+```
+
+## 快速使用
+
+### 挂载
+
+```bash
+mkdir ~/fs
+./target/debug/server &
+./target/debug/client ~/fs
+```
+
+### 文件操作
+
+show directory
+```bash
+ll ~/fs
+```
+create file
+TODO
+
+read file
+TODO
+
+write file
+TODO
+
+delete file
+TODO
 
 ## 开源协议
 [Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)
