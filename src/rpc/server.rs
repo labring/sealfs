@@ -45,15 +45,15 @@ pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static
                 .await;
             match result {
                 Ok(_) => {
-                    debug!("parse_response, send response success");
+                    debug!("handle, send response success");
                 }
                 Err(e) => {
-                    debug!("parse_response, send response error: {}", e);
+                    debug!("handle, send response error: {}", e);
                 }
             }
         }
         Err(e) => {
-            debug!("parse_response, dispatch error: {}", e);
+            debug!("handle, dispatch error: {}", e);
         }
     }
 }
@@ -79,7 +79,7 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
                 Ok(header) => header,
                 Err(e) => {
                     debug!("parse_response, header error: {}", e);
-                    continue;
+                    break;
                 }
             };
             debug!("parse_response, header: {:?}", header.id);
@@ -88,7 +88,7 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
                 Ok(data) => data,
                 Err(e) => {
                     debug!("parse_response, data error: {}", e);
-                    continue;
+                    break;
                 }
             };
             debug!("parse_response, data: {:?}", header.id);

@@ -23,6 +23,7 @@ struct Properties {
     // it will merge into 'server_address' in the future
     local_distributed_address: String,
     all_distributed_address: Vec<String>,
+    heartbeat: bool,
 }
 
 pub mod manager_service {
@@ -31,7 +32,11 @@ pub mod manager_service {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    let mut builder = env_logger::Builder::from_default_env();
+    builder
+        .format_timestamp(None)
+        .filter(None, log::LevelFilter::Debug);
+    builder.init();
 
     //todo
     //read from command line.
@@ -44,15 +49,18 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     let _server_address = properties.server_address.clone();
 
     //connect to manager
-    info!("Connect To Manager.");
-    let client = ManagerClient::connect(http_manager_address).await?;
 
-    //begin scheduled task
-    tokio::spawn(begin_heartbeat_report(
-        client,
-        properties.server_address.clone(),
-        properties.lifetime.clone(),
-    ));
+    if properties.heartbeat {
+        info!("Connect To Manager.");
+        let client = ManagerClient::connect(http_manager_address).await?;
+
+        //begin scheduled task
+        tokio::spawn(begin_heartbeat_report(
+            client,
+            properties.server_address.clone(),
+            properties.lifetime.clone(),
+        ));
+    }
 
     //todo
     //start server

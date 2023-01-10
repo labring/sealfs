@@ -7,25 +7,17 @@ pub mod storage_engine;
 
 use std::sync::Arc;
 
-use log::{debug, info};
+use async_trait::async_trait;
+use log::debug;
 use nix::sys::stat::Mode;
 use storage_engine::StorageEngine;
 
-use crate::common::{
-    byte::array2u32,
-    distribute_hash_table::build_hash_ring,
-    request::{
-        OperationType, RequestHeader, REQUEST_DATA_LENGTH_SIZE, REQUEST_FILENAME_LENGTH_SIZE,
-        REQUEST_HEADER_SIZE, REQUEST_METADATA_LENGTH_SIZE,
-    },
+use crate::{
+    common::{distribute_hash_table::build_hash_ring, request::OperationType},
+    rpc::server::{Handler, Server},
 };
 use distributed_engine::DistributedEngine;
 use storage_engine::default_engine::DefaultEngine;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -85,7 +77,7 @@ pub async fn run(
     local_distributed_address: String,
     all_servers_address: Vec<String>,
 ) -> anyhow::Result<()> {
-    let listener = TcpListener::bind(&address).await?;
+    debug!("run server");
     let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
     local_storage.init();
     build_hash_ring(all_servers_address.clone());
@@ -104,7 +96,8 @@ pub async fn run(
             arc_engine.add_connection(key_address).await;
         });
     }
-    let mut server = Server::new(address, listener, engine);
+    let handler = Arc::new(FileRequestHandler::new(engine));
+    let server = Server::new(handler, &address);
     server.run().await?;
     Ok(())
 }
@@ -118,205 +111,93 @@ pub enum ServerError {
 macro_rules! EngineErr2Status {
     ($e:expr) => {
         match $e {
-            EngineError::IO => -libc::EIO,
-            EngineError::NoEntry => -libc::ENOENT,
-            EngineError::NotDir => -libc::ENOTDIR,
-            EngineError::IsDir => -libc::EISDIR,
-            EngineError::Exist => -libc::EEXIST,
-            EngineError::NotEmpty => -libc::ENOTEMPTY,
+            EngineError::IO => libc::EIO,
+            EngineError::NoEntry => libc::ENOENT,
+            EngineError::NotDir => libc::ENOTDIR,
+            EngineError::IsDir => libc::EISDIR,
+            EngineError::Exist => libc::EEXIST,
+            EngineError::NotEmpty => libc::ENOTEMPTY,
             // todo
             // other Error
-            _ => 0,
+            _ => libc::EIO,
         }
     };
 }
 
-pub struct Server<S: StorageEngine + std::marker::Send + std::marker::Sync + 'static> {
-    pub address: String,
-    listener: TcpListener,
+pub struct FileRequestHandler<S: StorageEngine + std::marker::Send + std::marker::Sync + 'static> {
     engine: Arc<DistributedEngine<S>>,
 }
 
-impl<S> Server<S>
+impl<S: StorageEngine> FileRequestHandler<S>
 where
     S: StorageEngine + std::marker::Send + std::marker::Sync + 'static,
 {
-    pub fn new(address: String, listener: TcpListener, engine: Arc<DistributedEngine<S>>) -> Self
-    where
-        S: StorageEngine,
-    {
-        Self {
-            address,
-            listener,
-            engine,
-        }
-    }
-
-    pub async fn run(&mut self) -> anyhow::Result<()> {
-        info!("Listening");
-        loop {
-            match self.listener.accept().await {
-                Ok((stream, _)) => {
-                    let mut handler = Handler {
-                        stream,
-                        send_lock: Mutex::new(()),
-                    };
-                    let e = Arc::clone(&self.engine);
-                    tokio::spawn(async move {
-                        let header_result = handler.parse_header().await;
-                        let header = match header_result {
-                            Ok(header) => header.unwrap_or_else(|| {
-                                todo!("response to client, request header is null");
-                            }),
-                            Err(e) => {
-                                todo!("response to client, error is {}", e);
-                            }
-                        };
-                        match handler.dispatch(header, e).await {
-                            Ok(_) => {}
-                            Err(e) => {
-                                todo!("handle response error, error is {}", e);
-                            }
-                        };
-                    });
-                }
-                Err(e) => {
-                    panic!("Failed to create tcp stream, error is {}", e)
-                }
-            }
-        }
+    pub fn new(engine: Arc<DistributedEngine<S>>) -> Self {
+        Self { engine }
     }
 }
 
-pub struct Handler {
-    stream: TcpStream,
-    send_lock: Mutex<()>,
-}
-
-impl Handler {
-    pub async fn parse_header(&mut self) -> Result<Option<RequestHeader>, ServerError> {
-        let mut header_buf = [0u8; REQUEST_HEADER_SIZE];
-        let header = match self.stream.read(&mut header_buf).await {
-            Ok(n) if n == REQUEST_HEADER_SIZE => {
-                let header = RequestHeader {
-                    id: array2u32(&header_buf[0..4]),
-                    r#type: array2u32(&header_buf[4..8]),
-                    flags: array2u32(&header_buf[8..12]),
-                    total_length: array2u32(&header_buf[12..16]),
-                    file_path_length: array2u32(&header_buf[16..20]),
-                    meta_data_length: array2u32(&header_buf[20..24]),
-                    data_length: array2u32(&header_buf[24..28]),
-                };
-                Some(header)
-            }
-            Ok(_n) => None,
-            Err(_e) => return Err(ServerError::ParseHeaderError),
-        };
-        Ok(header)
-    }
-
-    pub async fn read_body(&mut self, length: usize) -> anyhow::Result<Vec<u8>> {
-        let mut buf: Vec<u8> = vec![0; length];
-        self.stream.read_exact(&mut buf).await?;
-        Ok(buf)
-    }
-
-    pub async fn parse_data(
-        &mut self,
-        raw_data: &[u8],
-        start: usize,
-    ) -> anyhow::Result<(usize, Vec<u8>)> {
-        let data_length = array2u32(&raw_data[start..REQUEST_DATA_LENGTH_SIZE]) as usize;
-        Ok((
-            data_length,
-            raw_data[start + REQUEST_DATA_LENGTH_SIZE..start + data_length].to_vec(),
-        ))
-    }
-
-    pub async fn parse_metadata(
-        &mut self,
-        raw_data: &[u8],
-        start: usize,
-    ) -> anyhow::Result<(usize, Vec<u8>)> {
-        let metadata_length = array2u32(&raw_data[start..REQUEST_METADATA_LENGTH_SIZE]) as usize;
-        Ok((
-            metadata_length,
-            raw_data[start + REQUEST_METADATA_LENGTH_SIZE..start + metadata_length].to_vec(),
-        ))
-    }
-
-    pub async fn parse_path(&mut self, raw_data: &[u8]) -> Result<Option<String>, ServerError> {
-        let filename_length = array2u32(&raw_data[0..REQUEST_FILENAME_LENGTH_SIZE]) as usize;
-        let file_name = String::from_utf8(
-            raw_data[REQUEST_FILENAME_LENGTH_SIZE..REQUEST_FILENAME_LENGTH_SIZE + filename_length]
-                .to_vec(),
-        )
-        .unwrap();
-        Ok(Some(file_name))
-    }
-
-    pub async fn dispatch<S: StorageEngine>(
-        &mut self,
-        header: RequestHeader,
-        engine: Arc<DistributedEngine<S>>,
-    ) -> anyhow::Result<()> {
-        let buf = self
-            .read_body(header.total_length as usize - REQUEST_HEADER_SIZE)
-            .await?;
-        // a temporary implementation
+#[async_trait]
+impl<S: StorageEngine> Handler for FileRequestHandler<S>
+where
+    S: StorageEngine + std::marker::Send + std::marker::Sync + 'static,
+{
+    // dispatch is the main function to handle the request from client
+    // the return value is a tuple of (i32, u32, Vec<u8>, Vec<u8>)
+    // the first i32 is the status of the function
+    // the second u32 is the reserved field flags
+    // the third Vec<u8> is the metadata of the function
+    // the fourth Vec<u8> is the data of the function
+    async fn dispatch(
+        &self,
+        operation_type: u32,
+        _flags: u32,
+        path: Vec<u8>,
+        data: Vec<u8>,
+        _metadata: Vec<u8>,
+    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+        let r#type = OperationType::try_from(operation_type).unwrap();
+        let file_path = String::from_utf8(path).unwrap();
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
             | Mode::S_IWGRP
             | Mode::S_IROTH
             | Mode::S_IWOTH;
-        let operation_type = OperationType::try_from(header.r#type).unwrap();
-        match operation_type {
-            OperationType::Unkown => todo!(),
-            OperationType::Lookup => todo!(),
+        match r#type {
+            OperationType::Unkown => {
+                debug!("Unkown");
+                Ok((-1, 0, Vec::new(), Vec::new()))
+            }
+            OperationType::Lookup => {
+                debug!("Lookup");
+                todo!()
+            }
             OperationType::CreateFile => {
                 debug!("Create File");
-                let file_path = self.parse_path(&buf).await?.unwrap();
-                let (_fd, status) = match engine.create_file(file_path, mode).await {
-                    Ok(fd) => (fd, 0),
-                    Err(e) => (-1, EngineErr2Status!(e) as u32),
+                let status = match self.engine.create_file(file_path, mode).await {
+                    Ok(_) => 0,
+                    Err(e) => EngineErr2Status!(e) as u32,
                 };
-                self.response(header.id, status, 0, 16, None, None, None, None)
-                    .await?;
+                Ok((0, status, Vec::new(), Vec::new()))
             }
             OperationType::CreateDir => {
                 debug!("Create Dir");
-                let dir_path = self.parse_path(&buf).await?.unwrap();
-                let status = match engine.create_dir(dir_path, mode).await {
+                let status = match self.engine.create_dir(file_path, mode).await {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e) as u32,
                 };
-                self.response(header.id, status, 0, 16, None, None, None, None)
-                    .await?;
+                Ok((0, status, Vec::new(), Vec::new()))
             }
             OperationType::GetFileAttr => {
                 debug!("Get File Attr");
-                let file_path = self.parse_path(&buf).await?.unwrap();
-                let (data, status) = match engine.get_file_attr(file_path).await {
-                    Ok(value) => (value, 0),
-                    Err(e) => (None, EngineErr2Status!(e)),
-                };
-                let data_bytes = if let Some(value) = data {
-                    bincode::serialize(&value[..]).unwrap()
-                } else {
-                    Vec::new()
-                };
-                self.response(
-                    header.id,
-                    status as u32,
-                    0,
-                    16,
-                    Some(data_bytes.len() as u32),
-                    None,
-                    Some(data_bytes.as_slice()),
-                    None,
-                )
-                .await?;
+                match self.engine.get_file_attr(file_path).await {
+                    Ok(value) => Ok((0, 0, value, Vec::new())),
+                    Err(e) => {
+                        let status = EngineErr2Status!(e) as i32;
+                        Ok((status, 0, Vec::new(), Vec::new()))
+                    }
+                }
             }
             OperationType::OpenFile => {
                 debug!("Open File");
@@ -324,118 +205,48 @@ impl Handler {
             }
             OperationType::ReadDir => {
                 debug!("Read Dir");
-                let dir_path = self.parse_path(&buf).await?.unwrap();
-                // need to be parse size
-                let (data, status) = match engine.read_dir(dir_path).await {
-                    Ok(value) => (value, 0u32),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e) as u32),
-                };
-                let data_bytes = bincode::serialize(&data[..])?;
-                self.response(
-                    header.id,
-                    status,
-                    0,
-                    16,
-                    None,
-                    Some(data_bytes.len() as u32),
-                    None,
-                    Some(data_bytes.as_slice()),
-                )
-                .await?;
+                match self.engine.read_dir(file_path).await {
+                    Ok(value) => Ok((0, 0, Vec::new(), value)),
+                    Err(e) => {
+                        let status = EngineErr2Status!(e) as i32;
+                        Ok((status, 0, Vec::new(), Vec::new()))
+                    }
+                }
             }
             OperationType::ReadFile => {
                 debug!("Read File");
-                let file_path = self.parse_path(&buf).await?.unwrap();
-                // need to parse size and offset from request
-                let (data, status) = match engine.read_file(file_path, 100, 0).await {
+                let (data, status) = match self.engine.read_file(file_path, 0, 0).await {
                     Ok(value) => (value, 0),
                     Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
-                self.response(
-                    header.id,
-                    status as u32,
-                    0,
-                    16,
-                    None,
-                    Some(data.len() as u32),
-                    None,
-                    Some(data.as_slice()),
-                )
-                .await?;
+                Ok((0, status as u32, Vec::new(), data))
             }
             OperationType::WriteFile => {
                 debug!("Write File");
-                let file_path = self.parse_path(&buf).await?.unwrap();
-                let mut start = file_path.len();
-                let (metadata_length, _metadata) = self.parse_metadata(&buf, start).await?;
-                start = start + metadata_length + REQUEST_METADATA_LENGTH_SIZE;
-                let (_data_length, data) = self.parse_data(&buf, start).await?;
-                // need to be parse offset
-                let (_size, status) = match engine.write_file(file_path, data.as_slice(), 0).await {
-                    Ok(size) => (size, 0),
-                    Err(e) => (0, EngineErr2Status!(e) as u32),
+                let status = match self.engine.write_file(file_path, data.as_slice(), 0).await {
+                    Ok(_) => 0,
+                    Err(e) => EngineErr2Status!(e) as u32,
                 };
-                self.response(header.id, status, 0, 16, None, None, None, None)
-                    .await?;
+                Ok((0, status, Vec::new(), Vec::new()))
             }
             OperationType::DeleteFile => {
                 debug!("Delete File");
-                let file_path = self.parse_path(&buf).await?.unwrap();
-                let status = match engine.delete_file(file_path).await {
+                let status = match self.engine.delete_file(file_path).await {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e) as u32,
                 };
-                self.response(header.id, status, 0, 16, None, None, None, None)
-                    .await?;
+                Ok((0, status, Vec::new(), Vec::new()))
             }
             OperationType::DeleteDir => {
                 debug!("Delete Dir");
-                let file_path = self.parse_path(&buf).await?.unwrap();
-                let status = match engine.delete_dir(file_path).await {
+                let status = match self.engine.delete_dir(file_path).await {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e) as u32,
                 };
-                self.response(header.id, status, 0, 16, None, None, None, None)
-                    .await?;
+                Ok((0, status, Vec::new(), Vec::new()))
             }
-            OperationType::DirectoryAddEntry => {}
-            OperationType::DirectoryDeleteEntry => {}
+            OperationType::DirectoryAddEntry => todo!(),
+            OperationType::DirectoryDeleteEntry => todo!(),
         }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn response(
-        &mut self,
-        id: u32,
-        status: u32,
-        flags: u32,
-        total_length: u32,
-        meta_data_length: Option<u32>,
-        data_length: Option<u32>,
-        meta_data: Option<&[u8]>,
-        data: Option<&[u8]>,
-    ) -> anyhow::Result<()> {
-        let buf = [id, status, flags, total_length];
-        let buf = unsafe { std::mem::transmute_copy::<[u32; 4], [u8; 16]>(&buf) };
-
-        let _ = self.send_lock.lock().await;
-        // send response header
-        self.stream.write_all(&buf).await?;
-        // send metadata length
-        if let Some(meta_data_length) = meta_data_length {
-            self.stream.write_u32(meta_data_length).await?;
-        }
-        if let Some(meta_data) = meta_data {
-            self.stream.write_all(meta_data).await?;
-        }
-        // send data length
-        if let Some(data_length) = data_length {
-            self.stream.write_u32(data_length).await?;
-        }
-        if let Some(data) = data {
-            self.stream.write_all(data).await?;
-        }
-        Ok(())
     }
 }

@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::common::fuse::SubDirectory;
+
 use super::EngineError;
 
 use super::StorageEngine;
+use log::debug;
 use nix::{
     fcntl::{self, OFlag},
     sys::{
@@ -14,9 +17,8 @@ use nix::{
     unistd::{self, mkdir},
 };
 use rocksdb::{IteratorMode, Options, DB};
-use serde::{Deserialize, Serialize};
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     path::Path,
 };
@@ -100,17 +102,22 @@ impl StorageEngine for DefaultEngine {
         self.fsck().unwrap();
     }
 
-    fn get_file_attributes(&self, path: String) -> Result<Option<Vec<String>>, EngineError> {
+    fn get_file_attributes(&self, path: String) -> Result<Vec<u8>, EngineError> {
         match self.file_attr_db.db.get(path.as_bytes())? {
-            Some(value) => Ok(Some(bincode::deserialize(&value[..]).unwrap())),
-            None => Ok(None),
+            Some(value) => {
+                debug!("path: {}, value: {:?}", path, value);
+                Ok(value)
+            }
+            None => Err(EngineError::NoEntry),
         }
     }
 
-    fn read_directory(&self, path: String) -> Result<Vec<String>, EngineError> {
+    fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError> {
         match self.file_attr_db.db.get(path.as_bytes())? {
             Some(value) => {
-                if "d" != bincode::deserialize::<String>(&value[..]).unwrap() {
+                debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
+                if b'd' != value[0] {
+                    debug!("deserialize err path: {}, value: {:?}", path, value);
                     return Err(EngineError::NotDir);
                 }
             }
@@ -118,12 +125,8 @@ impl StorageEngine for DefaultEngine {
         }
         match self.dir_db.db.get(path.as_bytes())? {
             Some(value) => {
-                let sub_dirs: SubDirectory = bincode::deserialize(&value[..]).unwrap();
-                let mut sub_dirs_str = Vec::new();
-                for sub_dir in sub_dirs.sub_dir {
-                    sub_dirs_str.push(sub_dir.0);
-                }
-                Ok(sub_dirs_str)
+                debug!("read_dir path: {}, value: {:?}", path, value);
+                Ok(value)
             }
             None => Err(EngineError::NoEntry),
         }
@@ -274,7 +277,7 @@ impl StorageEngine for DefaultEngine {
         match self.dir_db.db.get(path.as_bytes())? {
             Some(value) => {
                 let sub_dir = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-                if sub_dir.sub_dir.len() != 3 {
+                if sub_dir.sub_dir.len() != 2 {
                     return Err(EngineError::NotEmpty);
                 }
             }
@@ -416,29 +419,6 @@ impl FileAttr {
         self
     }
 }
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct SubDirectory {
-    sub_dir: HashMap<String, String>,
-}
-
-impl SubDirectory {
-    pub fn new() -> Self {
-        let sub_dir = HashMap::from([
-            (".".to_string(), "d".to_string()),
-            ("".to_string(), "d".to_string()),
-            ("..".to_string(), "d".to_string()),
-        ]);
-        SubDirectory { sub_dir }
-    }
-
-    pub fn add_dir(&mut self, dir: String) {
-        self.sub_dir.insert(dir, "d".to_string());
-    }
-
-    pub fn delete_dir(&mut self, dir: String) {
-        self.sub_dir.remove(&dir);
-    }
-}
 
 #[inline]
 fn generate_local_file_name(root: &str, path: &str) -> String {
@@ -451,6 +431,7 @@ fn generate_local_file_name(root: &str, path: &str) -> String {
 mod tests {
     use std::path::Path;
 
+    use crate::common::fuse::SubDirectory;
     use nix::{
         fcntl::{self, OFlag},
         sys::stat::Mode,
@@ -458,7 +439,7 @@ mod tests {
 
     use crate::server::storage_engine::{default_engine::generate_local_file_name, StorageEngine};
 
-    use super::{DefaultEngine, SubDirectory};
+    use super::DefaultEngine;
 
     #[test]
     fn test_init() {
