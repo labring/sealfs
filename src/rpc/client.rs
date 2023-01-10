@@ -70,7 +70,12 @@ impl Client {
                                 let response = connection.receive_response(meta_data, data);
                                 match response {
                                     Ok(_) => {
-                                        let result = self.queue.response(id, 0);
+                                        let result = self.queue.response(
+                                            id,
+                                            0,
+                                            header.meta_data_length as usize,
+                                            header.data_length as usize,
+                                        );
                                         match result {
                                             Ok(_) => {
                                                 debug!("Response success");
@@ -143,6 +148,7 @@ impl Client {
                         let result = self.queue.wait_for_callback(id);
                         match result {
                             Ok((s, f, meta_data_length, data_length)) => {
+                                debug!("call_remote success, status: {}, flags: {}, meta_data_length: {}, data_length: {}", s, f, meta_data_length, data_length);
                                 *status = s;
                                 *rsp_flags = f;
                                 *recv_meta_data_length = meta_data_length;
@@ -224,7 +230,12 @@ pub async fn parse_response(
                             .await;
                         match response {
                             Ok(_) => {
-                                let result = queue.response(id, 0);
+                                let result = queue.response(
+                                    id,
+                                    0,
+                                    header.meta_data_length as usize,
+                                    header.data_length as usize,
+                                );
                                 match result {
                                     Ok(_) => {
                                         debug!("Response success");
@@ -346,6 +357,7 @@ impl ClientAsync {
                         let result = self.queue.wait_for_callback(id);
                         match result {
                             Ok((s, f, meta_data_length, data_length)) => {
+                                debug!("call_remote success, status: {}, flags: {}, meta_data_length: {}, data_length: {}", s, f, meta_data_length, data_length);
                                 *status = s;
                                 *rsp_flags = f;
                                 *recv_meta_data_length = meta_data_length;
