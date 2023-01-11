@@ -462,8 +462,10 @@ mod tests {
 
     #[test]
     fn test_init() {
+        let root = "/tmp/test_init";
+        let db_path = "/tmp/test_db";
         {
-            let engine = DefaultEngine::new("/tmp/test_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
 
             let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
@@ -473,21 +475,33 @@ mod tests {
                 | Mode::S_IWGRP
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
-            let _fd = fcntl::open("/tmp/test/test.txt", oflag, mode);
-            assert_eq!(Path::new("/tmp/test/test.txt").is_file(), true);
+            let _fd = fcntl::open(format!("{}/test", root).as_str(), oflag, mode).unwrap();
+            assert_eq!(Path::new(format!("{}/test", root).as_str()).is_file(), true);
         }
 
         {
-            let engine = DefaultEngine::new("/tmp/test_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
-            assert_eq!(Path::new("/tmp/test/test.txt").is_file(), false);
+            assert_eq!(
+                Path::new(format!("{}/test", root).as_str()).is_file(),
+                false
+            );
         }
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_file", db_path)).unwrap();
+        rocksdb::DB::destroy(
+            &rocksdb::Options::default(),
+            format!("{}_file_attr", db_path),
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_create_delete_dir() {
+        let root = "/tmp/test_create_delete_dir";
+        let db_path = "/tmp/test_dir_db";
         {
-            let engine = DefaultEngine::new("/tmp/test_dir_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
             engine
                 .directory_add_entry("/".to_string(), "a/".to_string())
@@ -519,7 +533,7 @@ mod tests {
         }
 
         {
-            let engine = DefaultEngine::new("/tmp/test_dir_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
             engine
                 .directory_add_entry("/".to_string(), "a1/".to_string())
@@ -570,15 +584,21 @@ mod tests {
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             assert_eq!(SubDirectory::new(), dirs);
         }
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_dir").unwrap();
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_file").unwrap();
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_dir_db_file_attr").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_file", db_path)).unwrap();
+        rocksdb::DB::destroy(
+            &rocksdb::Options::default(),
+            format!("{}_file_attr", db_path),
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_create_delete_file() {
+        let root = "/tmp/test_create_delete_file";
+        let db_path = "/tmp/test_file_db";
         {
-            let engine = DefaultEngine::new("/tmp/test_file_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -587,14 +607,14 @@ mod tests {
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
             engine.create_file("/a.txt".to_string(), mode).unwrap();
-            let local_file_name = generate_local_file_name("/tmp/test", "/a.txt");
+            let local_file_name = generate_local_file_name(root, "/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("/a.txt".to_string()).unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
 
         {
-            let engine = DefaultEngine::new("/tmp/test_file_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -611,21 +631,26 @@ mod tests {
             engine
                 .create_file("/test_a/a/a.txt".to_string(), mode)
                 .unwrap();
-            let local_file_name = generate_local_file_name("/tmp/test", "/test_a/a/a.txt");
+            let local_file_name = generate_local_file_name(root, "/test_a/a/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("/test_a/a/a.txt".to_string()).unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
-
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_dir").unwrap();
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_file").unwrap();
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_file_db_file_attr").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_file", db_path)).unwrap();
+        rocksdb::DB::destroy(
+            &rocksdb::Options::default(),
+            format!("{}_file_attr", db_path),
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_read_write_file() {
+        let root = "/tmp/test_read_write_file";
+        let db_path = "/tmp/test_rw_db";
         {
-            let engine = DefaultEngine::new("/tmp/test_rw_db", "/tmp/test");
+            let engine = DefaultEngine::new(db_path, root);
             engine.init();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -640,8 +665,12 @@ mod tests {
             let value = engine.read_file("/b.txt".to_string(), 11, 0).unwrap();
             assert_eq!("hello world", String::from_utf8(value).unwrap());
         }
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_rw_db_dir").unwrap();
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_rw_db_file").unwrap();
-        rocksdb::DB::destroy(&rocksdb::Options::default(), "/tmp/test_rw_db_file_attr").unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
+        rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_file", db_path)).unwrap();
+        rocksdb::DB::destroy(
+            &rocksdb::Options::default(),
+            format!("{}_file_attr", db_path),
+        )
+        .unwrap();
     }
 }
