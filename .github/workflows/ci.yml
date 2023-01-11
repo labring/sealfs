@@ -30,7 +30,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
+      - run: sudo apt-get install protobuf-compiler libfuse-dev libcapstone-dev -y
       - run: cargo build --verbose --release
 
   check:
@@ -44,7 +44,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
+      - run: sudo apt-get install protobuf-compiler libfuse-dev libcapstone-dev -y
       - run: cargo check
 
   test:
@@ -58,7 +58,7 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
+      - run: sudo apt-get install protobuf-compiler libfuse-dev libcapstone-dev -y
       - run: cargo test --all
 
   fmt:
@@ -86,6 +86,6 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get install protobuf-compiler libfuse-dev -y
+      - run: sudo apt-get install protobuf-compiler libfuse-dev libcapstone-dev -y
       - run: rustup component add clippy
       - run: cargo clippy -- -D warnings
