@@ -4,8 +4,6 @@
 
 use std::time;
 
-use log::debug;
-
 pub const MAX_FILENAME_LENGTH: usize = 4096;
 pub const MAX_DATA_LENGTH: usize = 65535;
 pub const MAX_METADATA_LENGTH: usize = 4096;
@@ -111,7 +109,6 @@ impl TryFrom<u32> for OperationType {
     type Error = ();
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        debug!("OperationType::try_from: value = {}", value);
         match value {
             0 => Ok(OperationType::Unkown),
             1 => Ok(OperationType::Lookup),
@@ -127,6 +124,26 @@ impl TryFrom<u32> for OperationType {
             11 => Ok(OperationType::DirectoryAddEntry),
             12 => Ok(OperationType::DirectoryDeleteEntry),
             _ => panic!("Unkown value: {}", value),
+        }
+    }
+}
+
+impl From<OperationType> for u32 {
+    fn from(value: OperationType) -> Self {
+        match value {
+            OperationType::Unkown => 0,
+            OperationType::Lookup => 1,
+            OperationType::CreateFile => 2,
+            OperationType::CreateDir => 3,
+            OperationType::GetFileAttr => 4,
+            OperationType::ReadDir => 5,
+            OperationType::OpenFile => 6,
+            OperationType::ReadFile => 7,
+            OperationType::WriteFile => 8,
+            OperationType::DeleteFile => 9,
+            OperationType::DeleteDir => 10,
+            OperationType::DirectoryAddEntry => 11,
+            OperationType::DirectoryDeleteEntry => 12,
         }
     }
 }

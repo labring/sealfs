@@ -12,9 +12,9 @@ pub trait StorageEngine {
 
     fn init(&self);
 
-    fn get_file_attributes(&self, path: String) -> Result<Option<Vec<String>>, EngineError>;
+    fn get_file_attributes(&self, path: String) -> Result<Vec<u8>, EngineError>;
 
-    fn read_directory(&self, path: String) -> Result<Vec<String>, EngineError>;
+    fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError>;
 
     fn read_file(&self, path: String, size: i64, offset: i64) -> Result<Vec<u8>, EngineError>;
 

@@ -50,9 +50,39 @@ At present, we are committed to improving the performance of the whole link. For
     - [ ] IO500
     - [ ] function test
 
-## Install
+## Compile
+
+```bash
+cargo build
+```
 
 ## Quick Start
+
+### Mount
+
+```bash
+mkdir ~/fs
+./target/debug/server &
+./target/debug/client ~/fs
+```
+
+### File Operations
+
+show directory
+```bash
+ll ~/fs
+```
+create file
+TODO
+
+read file
+TODO
+
+write file
+TODO
+
+delete file
+TODO
 
 ## LICENSE
 [Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)
