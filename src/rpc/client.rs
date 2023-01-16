@@ -72,7 +72,8 @@ impl Client {
                                     Ok(_) => {
                                         let result = self.queue.response(
                                             id,
-                                            0,
+                                            header.status,
+                                            header.flags,
                                             header.meta_data_length as usize,
                                             header.data_length as usize,
                                         );
@@ -232,7 +233,8 @@ pub async fn parse_response(
                             Ok(_) => {
                                 let result = queue.response(
                                     id,
-                                    0,
+                                    header.status,
+                                    header.flags,
                                     header.meta_data_length as usize,
                                     header.data_length as usize,
                                 );

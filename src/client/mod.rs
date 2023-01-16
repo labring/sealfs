@@ -1,16 +1,15 @@
 // Copyright 2022 labring. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
-pub mod connection;
-pub mod manager;
+pub mod fuse_client;
 
 use clap::Parser;
+use fuse_client::CLIENT;
 use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
 use log::info;
-use manager::CLIENT;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
