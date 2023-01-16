@@ -584,11 +584,7 @@ impl CircularQueue {
                         *start_index = i;
                         break;
                     }
-                    _ => Err(format!(
-                        "Invalid callback state, id: {}, state: {}",
-                        i,
-                        (*callback).state
-                    ))?,
+                    CallbackState::Empty => {}
                 }
             }
         }
@@ -627,13 +623,14 @@ impl CircularQueue {
         &self,
         id: u32,
         status: libc::c_int,
+        flags: u32,
         meta_data_length: usize,
         data_lenght: usize,
     ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let callback = self.callbacks[id as usize];
-            (*(callback as *mut OperationCallback)).state = CallbackState::Done;
             (*(callback as *mut OperationCallback)).request_status = status;
+            (*(callback as *mut OperationCallback)).flags = flags;
             (*(callback as *mut OperationCallback)).meta_data_length = meta_data_length;
             (*(callback as *mut OperationCallback)).data_length = data_lenght;
             (*(callback as *mut OperationCallback)).channel.0.send(())?;
@@ -666,7 +663,6 @@ impl CircularQueue {
                 .recv_timeout(CLIENT_REQUEST_TIMEOUT);
             match result {
                 Ok(_) => {
-                    (*(callback as *mut OperationCallback)).state = CallbackState::Done;
                     debug!(
                         "callback meta data length: {}",
                         (*(callback as *mut OperationCallback)).meta_data_length
@@ -675,12 +671,13 @@ impl CircularQueue {
                         "callback data length: {}",
                         (*(callback as *mut OperationCallback)).data_length
                     );
-                    Ok((
-                        (*(callback as *mut OperationCallback)).request_status,
-                        (*(callback as *mut OperationCallback)).flags,
-                        (*(callback as *mut OperationCallback)).meta_data_length,
-                        (*(callback as *mut OperationCallback)).data_length,
-                    ))
+                    let status = (*(callback as *mut OperationCallback)).request_status;
+                    let flags = (*(callback as *mut OperationCallback)).flags;
+                    let meta_data_length = (*(callback as *mut OperationCallback)).meta_data_length;
+                    let data_length = (*(callback as *mut OperationCallback)).data_length;
+
+                    (*(callback as *mut OperationCallback)).state = CallbackState::Done;
+                    Ok((status, flags, meta_data_length, data_length))
                 }
                 Err(_) => {
                     self.error(id)?;
