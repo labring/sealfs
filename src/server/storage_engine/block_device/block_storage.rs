@@ -4,8 +4,8 @@
 
 pub trait BlockStorage {
     /**
-    * Default aio.
-    */
+     * Default aio.
+     */
     fn write(&self, file_name: String, data: &[u8], offset: i64);
 
     /**

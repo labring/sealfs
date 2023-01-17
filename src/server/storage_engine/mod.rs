@@ -6,8 +6,8 @@ use nix::sys::stat::Mode;
 
 use super::EngineError;
 
-pub mod default_engine;
 pub mod block_device;
+pub mod default_engine;
 pub trait StorageEngine {
     fn new(db_path: &str, root: &str) -> Self;
 
