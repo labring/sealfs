@@ -690,3 +690,141 @@ impl CircularQueue {
 
 unsafe impl std::marker::Sync for CircularQueue {}
 unsafe impl std::marker::Send for CircularQueue {}
+
+#[cfg(test)]
+mod tests {
+    use super::{CallbackState, CircularQueue, OperationCallback};
+
+    #[test]
+    fn test_register_callback() {
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data: Vec<u8> = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(_) => assert!(true),
+            Err(_) => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_get_metadata_ref() {
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(id) => match queue.get_meta_data_ref(id, recv_meta_data.len()) {
+                Ok(recv_meta_data_ref) => {
+                    assert_eq!(recv_meta_data_ref, &mut recv_meta_data);
+                }
+                Err(_) => assert!(false),
+            },
+            Err(_) => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_get_data_ref() {
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(id) => match queue.get_data_ref(id, recv_data.len()) {
+                Ok(recv_data_ref) => {
+                    assert_eq!(recv_data_ref, &mut recv_data);
+                }
+                Err(_) => assert!(false),
+            },
+            Err(_) => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_clean_up() {
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(id) => unsafe {
+                let callback = queue.callbacks[id as usize];
+                let oc = &mut *(callback as *mut OperationCallback);
+                oc.state = CallbackState::Done;
+                match queue.clean_up() {
+                    Ok(_) => match oc.state {
+                        CallbackState::Empty => assert!(true),
+                        _ => assert!(false),
+                    },
+                    Err(_) => assert!(false),
+                }
+            },
+            Err(_) => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_wait_for_callback() {
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(id) => {
+                let callback = queue.callbacks[id as usize];
+                unsafe {
+                    let oc = &*(callback as *mut OperationCallback);
+                    match oc.channel.0.send(()) {
+                        Ok(_) => assert!(true),
+                        Err(_) => assert!(false),
+                    };
+                    match queue.wait_for_callback(id) {
+                        Ok(_) => match oc.state {
+                            CallbackState::Done => assert!(true),
+                            _ => assert!(false),
+                        },
+                        Err(_) => assert!(false),
+                    };
+                }
+            }
+            Err(_) => assert!(false),
+        }
+    }
+
+    #[test]
+    fn test_reponse() {
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(id) => {
+                let callback = queue.callbacks[id as usize];
+                unsafe {
+                    match queue.response(id, 1 as i32, 2 as u32, 24 as usize, 512 as usize) {
+                        Ok(_) => assert!(true),
+                        Err(_) => assert!(false),
+                    };
+                    let oc = &*(callback as *mut OperationCallback);
+                    match oc.channel.1.recv() {
+                        Ok(_) => {
+                            assert_eq!(oc.request_status, 1);
+                            assert_eq!(oc.flags, 2);
+                            assert_eq!(oc.meta_data_length, 24);
+                            assert_eq!(oc.data_length, 512);
+                        }
+                        Err(_) => assert!(false),
+                    }
+                }
+            }
+            Err(_) => assert!(false),
+        }
+    }
+}
