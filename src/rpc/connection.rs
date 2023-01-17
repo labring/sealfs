@@ -9,8 +9,10 @@ use crate::common::request::{
 use log::{debug, error};
 use std::{
     io::{Read, Write},
-    sync::{mpsc, Arc, Mutex, RwLock},
-    vec,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        mpsc, Arc, Mutex, RwLock,
+    },
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -515,7 +517,7 @@ impl OperationCallback {
 pub struct CircularQueue {
     callbacks: Vec<*const OperationCallback>,
     start_index: Arc<Mutex<u32>>, // maybe we can use a lock-free queue
-    end_index: Arc<Mutex<u32>>,
+    end_index: Arc<AtomicU32>,
 }
 
 impl Default for CircularQueue {
@@ -523,7 +525,7 @@ impl Default for CircularQueue {
         Self {
             callbacks: vec![std::ptr::null(); REQUEST_QUEUE_LENGTH],
             start_index: Arc::new(Mutex::new(0)),
-            end_index: Arc::new(Mutex::new(1)),
+            end_index: Arc::new(AtomicU32::new(1)),
         }
     }
 }
@@ -533,7 +535,7 @@ impl CircularQueue {
         Self {
             callbacks: vec![std::ptr::null_mut(); REQUEST_QUEUE_LENGTH],
             start_index: Arc::new(Mutex::new(0)),
-            end_index: Arc::new(Mutex::new(1)),
+            end_index: Arc::new(AtomicU32::new(1)),
         }
     }
 
@@ -544,7 +546,7 @@ impl CircularQueue {
             // TODO: release the memory when the server is stopped
             self.callbacks[i] = Box::into_raw(Box::new(OperationCallback::new()));
         }
-        *self.end_index.lock().unwrap() = 0;
+        self.end_index.store(0, Ordering::Relaxed);
     }
 
     pub fn register_callback(
@@ -552,12 +554,7 @@ impl CircularQueue {
         rsp_meta_data: &mut [u8],
         rsp_data: &mut [u8],
     ) -> Result<u32, Box<dyn std::error::Error>> {
-        let id = {
-            let mut end_index = self.end_index.lock().unwrap();
-            let id = *end_index;
-            *end_index = (*end_index + 1) % REQUEST_QUEUE_LENGTH as u32;
-            id
-        };
+        let id = self.end_index.fetch_add(1, Ordering::Relaxed);
         unsafe {
             let callback = self.callbacks[id as usize];
             (*(callback as *mut OperationCallback)).state = CallbackState::WaitingForResponse;
@@ -569,7 +566,7 @@ impl CircularQueue {
 
     pub fn clean_up(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut start_index = self.start_index.lock().unwrap();
-        let end_flag = *self.end_index.lock().unwrap();
+        let end_flag = self.end_index.load(Ordering::Relaxed);
         for i in *start_index..end_flag {
             unsafe {
                 let callback = self.callbacks[i as usize];
