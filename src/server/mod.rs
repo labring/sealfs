@@ -201,7 +201,13 @@ where
             }
             OperationType::OpenFile => {
                 debug!("Open File");
-                todo!()
+                match self.engine.get_file_attr(file_path).await {
+                    Ok(_) => Ok((0, 0, Vec::new(), Vec::new())),
+                    Err(e) => {
+                        let status = EngineErr2Status!(e) as i32;
+                        Ok((status, 0, Vec::new(), Vec::new()))
+                    }
+                }
             }
             OperationType::ReadDir => {
                 debug!("Read Dir");
