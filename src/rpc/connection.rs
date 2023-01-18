@@ -554,7 +554,7 @@ impl CircularQueue {
         rsp_meta_data: &mut [u8],
         rsp_data: &mut [u8],
     ) -> Result<u32, Box<dyn std::error::Error>> {
-        let id = self.end_index.fetch_add(1, Ordering::Relaxed);
+        let id = self.end_index.fetch_add(1, Ordering::Relaxed) % REQUEST_QUEUE_LENGTH as u32;
         unsafe {
             let callback = self.callbacks[id as usize];
             (*(callback as *mut OperationCallback)).state = CallbackState::WaitingForResponse;
@@ -568,8 +568,9 @@ impl CircularQueue {
         let mut start_index = self.start_index.lock().unwrap();
         let end_flag = self.end_index.load(Ordering::Relaxed);
         for i in *start_index..end_flag {
+            let id = i % REQUEST_QUEUE_LENGTH as u32;
             unsafe {
-                let callback = self.callbacks[i as usize];
+                let callback = self.callbacks[id as usize];
                 match (*callback).state {
                     CallbackState::Done => {
                         (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
