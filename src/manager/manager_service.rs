@@ -1,6 +1,6 @@
 use super::heart::Heart;
 
-use crate::{common::request::OperationType, rpc::server::Handler};
+use crate::{common::serialization::OperationType, rpc::server::Handler};
 use async_trait::async_trait;
 use log::debug;
 use serde::{Deserialize, Serialize};

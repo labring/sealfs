@@ -4,7 +4,7 @@ use super::storage_engine::StorageEngine;
 use super::EngineError;
 use crate::common::{
     distribute_hash_table::{hash, index_selector},
-    request::OperationType,
+    serialization::OperationType,
 };
 
 use crate::rpc::client::ClientAsync;

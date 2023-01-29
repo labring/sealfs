@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use log::info;
-use sealfs::common::request::OperationType;
+use sealfs::common::serialization::OperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::ClientAsync;
 use sealfs::server;

@@ -5,7 +5,7 @@
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use libc::{__errno_location, iovec, O_CREAT, O_TRUNC, O_WRONLY};
-use sealfs::common::request::OperationType;
+use sealfs::common::serialization::OperationType;
 use sealfs::rpc;
 pub struct Client {
     // TODO replace with a thread safe data structure

@@ -14,7 +14,8 @@ use storage_engine::StorageEngine;
 
 use crate::{
     common::{
-        distribute_hash_table::build_hash_ring, fuse::ReadFileMetaData, request::OperationType,
+        distribute_hash_table::build_hash_ring, serialization::OperationType,
+        serialization::ReadFileMetaData,
     },
     rpc::server::{Handler, Server},
 };

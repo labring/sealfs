@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::common::request::OperationType;
+use crate::common::serialization::OperationType;
 use crate::rpc::server::Handler;
 use crate::server::storage_engine::StorageEngine;
 use std::sync::Arc;

@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::common::fuse::{FileAttrSimple, ReadFileMetaData, SubDirectory};
-use crate::common::request::OperationType;
+use crate::common::serialization::{FileAttrSimple, OperationType, ReadFileMetaData, SubDirectory};
 use crate::rpc;
 use dashmap::DashMap;
 use fuser::{
