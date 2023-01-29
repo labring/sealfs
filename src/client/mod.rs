@@ -13,7 +13,7 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
-use crate::manager::manager_service::manager::{manager_client::ManagerClient, MetadataRequest};
+use crate::{common::request::OperationType, rpc::client::ClientAsync};
 
 const CLIENT_FLAG: u32 = 2;
 
@@ -155,10 +155,30 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     info!("spawn client");
 
     if config.heartbeat {
-        tokio::spawn(async {
-            let mut client = ManagerClient::connect(_http_manager_address).await.unwrap();
-            let request = tonic::Request::new(MetadataRequest { flag: CLIENT_FLAG });
-            let result = client.get_metadata(request).await;
+        tokio::spawn(async move {
+            let client = ClientAsync::new();
+            client.add_connection(&_http_manager_address).await;
+            let mut status = 0i32;
+            let mut rsp_flags = 0u32;
+
+            let mut recv_meta_data_length = 0usize;
+            let mut recv_data_length = 0usize;
+            let result = client
+                .call_remote(
+                    &_http_manager_address,
+                    OperationType::GetMetadata.into(),
+                    CLIENT_FLAG,
+                    "",
+                    &[],
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut [],
+                    &mut [],
+                )
+                .await;
             if result.is_err() {
                 panic!("get metadata error.");
             }

@@ -253,6 +253,7 @@ where
             }
             OperationType::DirectoryAddEntry => todo!(),
             OperationType::DirectoryDeleteEntry => todo!(),
+            _ => todo!(),
         }
     }
 }

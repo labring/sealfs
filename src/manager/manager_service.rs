@@ -1,47 +1,42 @@
-use self::manager::{
-    manager_server::Manager, manager_server::ManagerServer, HeartRequest, HeartResponse,
-    MetadataRequest, MetadataResponse,
-};
 use super::heart::Heart;
-use tonic::{Request, Response, Status};
 
-pub mod manager {
-    tonic::include_proto!("manager");
-}
+use crate::{common::request::OperationType, rpc::server::Handler};
+use async_trait::async_trait;
 
 #[derive(Default)]
 pub struct ManagerService {
     pub heart: Heart,
 }
 
-pub fn new_manager_service(service: ManagerService) -> ManagerServer<ManagerService> {
-    ManagerServer::new(service)
-}
-
-#[tonic::async_trait]
-impl Manager for ManagerService {
-    async fn send_heart(
+#[async_trait]
+impl Handler for ManagerService {
+    async fn dispatch(
         &self,
-        request: Request<HeartRequest>,
-    ) -> Result<Response<HeartResponse>, Status> {
-        let message = request.get_ref();
-        self.heart
-            .register_server(message.address.clone(), message.lifetime.clone())
-            .await;
-        let response = HeartResponse { status: 0 };
-        Ok(Response::new(response))
-    }
-
-    async fn get_metadata(
-        &self,
-        _request: Request<MetadataRequest>,
-    ) -> Result<Response<MetadataResponse>, Status> {
-        let mut vec: Vec<String> = vec![];
-        self.heart.instances.iter().for_each(|instance| {
-            let key = instance.key();
-            vec.push(key.clone());
-        });
-        let response = MetadataResponse { instances: vec };
-        Ok(Response::new(response))
+        operation_type: u32,
+        _flags: u32,
+        path: Vec<u8>,
+        data: Vec<u8>,
+        _metadata: Vec<u8>,
+    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+        let r#type = OperationType::try_from(operation_type).unwrap();
+        match r#type {
+            OperationType::SendHeart => {
+                let address = String::from_utf8(path).unwrap();
+                let lifetime_length = u32::from_le_bytes(data[0..4].try_into().unwrap());
+                let lifetime =
+                    String::from_utf8(data[4..4 + lifetime_length as usize].to_vec()).unwrap();
+                self.heart.register_server(address, lifetime).await;
+                Ok((0, 0, Vec::new(), Vec::new()))
+            }
+            OperationType::GetMetadata => {
+                let mut vec: Vec<u8> = vec![];
+                self.heart.instances.iter().for_each(|instance| {
+                    let key = instance.key();
+                    vec.extend(key.as_bytes().iter());
+                });
+                Ok((0, 0, vec, Vec::new()))
+            }
+            _ => todo!(),
+        }
     }
 }
