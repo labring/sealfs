@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::connection::{CircularQueue, ClientConnection, ClientConnectionAsync, clean_up};
+use super::connection::{clean_up, CircularQueue, ClientConnection, ClientConnectionAsync};
 use dashmap::DashMap;
 use log::debug;
-use std::{sync::Arc,thread};
+use std::{sync::Arc, thread};
 use tokio::net::tcp::OwnedReadHalf;
 pub struct Client {
     connections: DashMap<String, Arc<ClientConnection>>,
@@ -24,7 +24,7 @@ impl Client {
         queue.init();
         let queue = Arc::new(queue);
         let q1 = queue.clone();
-        thread::spawn(||{clean_up(q1)});
+        thread::spawn(|| clean_up(q1));
         Self {
             connections: DashMap::new(),
             queue,
@@ -281,7 +281,7 @@ impl ClientAsync {
         queue.init();
         let queue = Arc::new(queue);
         let q1 = queue.clone();
-        thread::spawn(||{clean_up(q1)});
+        thread::spawn(|| clean_up(q1));
         Self {
             connections: DashMap::new(),
             queue,

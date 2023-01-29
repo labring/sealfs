@@ -558,10 +558,13 @@ impl CircularQueue {
         rsp_data: &mut [u8],
     ) -> Result<u32, Box<dyn std::error::Error>> {
         let idx = self.end_index.fetch_add(1, Ordering::Relaxed);
-        let id  = idx % REQUEST_QUEUE_LENGTH as u32 ;
+        let id = idx % REQUEST_QUEUE_LENGTH as u32;
         unsafe {
             let callback = self.callbacks[id as usize];
-            (*(callback as *mut OperationCallback)).occupied.0.send(())?;
+            (*(callback as *mut OperationCallback))
+                .occupied
+                .0
+                .send(())?;
             (*(callback as *mut OperationCallback)).state = CallbackState::WaitingForResponse;
             (*(callback as *mut OperationCallback)).data = rsp_data.as_ptr();
             (*(callback as *mut OperationCallback)).meta_data = rsp_meta_data.as_ptr();
@@ -685,16 +688,15 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
                     }
                     CallbackState::Empty => {}
                 }
-                if let Ok(()) =  (*(callback as *mut OperationCallback)).occupied.1.recv() {
+                if let Ok(()) = (*(callback as *mut OperationCallback)).occupied.1.recv() {
                     // match Ok(())
                     debug!("index {idx} has already been cleaned up. ");
                 }
             }
-            idx+=1;
+            idx += 1;
         }
         queue.start_index.store(idx, Ordering::Release);
     }
-    
 }
 
 unsafe impl std::marker::Sync for CircularQueue {}
@@ -759,7 +761,7 @@ mod tests {
         use std::sync::Arc;
         let mut queue = CircularQueue::new();
         queue.init();
-        let queue =Arc::new(queue);
+        let queue = Arc::new(queue);
         let mut recv_meta_data = vec![];
         let mut recv_data = vec![0u8; 1024];
         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
