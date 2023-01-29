@@ -13,7 +13,9 @@ use nix::sys::stat::Mode;
 use storage_engine::StorageEngine;
 
 use crate::{
-    common::{distribute_hash_table::build_hash_ring, request::OperationType},
+    common::{
+        distribute_hash_table::build_hash_ring, fuse::ReadFileMetaData, request::OperationType,
+    },
     rpc::server::{Handler, Server},
 };
 use distributed_engine::DistributedEngine;
@@ -154,7 +156,7 @@ where
         _flags: u32,
         path: Vec<u8>,
         data: Vec<u8>,
-        _metadata: Vec<u8>,
+        metadata: Vec<u8>,
     ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
         let r#type = OperationType::try_from(operation_type).unwrap();
         let file_path = String::from_utf8(path).unwrap();
@@ -175,11 +177,11 @@ where
             }
             OperationType::CreateFile => {
                 debug!("Create File");
-                let status = match self.engine.create_file(file_path, mode).await {
-                    Ok(_) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                let (meta_data, status) = match self.engine.create_file(file_path, mode).await {
+                    Ok(value) => (value, 0),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
                 };
-                Ok((0, status, Vec::new(), Vec::new()))
+                Ok((status, 0, meta_data, Vec::new()))
             }
             OperationType::CreateDir => {
                 debug!("Create Dir");
@@ -191,57 +193,58 @@ where
             }
             OperationType::GetFileAttr => {
                 debug!("Get File Attr");
-                match self.engine.get_file_attr(file_path).await {
-                    Ok(value) => Ok((0, 0, value, Vec::new())),
-                    Err(e) => {
-                        let status = EngineErr2Status!(e) as i32;
-                        Ok((status, 0, Vec::new(), Vec::new()))
-                    }
-                }
+                let (meta_data, status) = match self.engine.get_file_attr(file_path).await {
+                    Ok(value) => (value, 0),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                };
+                Ok((status, 0, meta_data, Vec::new()))
             }
             OperationType::OpenFile => {
                 debug!("Open File");
-                match self.engine.get_file_attr(file_path).await {
-                    Ok(_) => Ok((0, 0, Vec::new(), Vec::new())),
-                    Err(e) => {
-                        let status = EngineErr2Status!(e) as i32;
-                        Ok((status, 0, Vec::new(), Vec::new()))
-                    }
-                }
+                let status = match self.engine.open_file(file_path, mode).await {
+                    Ok(()) => 0,
+                    Err(e) => EngineErr2Status!(e) as i32,
+                };
+                Ok((status, 0, Vec::new(), Vec::new()))
             }
             OperationType::ReadDir => {
                 debug!("Read Dir");
-                match self.engine.read_dir(file_path).await {
-                    Ok(value) => Ok((0, 0, Vec::new(), value)),
-                    Err(e) => {
-                        let status = EngineErr2Status!(e) as i32;
-                        Ok((status, 0, Vec::new(), Vec::new()))
-                    }
-                }
-            }
-            OperationType::ReadFile => {
-                debug!("Read File");
-                let (data, status) = match self.engine.read_file(file_path, 0, 0).await {
+                let (data, status) = match self.engine.read_dir(file_path).await {
                     Ok(value) => (value, 0),
                     Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
-                Ok((0, status as u32, Vec::new(), data))
+                Ok((status as i32, 0, Vec::new(), data))
+            }
+            OperationType::ReadFile => {
+                debug!("Read File");
+                let md: ReadFileMetaData = bincode::deserialize(&metadata).unwrap();
+                let (data, status) =
+                    match self.engine.read_file(file_path, md.size, md.offset).await {
+                        Ok(value) => (value, 0),
+                        Err(e) => (Vec::new(), EngineErr2Status!(e)),
+                    };
+                Ok((status as i32, 0, Vec::new(), data))
             }
             OperationType::WriteFile => {
-                debug!("Write File");
-                let status = match self.engine.write_file(file_path, data.as_slice(), 0).await {
-                    Ok(_) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                debug!("Write File, data len: {}", data.len());
+                let offset = i64::from_le_bytes(metadata[..8].try_into().unwrap());
+                let (status, size) = match self
+                    .engine
+                    .write_file(file_path, data.as_slice(), offset)
+                    .await
+                {
+                    Ok(size) => (0, size as u32),
+                    Err(e) => (EngineErr2Status!(e) as i32, 0),
                 };
-                Ok((0, status, Vec::new(), Vec::new()))
+                Ok((status, 0, size.to_le_bytes().to_vec(), Vec::new()))
             }
             OperationType::DeleteFile => {
                 debug!("Delete File");
                 let status = match self.engine.delete_file(file_path).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                    Err(e) => EngineErr2Status!(e) as i32,
                 };
-                Ok((0, status, Vec::new(), Vec::new()))
+                Ok((status, 0, Vec::new(), Vec::new()))
             }
             OperationType::DeleteDir => {
                 debug!("Delete Dir");
