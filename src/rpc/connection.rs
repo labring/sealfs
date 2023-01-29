@@ -665,6 +665,7 @@ impl CircularQueue {
 }
 
 pub fn clean_up(queue: Arc<CircularQueue>) {
+    debug!("start to cleanup");
     loop {
         let mut idx = queue.start_index.load(Ordering::Acquire);
         let end_flag = queue.end_index.load(Ordering::Acquire);
@@ -680,7 +681,6 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
                         (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
                     }
                     CallbackState::WaitingForResponse => {
-                        queue.start_index.store(idx, Ordering::Release);
                         break;
                     }
                     CallbackState::Empty => {}
@@ -692,6 +692,7 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
             }
             idx+=1;
         }
+        queue.start_index.store(idx, Ordering::Release);
     }
     
 }
@@ -702,7 +703,7 @@ unsafe impl std::marker::Send for CircularQueue {}
 #[cfg(test)]
 mod tests {
     use super::{CallbackState, CircularQueue, OperationCallback};
-
+    use std::sync::atomic::Ordering;
     #[test]
     fn test_register_callback() {
         let mut queue = CircularQueue::new();
@@ -752,29 +753,34 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_clean_up() {
-    //     let mut queue = CircularQueue::new();
-    //     queue.init();
-    //     let mut recv_meta_data = vec![];
-    //     let mut recv_data = vec![0u8; 1024];
-    //     let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-    //     match result {
-    //         Ok(id) => unsafe {
-    //             let callback = queue.callbacks[id as usize];
-    //             let oc = &mut *(callback as *mut OperationCallback);
-    //             oc.state = CallbackState::Done;
-    //             match queue.clean_up() {
-    //                 Ok(_) => match oc.state {
-    //                     CallbackState::Empty => assert!(true),
-    //                     _ => assert!(false),
-    //                 },
-    //                 Err(_) => assert!(false),
-    //             }
-    //         },
-    //         Err(_) => assert!(false),
-    //     }
-    // }
+    #[test]
+    fn test_clean_up() {
+        use super::clean_up;
+        use std::sync::Arc;
+        let mut queue = CircularQueue::new();
+        queue.init();
+        let queue =Arc::new(queue);
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
+        match result {
+            Ok(id) => unsafe {
+                let callback = queue.callbacks[id as usize];
+                let oc = &mut *(callback as *mut OperationCallback);
+                oc.state = CallbackState::Done;
+                let q1 = queue.clone();
+                clean_up(q1);
+                if queue.start_index.load(Ordering::Acquire) != id + 1 {
+                    assert!(false);
+                }
+                match oc.state {
+                    CallbackState::Empty => assert!(true),
+                    _ => assert!(false),
+                }
+            },
+            Err(_) => assert!(false),
+        }
+    }
 
     #[test]
     fn test_wait_for_callback() {
