@@ -13,7 +13,10 @@ use log::info;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
-use crate::{common::request::OperationType, rpc::client::ClientAsync};
+use crate::{
+    common::request::OperationType, manager::manager_service::MetadataRequest,
+    rpc::client::ClientAsync,
+};
 
 const CLIENT_FLAG: u32 = 2;
 
@@ -158,6 +161,7 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move {
             let client = ClientAsync::new();
             client.add_connection(&_http_manager_address).await;
+            let request = MetadataRequest { flags: CLIENT_FLAG };
             let mut status = 0i32;
             let mut rsp_flags = 0u32;
 
@@ -167,9 +171,9 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
                 .call_remote(
                     &_http_manager_address,
                     OperationType::GetMetadata.into(),
-                    CLIENT_FLAG,
+                    0,
                     "",
-                    &[],
+                    &bincode::serialize(&request).unwrap(),
                     &[],
                     &mut status,
                     &mut rsp_flags,

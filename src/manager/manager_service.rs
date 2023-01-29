@@ -2,10 +2,29 @@ use super::heart::Heart;
 
 use crate::{common::request::OperationType, rpc::server::Handler};
 use async_trait::async_trait;
+use log::debug;
+use serde::{Deserialize, Serialize};
 
 #[derive(Default)]
 pub struct ManagerService {
     pub heart: Heart,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SendHeartRequest {
+    pub address: String,
+    pub flags: u32,
+    pub lifetime: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MetadataRequest {
+    pub flags: u32,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct MetadataResponse {
+    pub instances: Vec<String>,
 }
 
 #[async_trait]
@@ -14,27 +33,29 @@ impl Handler for ManagerService {
         &self,
         operation_type: u32,
         _flags: u32,
-        path: Vec<u8>,
-        data: Vec<u8>,
-        _metadata: Vec<u8>,
+        _path: Vec<u8>,
+        _data: Vec<u8>,
+        metadata: Vec<u8>,
     ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
         let r#type = OperationType::try_from(operation_type).unwrap();
         match r#type {
             OperationType::SendHeart => {
-                let address = String::from_utf8(path).unwrap();
-                let lifetime_length = u32::from_le_bytes(data[0..4].try_into().unwrap());
-                let lifetime =
-                    String::from_utf8(data[4..4 + lifetime_length as usize].to_vec()).unwrap();
-                self.heart.register_server(address, lifetime).await;
+                let request: SendHeartRequest = bincode::deserialize(&metadata).unwrap();
+                debug!("{}", request.lifetime);
+                self.heart
+                    .register_server(request.address, request.lifetime)
+                    .await;
+
                 Ok((0, 0, Vec::new(), Vec::new()))
             }
             OperationType::GetMetadata => {
-                let mut vec: Vec<u8> = vec![];
+                let _request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
+                let mut response = MetadataResponse::default();
                 self.heart.instances.iter().for_each(|instance| {
                     let key = instance.key();
-                    vec.extend(key.as_bytes().iter());
+                    response.instances.push(key.to_owned());
                 });
-                Ok((0, 0, vec, Vec::new()))
+                Ok((0, 0, bincode::serialize(&response).unwrap(), Vec::new()))
             }
             _ => todo!(),
         }

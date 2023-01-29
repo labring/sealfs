@@ -356,6 +356,7 @@ impl ClientAsync {
                     .await;
                 match send_result {
                     Ok(_) => {
+                        // todo: wait_for_callback will use async instead
                         let result =
                             tokio::task::block_in_place(move || self.queue.wait_for_callback(id));
                         match result {

@@ -4,6 +4,7 @@
 
 use log::info;
 use sealfs::common::request::OperationType;
+use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::ClientAsync;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
@@ -92,9 +93,11 @@ async fn begin_heartbeat_report(
     let mut interval = time::interval(time::Duration::from_secs(5));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        let mut data = Vec::with_capacity(4 + lifetime.len());
-        data.extend_from_slice(&(lifetime.len() as u32).to_le_bytes());
-        data.extend_from_slice(lifetime.as_bytes());
+        let request = SendHeartRequest {
+            address: server_address.clone(),
+            flags: SERVER_FLAG,
+            lifetime: lifetime.clone(),
+        };
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
         let mut recv_meta_data_length = 0usize;
@@ -104,10 +107,10 @@ async fn begin_heartbeat_report(
                 .call_remote(
                     &manager_address,
                     OperationType::SendHeart.into(),
-                    SERVER_FLAG,
+                    0,
                     &server_address,
+                    &bincode::serialize(&request).unwrap(),
                     &[],
-                    &data,
                     &mut status,
                     &mut rsp_flags,
                     &mut recv_meta_data_length,
