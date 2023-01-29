@@ -14,7 +14,7 @@ pub async fn main() {
     let client = Arc::new(ClientAsync::new());
     let server_address = "127.0.0.1:50051";
     client.add_connection(server_address).await;
-    for i in 0..50 {
+    for i in 0..100000 {
         let new_client = client.clone();
         tokio::spawn(async move {
             let mut status = 0;
