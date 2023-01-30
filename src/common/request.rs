@@ -103,6 +103,8 @@ pub enum OperationType {
     DeleteDir = 10,
     DirectoryAddEntry = 11,
     DirectoryDeleteEntry = 12,
+    SendHeart = 13,
+    GetMetadata = 14,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -123,6 +125,8 @@ impl TryFrom<u32> for OperationType {
             10 => Ok(OperationType::DeleteDir),
             11 => Ok(OperationType::DirectoryAddEntry),
             12 => Ok(OperationType::DirectoryDeleteEntry),
+            13 => Ok(OperationType::SendHeart),
+            14 => Ok(OperationType::GetMetadata),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -144,6 +148,8 @@ impl From<OperationType> for u32 {
             OperationType::DeleteDir => 10,
             OperationType::DirectoryAddEntry => 11,
             OperationType::DirectoryDeleteEntry => 12,
+            OperationType::SendHeart => 13,
+            OperationType::GetMetadata => 14,
         }
     }
 }
@@ -164,6 +170,8 @@ impl OperationType {
             OperationType::DeleteDir => 10u32.to_le_bytes(),
             OperationType::DirectoryAddEntry => 11u32.to_le_bytes(),
             OperationType::DirectoryDeleteEntry => 12u32.to_le_bytes(),
+            OperationType::SendHeart => 13u32.to_le_bytes(),
+            OperationType::GetMetadata => 14u32.to_le_bytes(),
         }
     }
 }

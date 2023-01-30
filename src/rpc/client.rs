@@ -356,7 +356,9 @@ impl ClientAsync {
                     .await;
                 match send_result {
                     Ok(_) => {
-                        let result = self.queue.wait_for_callback(id);
+                        // todo: wait_for_callback will use async instead
+                        let result =
+                            tokio::task::block_in_place(move || self.queue.wait_for_callback(id));
                         match result {
                             Ok((s, f, meta_data_length, data_length)) => {
                                 debug!("call_remote success, status: {}, flags: {}, meta_data_length: {}, data_length: {}", s, f, meta_data_length, data_length);
