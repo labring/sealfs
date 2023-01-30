@@ -7,16 +7,17 @@ The storage system of [sealos](https://github.com/labring/sealos),aim to be a hi
 The architecture of sealfs is non centralized, and there is no single metadata node. We hope to improve the read and write performance as much as possible and solve the problem of storing large amounts of small files.
 
 Sealfs consists of three components
--Server:Responsible for storing files and metadata.
+-Server:Responsible for storing files and metadata。Metadata is undoubtedly the hot file of the distributed file system, so we store data and metadata in the way of separate disks. Users can choose better hardware to store metadata.
 -client:It implements the file system in user mode, intercepts file requests, and stores and addresses them through the hash algorithm.
 -manager:Responsible for Coordinate cluster.
+
 The System Architecture picture as follows:
 ![](docs/images/architecture.jpg)
-More designs can be referred to
 
 ### User Mode in Overall Chain
 We hope to create an overall chain user mode distributed file storage system from client file request hijacking to network to storage with specific hardware, so as to obtain the ultimate performance experience.
 
+More designs can be referred to:
 ### Design Document
 [design document](https://github.com/labring/sealfs/blob/main/docs/README.MD)
 
@@ -72,17 +73,20 @@ show directory
 ```bash
 ll ~/fs
 ```
-create file
-TODO
+create & write file
+```bash
+echo "test" >> ~/fs/test.log
+```
 
 read file
-TODO
-
-write file
-TODO
+```bash
+cat ~/fs/test.log
+```
 
 delete file
-TODO
+```bash
+rm ~/fs/test.log
+```
 
 ## LICENSE
 [Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)

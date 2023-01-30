@@ -5,13 +5,12 @@
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use libc::{__errno_location, iovec, O_CREAT, O_TRUNC, O_WRONLY};
-use sealfs::common::fuse::Node;
-use sealfs::common::request::OperationType;
+use sealfs::common::serialization::OperationType;
 use sealfs::rpc;
 pub struct Client {
     // TODO replace with a thread safe data structure
     pub client: rpc::client::ClientAsync,
-    pub inodes: DashMap<String, Node>,
+    pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
     runtime: tokio::runtime::Runtime,
 }

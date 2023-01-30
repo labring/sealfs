@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::common::request::{
+use crate::rpc::protocol::{
     RequestHeader, ResponseHeader, CLIENT_REQUEST_TIMEOUT, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH,
     MAX_METADATA_LENGTH, REQUEST_HEADER_SIZE, REQUEST_QUEUE_LENGTH, RESPONSE_HEADER_SIZE,
 };
@@ -156,8 +156,8 @@ impl ClientConnection {
                     buf_len += len;
                     debug!("received {} bytes, total: {}", len, buf_len);
                 }
-                Err(_) => {
-                    return Err("failed to receive response".into());
+                Err(e) => {
+                    return Err(format!("failed to read data from stream, error: {}", e).into());
                 }
             }
         }

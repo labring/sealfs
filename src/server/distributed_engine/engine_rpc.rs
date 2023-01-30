@@ -1,4 +1,6 @@
-use crate::common::request::OperationType;
+use async_trait::async_trait;
+
+use crate::common::serialization::OperationType;
 use crate::rpc::server::Handler;
 use crate::server::storage_engine::StorageEngine;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ impl<Storage: StorageEngine> DistributedHandler<Storage> {
     }
 }
 
-#[tonic::async_trait]
+#[async_trait]
 impl<Storage: StorageEngine + std::marker::Send + std::marker::Sync + 'static> Handler
     for DistributedHandler<Storage>
 {

@@ -3,13 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use log::info;
-use manager_service::{manager_client::ManagerClient, HeartRequest};
+use sealfs::common::serialization::OperationType;
+use sealfs::manager::manager_service::SendHeartRequest;
+use sealfs::rpc::client::ClientAsync;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
-use tonic::transport::Channel;
 
 const SERVER_FLAG: u32 = 1;
 
@@ -24,10 +25,6 @@ struct Properties {
     local_distributed_address: String,
     all_distributed_address: Vec<String>,
     heartbeat: bool,
-}
-
-pub mod manager_service {
-    tonic::include_proto!("manager");
 }
 
 #[tokio::main]
@@ -45,18 +42,18 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     let yaml_str = include_str!("../../examples/server.yaml");
     let properties: Properties = serde_yaml::from_str(yaml_str).expect("server.yaml read failed!");
     let manager_address = properties.manager_address;
-    let http_manager_address = format!("http://{}", manager_address);
     let _server_address = properties.server_address.clone();
-
     //connect to manager
 
     if properties.heartbeat {
         info!("Connect To Manager.");
-        let client = ManagerClient::connect(http_manager_address).await?;
+        let client = ClientAsync::new();
+        client.add_connection(&manager_address).await;
 
         //begin scheduled task
         tokio::spawn(begin_heartbeat_report(
             client,
+            manager_address,
             properties.server_address.clone(),
             properties.lifetime.clone(),
         ));
@@ -88,21 +85,43 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn begin_heartbeat_report(
-    mut client: ManagerClient<Channel>,
+    client: ClientAsync,
+    manager_address: String,
     server_address: String,
     lifetime: String,
 ) {
     let mut interval = time::interval(time::Duration::from_secs(5));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        let request = tonic::Request::new(HeartRequest {
+        let request = SendHeartRequest {
             address: server_address.clone(),
-            flag: SERVER_FLAG,
+            flags: SERVER_FLAG,
             lifetime: lifetime.clone(),
-        });
-        let result = client.send_heart(request).await;
-        if result.is_err() {
-            panic!("send heartbeat error.");
+        };
+        let mut status = 0i32;
+        let mut rsp_flags = 0u32;
+        let mut recv_meta_data_length = 0usize;
+        let mut recv_data_length = 0usize;
+        {
+            let result = client
+                .call_remote(
+                    &manager_address,
+                    OperationType::SendHeart.into(),
+                    0,
+                    &server_address,
+                    &bincode::serialize(&request).unwrap(),
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut [],
+                    &mut [],
+                )
+                .await;
+            if result.is_err() {
+                panic!("send heartbeat error. {:?}", result);
+            }
         }
         interval.tick().await;
     }

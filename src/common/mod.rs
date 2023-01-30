@@ -4,5 +4,4 @@
 
 pub mod byte;
 pub mod distribute_hash_table;
-pub mod fuse;
-pub mod request;
+pub mod serialization;
