@@ -4,9 +4,10 @@
 The architecture of sealfs is non centralized, and there is no single metadata node. 
 
 Sealfs consists of three components
--Server:Responsible for storing files and metadata.
+-Server:Responsible for storing files and metadata.Metadata is undoubtedly the hot file of the distributed file system, so we store data and metadata in the way of separate disks. Users can choose better hardware to store metadata.
 -client:It implements the file system in user mode, intercepts file requests, and stores and addresses them through the hash algorithm.
 -manager:Responsible for Coordinate cluster.
+
 The System Architecture picture as follows:
 ![](images/architecture.jpg)
 
@@ -38,8 +39,8 @@ There are different ways to implement network file storage, and fuse is an easy 
 In fuse, a call process for file storage through the network includes:
 1. User status request
 2. VFS (switching)
-3. Fuse kernel module
-4. Fuse user module
+3. fuse driver
+4. fuse library
 5. network
 
 It should be noted that fuse also reduces the performance of the file system while avoiding the above problems.
