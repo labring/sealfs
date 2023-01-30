@@ -2,12 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::common::fuse::FileAttrSimple;
 use crate::common::fuse::SubDirectory;
 
 use super::EngineError;
 
 use super::StorageEngine;
 use log::debug;
+use log::error;
 use nix::{
     fcntl::{self, OFlag},
     sys::{
@@ -86,15 +88,19 @@ impl StorageEngine for DefaultEngine {
     }
 
     fn init(&self) {
-        let root_sub_dir = SubDirectory::new();
         if !self.dir_db.db.key_may_exist(b"/") {
+            let root_sub_dir = SubDirectory::new();
             let _ = self
                 .dir_db
                 .db
                 .put(b"/", bincode::serialize(&root_sub_dir).unwrap());
         }
         if !self.file_attr_db.db.key_may_exist(b"/") {
-            let _ = self.file_attr_db.db.put(b"/", b"d");
+            let file_attr = FileAttrSimple::new(fuser::FileType::Directory);
+            let _ = self
+                .file_attr_db
+                .db
+                .put(b"/", bincode::serialize(&file_attr).unwrap());
         }
         if !self.file_db.db.key_may_exist(b"/") {
             let _ = self.file_db.db.put(b"/", b"");
@@ -116,9 +122,16 @@ impl StorageEngine for DefaultEngine {
         match self.file_attr_db.db.get(path.as_bytes())? {
             Some(value) => {
                 debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
-                if b'd' != value[0] {
-                    debug!("deserialize err path: {}, value: {:?}", path, value);
-                    return Err(EngineError::NotDir);
+                match bincode::deserialize::<FileAttrSimple>(&value) {
+                    Ok(file_attr) => {
+                        // fuser::FileType::Directory
+                        if file_attr.kind != 3 {
+                            return Err(EngineError::NotDir);
+                        }
+                    }
+                    Err(_) => {
+                        return Err(EngineError::IO);
+                    }
                 }
             }
             None => {}
@@ -132,17 +145,34 @@ impl StorageEngine for DefaultEngine {
         }
     }
 
-    fn read_file(&self, path: String, size: i64, offset: i64) -> Result<Vec<u8>, EngineError> {
+    fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
         match self.file_attr_db.db.get(path.as_bytes()) {
             Ok(Some(value)) => {
-                if "f" != String::from_utf8(value).unwrap() {
-                    return Err(EngineError::IsDir);
+                match bincode::deserialize::<FileAttrSimple>(&value) {
+                    Ok(file_attr) => {
+                        // fuser::FileType::RegularFile
+                        if file_attr.kind != 4 {
+                            return Err(EngineError::IsDir); // not a file
+                        }
+                    }
+                    Err(e) => {
+                        error!("deserialize error: {:?}", e);
+                        return Err(EngineError::IO);
+                    }
                 }
             }
             Ok(None) => {
+                debug!(
+                    "read_file path: {}, size: {}, offset: {}, no entry",
+                    path, size, offset
+                );
                 return Err(EngineError::NoEntry);
             }
             Err(_) => {
+                debug!(
+                    "read_file path: {}, size: {}, offset: {}, io error",
+                    path, size, offset
+                );
                 return Err(EngineError::IO);
             }
         }
@@ -157,21 +187,38 @@ impl StorageEngine for DefaultEngine {
             | Mode::S_IWOTH;
         let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
         let mut data = vec![0; size as usize];
-        let _size = pread(fd, data.as_mut_slice(), offset)?;
-        Ok(data)
+        let real_size = pread(fd, data.as_mut_slice(), offset)?;
+        debug!(
+            "read_file path: {}, size: {}, offset: {}, data: {:?}",
+            path, real_size, offset, data
+        );
+
+        // this is a temporary solution, which results in an extra memory copy.
+        // TODO: optimize it by return the hole data vector and the real size both.
+        Ok(data[..real_size].to_vec())
     }
 
     fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError> {
-        match self.file_attr_db.db.get(path.as_bytes())? {
+        let mut file_attr = match self.file_attr_db.db.get(path.as_bytes())? {
             Some(value) => {
-                if "f" != String::from_utf8(value).unwrap() {
-                    return Err(EngineError::IsDir);
+                match bincode::deserialize::<FileAttrSimple>(&value) {
+                    Ok(file_attr) => {
+                        if file_attr.kind != 4 {
+                            // fuser::FileType::RegularFile
+                            return Err(EngineError::IsDir); // not a file
+                        }
+                        file_attr
+                    }
+                    Err(e) => {
+                        error!("deserialize error: {:?}", e);
+                        return Err(EngineError::IO);
+                    }
                 }
             }
             None => {
                 return Err(EngineError::NoEntry);
             }
-        }
+        };
         let local_file_name = generate_local_file_name(&self.root, &path);
         let oflags = OFlag::O_WRONLY | OFlag::O_SYNC;
         let mode = Mode::S_IRUSR
@@ -182,6 +229,15 @@ impl StorageEngine for DefaultEngine {
             | Mode::S_IWOTH;
         let fd = fcntl::open(local_file_name.as_str(), oflags, mode)?;
         let write_size = pwrite(fd, data, offset)?;
+        debug!(
+            "write_file path: {}, write_size: {}, data_len: {}",
+            path,
+            write_size,
+            data.len()
+        );
+        file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
+        let file_attr_bytes = bincode::serialize(&file_attr).unwrap();
+        self.file_attr_db.db.put(path.as_bytes(), file_attr_bytes)?;
         Ok(write_size)
     }
 
@@ -243,21 +299,19 @@ impl StorageEngine for DefaultEngine {
         Ok(())
     }
 
-    fn create_file(&self, path: String, mode: Mode) -> Result<i32, EngineError> {
+    fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
         let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
-        let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+        let _ = fcntl::open(local_file_name.as_str(), oflag, mode)?;
         self.file_db.db.put(&local_file_name, &path)?;
-        let attr = FileAttr::new().with_nlink(1);
-        self.add_file_attr(&path, attr)?;
-        Ok(fd)
+        let attr = FileAttrSimple::new(fuser::FileType::RegularFile);
+        self.add_file_attr(&path, attr)
     }
 
     fn delete_file(&self, path: String) -> Result<(), EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
         unistd::unlink(local_file_name.as_str())?;
-        let attr = FileAttr::new().with_nlink(1);
-        self.delete_file_attr(&path, attr)?;
+        self.delete_file_attr(&path)?;
         self.file_db.db.delete(local_file_name)?;
         Ok(())
     }
@@ -267,7 +321,7 @@ impl StorageEngine for DefaultEngine {
         self.dir_db
             .db
             .put(path.as_bytes(), bincode::serialize(&sub_dirs).unwrap())?;
-        let attr = FileAttr::new().with_nlink(2);
+        let attr = FileAttrSimple::new(fuser::FileType::Directory);
         self.add_file_attr(&path, attr)?;
         self.file_attr_db.db.put(path.as_bytes(), b"d")?;
         Ok(())
@@ -283,9 +337,15 @@ impl StorageEngine for DefaultEngine {
             }
             None => {}
         }
-        let attr = FileAttr::new().with_nlink(2);
-        self.delete_file_attr(&path, attr)?;
+        self.delete_file_attr(&path)?;
         self.dir_db.db.delete(path.as_bytes())?;
+        Ok(())
+    }
+
+    fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError> {
+        let local_file_name = generate_local_file_name(&self.root, &path);
+        let oflags = OFlag::O_RDWR;
+        let _ = fcntl::open(local_file_name.as_str(), oflags, mode)?;
         Ok(())
     }
 }
@@ -381,37 +441,15 @@ impl DefaultEngine {
         Ok(())
     }
 
-    fn add_file_attr(&self, path: &str, attr: FileAttr) -> Result<(), EngineError> {
-        self.file_attr_db.db.put(&path, "f")?;
-        if let Some(v) = attr.nlink {
-            let path_nlink = format!("{}_nlink", path);
-            self.file_attr_db.db.put(&path_nlink, &[v])?;
-        }
-        Ok(())
+    fn add_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, EngineError> {
+        let value = bincode::serialize(&attr).unwrap();
+        self.file_attr_db.db.put(&path, &value)?;
+        Ok(value)
     }
 
-    fn delete_file_attr(&self, path: &str, attr: FileAttr) -> Result<(), EngineError> {
+    fn delete_file_attr(&self, path: &str) -> Result<(), EngineError> {
         self.file_attr_db.db.delete(path.as_bytes())?;
-        if attr.nlink.is_some() {
-            let path_nlink = format!("{}_nlink", path);
-            self.file_attr_db.db.delete(&path_nlink)?;
-        }
         Ok(())
-    }
-}
-
-struct FileAttr {
-    nlink: Option<u8>,
-}
-
-impl FileAttr {
-    fn new() -> Self {
-        Self { nlink: None }
-    }
-
-    fn with_nlink(mut self, v: u8) -> Self {
-        self.nlink = Some(v);
-        self
     }
 }
 
@@ -426,7 +464,7 @@ fn generate_local_file_name(root: &str, path: &str) -> String {
 mod tests {
     use std::path::Path;
 
-    use crate::common::fuse::SubDirectory;
+    use crate::common::fuse::{FileAttrSimple, SubDirectory};
     use nix::{
         fcntl::{self, OFlag},
         sys::stat::Mode,
@@ -583,6 +621,11 @@ mod tests {
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
             engine.create_file("/a.txt".to_string(), mode).unwrap();
+            let file_attr = {
+                let file_attr_bytes = engine.get_file_attributes("/a.txt".to_string()).unwrap();
+                bincode::deserialize::<FileAttrSimple>(&file_attr_bytes[..]).unwrap()
+            };
+            assert_eq!(file_attr.kind, 4); // 4 is RegularFile
             let local_file_name = generate_local_file_name(root, "/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("/a.txt".to_string()).unwrap();
@@ -640,6 +683,11 @@ mod tests {
                 .unwrap();
             let value = engine.read_file("/b.txt".to_string(), 11, 0).unwrap();
             assert_eq!("hello world", String::from_utf8(value).unwrap());
+            let file_attr = {
+                let file_attr_bytes = engine.get_file_attributes("/b.txt".to_string()).unwrap();
+                bincode::deserialize::<FileAttrSimple>(&file_attr_bytes[..]).unwrap()
+            };
+            assert_eq!(file_attr.size, 11);
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_file", db_path)).unwrap();

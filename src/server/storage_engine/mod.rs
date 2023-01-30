@@ -17,7 +17,9 @@ pub trait StorageEngine {
 
     fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError>;
 
-    fn read_file(&self, path: String, size: i64, offset: i64) -> Result<Vec<u8>, EngineError>;
+    fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError>;
+
+    fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError>;
 
     fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError>;
 
@@ -34,7 +36,7 @@ pub trait StorageEngine {
         file_name: String,
     ) -> Result<(), EngineError>;
 
-    fn create_file(&self, path: String, mode: Mode) -> Result<i32, EngineError>;
+    fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError>;
 
     fn delete_file(&self, path: String) -> Result<(), EngineError>;
 

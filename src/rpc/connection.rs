@@ -156,8 +156,8 @@ impl ClientConnection {
                     buf_len += len;
                     debug!("received {} bytes, total: {}", len, buf_len);
                 }
-                Err(_) => {
-                    return Err("failed to receive response".into());
+                Err(e) => {
+                    return Err(format!("failed to read data from stream, error: {}", e).into());
                 }
             }
         }

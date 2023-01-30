@@ -142,7 +142,7 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     builder.init();
     info!("starting up");
     let mountpoint = cli.mount_point.unwrap();
-    let mut options = vec![MountOption::RO, MountOption::FSName("seal".to_string())];
+    let mut options = vec![MountOption::RW, MountOption::FSName("seal".to_string())];
     if cli.auto_unmount {
         options.push(MountOption::AutoUnmount);
     }

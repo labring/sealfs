@@ -70,17 +70,20 @@ show directory
 ```bash
 ll ~/fs
 ```
-create file
-TODO
+create & write file
+```bash
+echo "test" >> ~/fs/test.log
+```
 
 read file
-TODO
-
-write file
-TODO
+```bash
+cat ~/fs/test.log
+```
 
 delete file
-TODO
+```bash
+rm ~/fs/test.log
+```
 
 ## 开源协议
 [Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)

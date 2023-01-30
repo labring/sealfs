@@ -8,6 +8,7 @@ use crate::common::{
 };
 
 use crate::rpc::client::ClientAsync;
+use log::debug;
 use nix::sys::stat::Mode;
 use std::{sync::Arc, vec};
 pub struct DistributedEngine<Storage: StorageEngine> {
@@ -160,24 +161,25 @@ where
     }
 
     pub async fn read_dir(&self, path: String) -> Result<Vec<u8>, EngineError> {
-        // a temporary implementation
         self.local_storage.read_directory(path)
     }
 
-    pub async fn create_file(&self, path: String, mode: Mode) -> Result<i32, EngineError> {
+    pub async fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
+        debug!("create file: {}", path);
         if path.ends_with('/') {
             return Err(EngineError::IsDir);
         }
         if self.local_storage.is_exist(path.clone())? {
             return Err(EngineError::Exist);
         }
-
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
+            debug!("create file local: {}", path);
             self.local_storage
                 .directory_add_entry(parent_dir, file_name)?;
         } else {
+            debug!("create file remote: {}", path);
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
                 (0, 0, 0, 0);
             let mut recv_meta_data = vec![];
@@ -271,10 +273,9 @@ where
     pub async fn read_file(
         &self,
         path: String,
-        size: i64,
+        size: u32,
         offset: i64,
     ) -> Result<Vec<u8>, EngineError> {
-        // a temporary implementation
         self.local_storage.read_file(path, size, offset)
     }
 
@@ -288,7 +289,10 @@ where
     }
 
     pub async fn get_file_attr(&self, path: String) -> Result<Vec<u8>, EngineError> {
-        // a temporary implementation
         self.local_storage.get_file_attributes(path)
+    }
+
+    pub async fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError> {
+        self.local_storage.open_file(path, mode)
     }
 }
