@@ -519,7 +519,7 @@ impl OperationCallback {
 
 pub struct CircularQueue {
     callbacks: Vec<*const OperationCallback>,
-    start_index: Arc<AtomicU32>, // maybe we can use a lock-free queue
+    start_index: Arc<AtomicU32>,
     end_index: Arc<AtomicU32>,
 }
 
@@ -672,7 +672,7 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
     loop {
         let mut idx = queue.start_index.load(Ordering::Acquire);
         let end_flag = queue.end_index.load(Ordering::Acquire);
-        while idx < end_flag {
+        while idx != end_flag {
             let id = idx % REQUEST_QUEUE_LENGTH as u32;
             unsafe {
                 let callback = queue.callbacks[id as usize];
@@ -686,7 +686,9 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
                     CallbackState::WaitingForResponse => {
                         break;
                     }
-                    CallbackState::Empty => {}
+                    CallbackState::Empty => {
+                        debug!("unexpected behavior happen")
+                    }
                 }
                 if let Ok(()) = (*(callback as *mut OperationCallback)).occupied.1.recv() {
                     // match Ok(())
