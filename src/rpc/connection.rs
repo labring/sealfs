@@ -479,6 +479,7 @@ pub struct OperationCallback {
     pub request_status: libc::c_int,
     pub flags: u32,
     pub channel: (mpsc::Sender<()>, mpsc::Receiver<()>),
+    pub occupied: (mpsc::SyncSender<()>, mpsc::Receiver<()>),
 }
 
 unsafe impl std::marker::Sync for OperationCallback {}
@@ -495,6 +496,7 @@ impl Default for OperationCallback {
             request_status: 0,
             flags: 0,
             channel: mpsc::channel(),
+            occupied: mpsc::sync_channel(1),
         }
     }
 }
@@ -510,13 +512,14 @@ impl OperationCallback {
             request_status: 0,
             flags: 0,
             channel: mpsc::channel(),
+            occupied: mpsc::sync_channel(1),
         }
     }
 }
 
 pub struct CircularQueue {
     callbacks: Vec<*const OperationCallback>,
-    start_index: Arc<Mutex<u32>>, // maybe we can use a lock-free queue
+    start_index: Arc<AtomicU32>,
     end_index: Arc<AtomicU32>,
 }
 
@@ -524,7 +527,7 @@ impl Default for CircularQueue {
     fn default() -> Self {
         Self {
             callbacks: vec![std::ptr::null(); REQUEST_QUEUE_LENGTH],
-            start_index: Arc::new(Mutex::new(0)),
+            start_index: Arc::new(AtomicU32::new(0)),
             end_index: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -534,7 +537,7 @@ impl CircularQueue {
     pub fn new() -> Self {
         Self {
             callbacks: vec![std::ptr::null_mut(); REQUEST_QUEUE_LENGTH],
-            start_index: Arc::new(Mutex::new(0)),
+            start_index: Arc::new(AtomicU32::new(0)),
             end_index: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -554,38 +557,19 @@ impl CircularQueue {
         rsp_meta_data: &mut [u8],
         rsp_data: &mut [u8],
     ) -> Result<u32, Box<dyn std::error::Error>> {
-        let id = self.end_index.fetch_add(1, Ordering::Relaxed);
+        let idx = self.end_index.fetch_add(1, Ordering::Relaxed);
+        let id = idx % REQUEST_QUEUE_LENGTH as u32;
         unsafe {
             let callback = self.callbacks[id as usize];
+            (*(callback as *mut OperationCallback))
+                .occupied
+                .0
+                .send(())?;
             (*(callback as *mut OperationCallback)).state = CallbackState::WaitingForResponse;
             (*(callback as *mut OperationCallback)).data = rsp_data.as_ptr();
             (*(callback as *mut OperationCallback)).meta_data = rsp_meta_data.as_ptr();
         }
         Ok(id)
-    }
-
-    pub fn clean_up(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut start_index = self.start_index.lock().unwrap();
-        let end_flag = self.end_index.load(Ordering::Relaxed);
-        for i in *start_index..end_flag {
-            unsafe {
-                let callback = self.callbacks[i as usize];
-                match (*callback).state {
-                    CallbackState::Done => {
-                        (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
-                    }
-                    CallbackState::Error => {
-                        (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
-                    }
-                    CallbackState::WaitingForResponse => {
-                        *start_index = i;
-                        break;
-                    }
-                    CallbackState::Empty => {}
-                }
-            }
-        }
-        Ok(())
     }
 
     pub fn get_data_ref(
@@ -632,7 +616,6 @@ impl CircularQueue {
             (*(callback as *mut OperationCallback)).data_length = data_lenght;
             (*(callback as *mut OperationCallback)).channel.0.send(())?;
         }
-        self.clean_up()?;
         Ok(())
     }
 
@@ -642,7 +625,6 @@ impl CircularQueue {
             (*(callback as *mut OperationCallback)).state = CallbackState::Error;
         }
         debug!("error callback, id: {}", id);
-        self.clean_up()?;
         Ok(())
     }
 
@@ -685,13 +667,48 @@ impl CircularQueue {
     }
 }
 
+pub fn clean_up(queue: Arc<CircularQueue>) {
+    debug!("start to cleanup");
+    loop {
+        let mut idx = queue.start_index.load(Ordering::Acquire);
+        let end_flag = queue.end_index.load(Ordering::Acquire);
+        while idx != end_flag {
+            let id = idx % REQUEST_QUEUE_LENGTH as u32;
+            unsafe {
+                let callback = queue.callbacks[id as usize];
+                match (*callback).state {
+                    CallbackState::Done => {
+                        (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
+                    }
+                    CallbackState::Error => {
+                        (*(callback as *mut OperationCallback)).state = CallbackState::Empty;
+                    }
+                    CallbackState::WaitingForResponse => {
+                        break;
+                    }
+                    CallbackState::Empty => {
+                        debug!("unexpected behavior happen")
+                    }
+                }
+                if let Ok(()) = (*(callback as *mut OperationCallback)).occupied.1.recv() {
+                    // match Ok(())
+                    debug!("index {idx} has already been cleaned up. ");
+                }
+            }
+            idx += 1;
+        }
+        queue.start_index.store(idx, Ordering::Release);
+    }
+}
+
 unsafe impl std::marker::Sync for CircularQueue {}
 unsafe impl std::marker::Send for CircularQueue {}
 
 #[cfg(test)]
 mod tests {
     use super::{CallbackState, CircularQueue, OperationCallback};
-
+    use core::time;
+    use std::sync::atomic::Ordering;
     #[test]
     fn test_register_callback() {
         let mut queue = CircularQueue::new();
@@ -743,8 +760,11 @@ mod tests {
 
     #[test]
     fn test_clean_up() {
+        use super::clean_up;
+        use std::{sync::Arc, thread};
         let mut queue = CircularQueue::new();
         queue.init();
+        let queue = Arc::new(queue);
         let mut recv_meta_data = vec![];
         let mut recv_data = vec![0u8; 1024];
         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
@@ -753,12 +773,15 @@ mod tests {
                 let callback = queue.callbacks[id as usize];
                 let oc = &mut *(callback as *mut OperationCallback);
                 oc.state = CallbackState::Done;
-                match queue.clean_up() {
-                    Ok(_) => match oc.state {
-                        CallbackState::Empty => assert!(true),
-                        _ => assert!(false),
-                    },
-                    Err(_) => assert!(false),
+                let q1 = queue.clone();
+                thread::spawn(|| clean_up(q1));
+                thread::sleep(time::Duration::from_millis(100));
+                if queue.start_index.load(Ordering::Acquire) != id + 1 {
+                    assert!(false);
+                }
+                match oc.state {
+                    CallbackState::Empty => assert!(true),
+                    _ => assert!(false),
                 }
             },
             Err(_) => assert!(false),
