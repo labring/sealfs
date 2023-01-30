@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::common::fuse::FileAttrSimple;
-use crate::common::fuse::SubDirectory;
+use crate::common::serialization::{FileAttrSimple, SubDirectory};
 
 use super::EngineError;
 
@@ -464,7 +463,7 @@ fn generate_local_file_name(root: &str, path: &str) -> String {
 mod tests {
     use std::path::Path;
 
-    use crate::common::fuse::{FileAttrSimple, SubDirectory};
+    use crate::common::serialization::{FileAttrSimple, SubDirectory};
     use nix::{
         fcntl::{self, OFlag},
         sys::stat::Mode,

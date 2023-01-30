@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 
 use crate::{
-    common::request::OperationType, manager::manager_service::MetadataRequest,
+    common::serialization::OperationType, manager::manager_service::MetadataRequest,
     rpc::client::ClientAsync,
 };
 
