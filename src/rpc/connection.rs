@@ -705,6 +705,7 @@ unsafe impl std::marker::Send for CircularQueue {}
 #[cfg(test)]
 mod tests {
     use super::{CallbackState, CircularQueue, OperationCallback};
+    use core::time;
     use std::sync::atomic::Ordering;
     #[test]
     fn test_register_callback() {
@@ -758,7 +759,7 @@ mod tests {
     #[test]
     fn test_clean_up() {
         use super::clean_up;
-        use std::sync::Arc;
+        use std::{sync::Arc, thread};
         let mut queue = CircularQueue::new();
         queue.init();
         let queue = Arc::new(queue);
@@ -771,7 +772,8 @@ mod tests {
                 let oc = &mut *(callback as *mut OperationCallback);
                 oc.state = CallbackState::Done;
                 let q1 = queue.clone();
-                clean_up(q1);
+                thread::spawn(|| clean_up(q1));
+                thread::sleep(time::Duration::from_millis(100));
                 if queue.start_index.load(Ordering::Acquire) != id + 1 {
                     assert!(false);
                 }
