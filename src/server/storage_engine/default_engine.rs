@@ -294,20 +294,15 @@ impl DefaultEngine {
     fn fsck(&self) -> Result<(), EngineError> {
         for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
-            let file_name = entry.file_name();
+            let file_name = format!("{}/{}", self.root, entry.file_name().to_str().unwrap());
             let mut file_str = String::new();
-            if self.file_db.db.key_may_exist(file_name.to_str().unwrap()) {
-                let file_vec = self
-                    .file_db
-                    .db
-                    .get(file_name.to_str().unwrap())
-                    .unwrap()
-                    .unwrap();
+            if self.file_db.db.key_may_exist(&file_name) {
+                let file_vec = self.file_db.db.get(&file_name).unwrap().unwrap();
                 file_str = String::from_utf8(file_vec).unwrap();
                 if self.file_attr_db.db.key_may_exist(&file_str) {
                     continue;
                 }
-                let _ = self.file_db.db.delete(file_name.to_str().unwrap());
+                let _ = self.file_db.db.delete(&file_name);
             }
             if self.file_attr_db.db.key_may_exist(&file_str) {
                 let _ = self.file_attr_db.db.delete(file_str);
