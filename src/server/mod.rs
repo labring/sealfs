@@ -185,11 +185,11 @@ where
             }
             OperationType::CreateDir => {
                 debug!("Create Dir");
-                let status = match self.engine.create_dir(file_path, mode).await {
-                    Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                let (meta_data, status) = match self.engine.create_dir(file_path, mode).await {
+                    Ok(value) => (value, 0),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
                 };
-                Ok((0, status, Vec::new(), Vec::new()))
+                Ok((status, 0, meta_data, Vec::new()))
             }
             OperationType::GetFileAttr => {
                 debug!("Get File Attr");
@@ -211,9 +211,9 @@ where
                 debug!("Read Dir");
                 let (data, status) = match self.engine.read_dir(file_path).await {
                     Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e)),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
                 };
-                Ok((status as i32, 0, Vec::new(), data))
+                Ok((status, 0, Vec::new(), data))
             }
             OperationType::ReadFile => {
                 debug!("Read File");
@@ -221,9 +221,9 @@ where
                 let (data, status) =
                     match self.engine.read_file(file_path, md.size, md.offset).await {
                         Ok(value) => (value, 0),
-                        Err(e) => (Vec::new(), EngineErr2Status!(e)),
+                        Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
                     };
-                Ok((status as i32, 0, Vec::new(), data))
+                Ok((status, 0, Vec::new(), data))
             }
             OperationType::WriteFile => {
                 debug!("Write File, data len: {}", data.len());
@@ -250,9 +250,9 @@ where
                 debug!("Delete Dir");
                 let status = match self.engine.delete_dir(file_path).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as u32,
+                    Err(e) => EngineErr2Status!(e) as i32,
                 };
-                Ok((0, status, Vec::new(), Vec::new()))
+                Ok((status, 0, Vec::new(), Vec::new()))
             }
             OperationType::DirectoryAddEntry => Ok((
                 self.engine.directory_add_entry(file_path).await,

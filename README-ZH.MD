@@ -85,5 +85,15 @@ delete file
 rm ~/fs/test.log
 ```
 
+make directory
+```bash
+mkdir ~/fs/d
+```
+
+remove directory
+```bash
+rm ~/fs/d
+```
+
 ## 开源协议
 [Apache License 2.0](https://github.com/labring/sealfs/blob/main/LICENSE)

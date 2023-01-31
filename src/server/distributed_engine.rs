@@ -15,19 +15,24 @@ pub struct DistributedEngine<Storage: StorageEngine> {
     pub client: ClientAsync,
 }
 
-fn path_split(path: String) -> Result<(String, String), EngineError> {
-    if !path.ends_with('/') {
-        let index = match path.rfind('/') {
-            Some(value) => value,
-            None => return Err(EngineError::Path),
-        };
-        Ok((path[..=index].into(), path[(index + 1)..].into()))
-    } else {
-        let index = match path[..path.len() - 1].rfind('/') {
-            Some(value) => value,
-            None => return Err(EngineError::Path),
-        };
-        Ok((path[..=index].into(), path[(index + 1)..].into()))
+//  path_split: the path should not be empty, and it does not end with a slash unless it is the root directory.
+pub fn path_split(path: String) -> Result<(String, String), EngineError> {
+    if path.is_empty() {
+        return Err(EngineError::Path);
+    }
+    if path == "/" {
+        return Err(EngineError::Path);
+    }
+    if path.ends_with('/') {
+        return Err(EngineError::Path);
+    }
+    let index = match path.rfind('/') {
+        Some(value) => value,
+        None => return Err(EngineError::Path),
+    };
+    match index {
+        0 => Ok(("/".into(), path[1..].into())),
+        _ => Ok((path[..index].into(), path[(index + 1)..].into())),
     }
 }
 
@@ -55,10 +60,7 @@ where
         self.client.remove_connection(&address);
     }
 
-    pub async fn create_dir(&self, path: String, mode: Mode) -> Result<(), EngineError> {
-        if !path.ends_with('/') {
-            return Err(EngineError::NotDir);
-        }
+    pub async fn create_dir(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         if self.local_storage.is_exist(path.clone())? {
             return Err(EngineError::Exist);
         }
@@ -66,6 +68,10 @@ where
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
+            debug!(
+                "local create dir, path: {}, parent_dir: {}, file_name: {}",
+                path, parent_dir, file_name
+            );
             self.local_storage
                 .directory_add_entry(parent_dir, file_name)?;
         } else {
@@ -109,9 +115,6 @@ where
     }
 
     pub async fn delete_dir(&self, path: String) -> Result<(), EngineError> {
-        if !path.ends_with('/') {
-            return Err(EngineError::NotDir);
-        }
         if !self.local_storage.is_exist(path.clone())? {
             return Ok(());
         }
@@ -164,9 +167,6 @@ where
 
     pub async fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         debug!("create file: {}", path);
-        if path.ends_with('/') {
-            return Err(EngineError::IsDir);
-        }
         if self.local_storage.is_exist(path.clone())? {
             return Err(EngineError::Exist);
         }
@@ -217,9 +217,6 @@ where
     }
 
     pub async fn delete_file(&self, path: String) -> Result<(), EngineError> {
-        if path.ends_with('/') {
-            return Err(EngineError::IsDir);
-        }
         if !self.local_storage.is_exist(path.clone())? {
             return Ok(());
         }
@@ -363,11 +360,11 @@ mod tests {
             | Mode::S_IWGRP
             | Mode::S_IROTH
             | Mode::S_IWOTH;
-        // end with '/'
-        match engine0.create_file("/test/".into(), mode).await {
-            Err(EngineError::IsDir) => assert!(true),
-            _ => assert!(false),
-        };
+        // end with '/', not expected
+        // match engine0.create_file("/test/".into(), mode).await {
+        //     Err(EngineError::IsDir) => assert!(true),
+        //     _ => assert!(false),
+        // };
         match engine0.create_file("/test".into(), mode).await {
             Ok(_) => assert!(true),
             _ => assert!(false),
@@ -396,15 +393,11 @@ mod tests {
             | Mode::S_IWOTH;
         // not end with '/'
         match engine1.create_dir("/test".into(), mode).await {
-            Err(EngineError::NotDir) => assert!(true),
-            _ => assert!(false),
-        };
-        match engine1.create_dir("/test/".into(), mode).await {
-            core::result::Result::Ok(()) => assert!(true),
+            Ok(_) => assert!(true),
             _ => assert!(false),
         };
         // repeat the same dir
-        match engine1.create_dir("/test/".into(), mode).await {
+        match engine1.create_dir("/test".into(), mode).await {
             Err(EngineError::Exist) => assert!(true),
             _ => assert!(false),
         };
@@ -414,7 +407,7 @@ mod tests {
             _ => assert!(false),
         };
         // dir has file
-        match engine1.delete_dir("/test/".into()).await {
+        match engine1.delete_dir("/test".into()).await {
             Err(EngineError::NotEmpty) => assert!(true),
             _ => assert!(false),
         };
@@ -422,7 +415,7 @@ mod tests {
             Ok(()) => assert!(true),
             _ => assert!(false),
         };
-        match engine1.delete_dir("/test/".into()).await {
+        match engine1.delete_dir("/test".into()).await {
             Ok(()) => assert!(true),
             _ => assert!(false),
         };

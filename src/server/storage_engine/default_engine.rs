@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::serialization::{FileAttrSimple, SubDirectory};
+use crate::server::distributed_engine::path_split;
 
 use super::EngineError;
 
@@ -107,7 +108,12 @@ impl StorageEngine for DefaultEngine {
         self.fsck().unwrap();
     }
 
+    // The path parameter for all methods is absolute path end not with '/', except for root path
+    // For efficiency, we don't check the path is valid or not.
+    // This should be done in the upper layer (client for now).
+
     fn get_file_attributes(&self, path: String) -> Result<Vec<u8>, EngineError> {
+        debug!("get_file_attributes path: {}", path);
         match self.file_attr_db.db.get(path.as_bytes())? {
             Some(value) => {
                 debug!("path: {}, value: {:?}", path, value);
@@ -118,22 +124,19 @@ impl StorageEngine for DefaultEngine {
     }
 
     fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError> {
-        match self.file_attr_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
-                match bincode::deserialize::<FileAttrSimple>(&value) {
-                    Ok(file_attr) => {
-                        // fuser::FileType::Directory
-                        if file_attr.kind != 3 {
-                            return Err(EngineError::NotDir);
-                        }
-                    }
-                    Err(_) => {
-                        return Err(EngineError::IO);
+        if let Some(value) = self.file_attr_db.db.get(path.as_bytes())? {
+            debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
+            match bincode::deserialize::<FileAttrSimple>(&value) {
+                Ok(file_attr) => {
+                    // fuser::FileType::Directory
+                    if file_attr.kind != 3 {
+                        return Err(EngineError::NotDir);
                     }
                 }
+                Err(_) => {
+                    return Err(EngineError::IO);
+                }
             }
-            None => {}
         }
         match self.dir_db.db.get(path.as_bytes())? {
             Some(value) => {
@@ -284,16 +287,13 @@ impl StorageEngine for DefaultEngine {
         parent_dir: String,
         file_name: String,
     ) -> Result<(), EngineError> {
-        match self.dir_db.db.get(parent_dir.as_bytes())? {
-            Some(value) => {
-                let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-                sub_dirs.delete_dir(file_name);
-                self.dir_db.db.put(
-                    parent_dir.as_bytes(),
-                    bincode::serialize(&sub_dirs).unwrap(),
-                )?;
-            }
-            None => {}
+        if let Some(value) = self.dir_db.db.get(parent_dir.as_bytes())? {
+            let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+            sub_dirs.delete_dir(file_name);
+            self.dir_db.db.put(
+                parent_dir.as_bytes(),
+                bincode::serialize(&sub_dirs).unwrap(),
+            )?;
         }
         Ok(())
     }
@@ -315,26 +315,21 @@ impl StorageEngine for DefaultEngine {
         Ok(())
     }
 
-    fn create_directory(&self, path: String, _mode: Mode) -> Result<(), EngineError> {
+    fn create_directory(&self, path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
         let sub_dirs = SubDirectory::new();
         self.dir_db
             .db
             .put(path.as_bytes(), bincode::serialize(&sub_dirs).unwrap())?;
         let attr = FileAttrSimple::new(fuser::FileType::Directory);
-        self.add_file_attr(&path, attr)?;
-        self.file_attr_db.db.put(path.as_bytes(), b"d")?;
-        Ok(())
+        self.add_file_attr(&path, attr)
     }
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError> {
-        match self.dir_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                let sub_dir = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-                if sub_dir.sub_dir.len() != 2 {
-                    return Err(EngineError::NotEmpty);
-                }
+        if let Some(value) = self.dir_db.db.get(path.as_bytes())? {
+            let sub_dir = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+            if sub_dir.sub_dir.len() != 2 {
+                return Err(EngineError::NotEmpty);
             }
-            None => {}
         }
         self.delete_file_attr(&path)?;
         self.dir_db.db.delete(path.as_bytes())?;
@@ -379,26 +374,15 @@ impl DefaultEngine {
     }
 
     fn delete_from_parent(&self, path: String) -> Result<(), EngineError> {
-        let l = path.len() - 1;
-        let (index, _) = path
-            .chars()
-            .into_iter()
-            .rev()
-            .enumerate()
-            .find(|(i, c)| *i != l - 1 && *c == '/')
-            .unwrap();
-        let parent_dir = &path[..=index];
-        // a temporary implementation
-        match self.dir_db.db.get(parent_dir.as_bytes())? {
-            Some(value) => {
-                let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-                sub_dirs.delete_dir(path[index + 1..].to_string());
-                self.dir_db.db.put(
-                    parent_dir.as_bytes(),
-                    bincode::serialize(&sub_dirs).unwrap(),
-                )?;
-            }
-            None => {}
+        println!("delete_from_parent: {}", path);
+        let (parent, name) = path_split(path).unwrap();
+        println!("parent_dir: {}", parent);
+        if let Some(value) = self.dir_db.db.get(parent.as_bytes())? {
+            let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
+            sub_dirs.delete_dir(name);
+            self.dir_db
+                .db
+                .put(parent.as_bytes(), bincode::serialize(&sub_dirs).unwrap())?;
         }
         Ok(())
     }
@@ -517,7 +501,7 @@ mod tests {
             let engine = DefaultEngine::new(db_path, root);
             engine.init();
             engine
-                .directory_add_entry("/".to_string(), "a/".to_string())
+                .directory_add_entry("/".to_string(), "a".to_string())
                 .unwrap();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -525,23 +509,23 @@ mod tests {
                 | Mode::S_IWGRP
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
-            engine.create_directory("/a/".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a/").unwrap().unwrap();
+            engine.create_directory("/a".to_string(), mode).unwrap();
+            let v = engine.dir_db.db.get("/a").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             let mut sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
             let v = engine.dir_db.db.get("/").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
-            sub_dir.add_dir("a/".to_string());
+            sub_dir.add_dir("a".to_string());
             assert_eq!(dirs, sub_dir);
             engine
-                .directory_delete_entry("/".to_string(), "a/".to_string())
+                .directory_delete_entry("/".to_string(), "a".to_string())
                 .unwrap();
-            engine.delete_directory("/a/".to_string()).unwrap();
-            assert_eq!(None, engine.dir_db.db.get("/a/").unwrap());
+            engine.delete_directory("/a".to_string()).unwrap();
+            assert_eq!(None, engine.dir_db.db.get("/a").unwrap());
             let v = engine.dir_db.db.get("/").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
-            sub_dir.delete_dir("a/".to_string());
+            sub_dir.delete_dir("a".to_string());
             assert_eq!(sub_dir, dirs);
         }
 
@@ -549,7 +533,7 @@ mod tests {
             let engine = DefaultEngine::new(db_path, root);
             engine.init();
             engine
-                .directory_add_entry("/".to_string(), "a1/".to_string())
+                .directory_add_entry("/".to_string(), "a1".to_string())
                 .unwrap();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -557,41 +541,39 @@ mod tests {
                 | Mode::S_IWGRP
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
-            engine.create_directory("/a1/".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a1/").unwrap().unwrap();
+            engine.create_directory("/a1".to_string(), mode).unwrap();
+            let v = engine.dir_db.db.get("/a1").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             let mut sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
 
             engine
-                .directory_add_entry("/a1/".to_string(), "a2/".to_string())
+                .directory_add_entry("/a1".to_string(), "a2".to_string())
                 .unwrap();
-            engine
-                .create_directory("/a1/a2/".to_string(), mode)
-                .unwrap();
-            let v = engine.dir_db.db.get("/a1/").unwrap().unwrap();
+            engine.create_directory("/a1/a2".to_string(), mode).unwrap();
+            let v = engine.dir_db.db.get("/a1").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
-            sub_dir.add_dir("a2/".to_string());
+            sub_dir.add_dir("a2".to_string());
             assert_eq!(dirs, sub_dir);
 
             engine
-                .delete_directory_recursive("/a1/".to_string())
+                .delete_directory_recursive("/a1".to_string())
                 .unwrap();
-            assert_eq!(None, engine.dir_db.db.get("/a1/").unwrap());
+            assert_eq!(None, engine.dir_db.db.get("/a1").unwrap());
 
             engine
-                .directory_add_entry("/".to_string(), "a3/".to_string())
+                .directory_add_entry("/".to_string(), "a3".to_string())
                 .unwrap();
-            engine.create_directory("/a3/".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a3/").unwrap().unwrap();
+            engine.create_directory("/a3".to_string(), mode).unwrap();
+            let v = engine.dir_db.db.get("/a3").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             let sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
             engine
-                .directory_delete_entry("/".to_string(), "a3/".to_string())
+                .directory_delete_entry("/".to_string(), "a3".to_string())
                 .unwrap();
-            engine.delete_directory("/a3/".to_string()).unwrap();
-            assert_eq!(None, engine.dir_db.db.get("/a3/").unwrap());
+            engine.delete_directory("/a3".to_string()).unwrap();
+            assert_eq!(None, engine.dir_db.db.get("/a3").unwrap());
 
             let v = engine.dir_db.db.get("/").unwrap().unwrap();
             let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
@@ -641,10 +623,10 @@ mod tests {
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
             engine
-                .create_directory("/test_a/".to_string(), mode)
+                .create_directory("/test_a".to_string(), mode)
                 .unwrap();
             engine
-                .create_directory("/test_a/a/".to_string(), mode)
+                .create_directory("/test_a/a".to_string(), mode)
                 .unwrap();
             engine
                 .create_file("/test_a/a/a.txt".to_string(), mode)

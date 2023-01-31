@@ -125,8 +125,12 @@ impl FileAttrSimple {
             FileType::Symlink => 5,
             FileType::Socket => 6,
         };
+        let size = match r#type {
+            FileType::Directory => 4096,
+            _ => 0,
+        };
         FileAttrSimple {
-            size: 0,
+            size,
             blocks: 0,
             atime: SystemTime::now(),
             mtime: SystemTime::now(),
