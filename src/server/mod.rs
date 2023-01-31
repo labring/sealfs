@@ -74,10 +74,9 @@ impl From<EngineError> for u32 {
 }
 
 pub async fn run(
-    address: String,
     database_path: String,
     storage_path: String,
-    local_distributed_address: String,
+    server_address: String,
     all_servers_address: Vec<String>,
 ) -> anyhow::Result<()> {
     debug!("run server");
@@ -86,11 +85,11 @@ pub async fn run(
     build_hash_ring(all_servers_address.clone());
 
     let engine = Arc::new(DistributedEngine::new(
-        local_distributed_address.clone(),
+        server_address.clone(),
         local_storage.clone(),
     ));
     for value in all_servers_address.iter() {
-        if &local_distributed_address == value {
+        if &server_address == value {
             continue;
         }
         let arc_engine = engine.clone();
@@ -100,7 +99,7 @@ pub async fn run(
         });
     }
     let handler = Arc::new(FileRequestHandler::new(engine));
-    let server = Server::new(handler, &address);
+    let server = Server::new(handler, &server_address);
     server.run().await?;
     Ok(())
 }
@@ -255,8 +254,18 @@ where
                 };
                 Ok((0, status, Vec::new(), Vec::new()))
             }
-            OperationType::DirectoryAddEntry => todo!(),
-            OperationType::DirectoryDeleteEntry => todo!(),
+            OperationType::DirectoryAddEntry => Ok((
+                self.engine.directory_add_entry(file_path).await,
+                0,
+                vec![],
+                vec![],
+            )),
+            OperationType::DirectoryDeleteEntry => Ok((
+                self.engine.directory_delete_entry(file_path).await,
+                0,
+                vec![],
+                vec![],
+            )),
             _ => todo!(),
         }
     }

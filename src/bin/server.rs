@@ -18,12 +18,10 @@ const SERVER_FLAG: u32 = 1;
 struct Properties {
     manager_address: String,
     server_address: String,
+    all_servers_address: Vec<String>,
     lifetime: String,
     database_path: String,
     storage_path: String,
-    // it will merge into 'server_address' in the future
-    local_distributed_address: String,
-    all_distributed_address: Vec<String>,
     heartbeat: bool,
 }
 
@@ -68,11 +66,10 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //     .await;
     info!("Start Server");
     server::run(
-        properties.server_address.clone(),
         properties.database_path.clone(),
         properties.storage_path.clone(),
-        properties.local_distributed_address.clone(),
-        properties.all_distributed_address.clone(),
+        properties.server_address.clone(),
+        properties.all_servers_address.clone(),
     )
     .await?;
     // Server::builder()
