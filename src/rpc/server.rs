@@ -74,24 +74,24 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
 ) {
     loop {
         {
-            debug!("parse_response, start");
+            debug!("parse_request, start");
             let header = match connection.receive_request_header(&mut read_stream).await {
                 Ok(header) => header,
                 Err(e) => {
-                    debug!("parse_response, header error: {}", e);
+                    debug!("parse_request, header error: {}", e);
                     break;
                 }
             };
-            debug!("parse_response, header: {:?}", header.id);
+            debug!("parse_request, header: {:?}", header.id);
             let data_result = connection.receive_request(&mut read_stream, &header).await;
             let (path, data, metadata) = match data_result {
                 Ok(data) => data,
                 Err(e) => {
-                    debug!("parse_response, data error: {}", e);
+                    debug!("parse_request, data error: {}", e);
                     break;
                 }
             };
-            debug!("parse_response, data: {:?}", header.id);
+            debug!("parse_request, data: {:?}", header.id);
             let handler = handler.clone();
             let connection = connection.clone();
             tokio::spawn(handle(

@@ -13,7 +13,7 @@ use lazy_static::lazy_static;
 use log::debug;
 use std::ffi::OsStr;
 use std::ops::Deref;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::Duration;
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
 pub struct Client {
@@ -59,6 +59,11 @@ impl Client {
     }
 
     pub fn get_new_inode(&self) -> u64 {
+        debug!(
+            "get new inode, inode_counter: {}",
+            self.inode_counter
+                .load(std::sync::atomic::Ordering::Acquire)
+        );
         self.inode_counter
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
     }
@@ -152,11 +157,15 @@ impl Client {
                     file_attr_simple.into()
                 };
 
-                file_attr.ino = self.get_new_inode();
+                if self.inodes.contains_key(&path) {
+                    file_attr.ino = *self.inodes.get(&path).unwrap().value();
+                } else {
+                    file_attr.ino = self.get_new_inode();
+                    self.inodes.insert(path.clone(), file_attr.ino);
+                    self.inodes_reverse.insert(file_attr.ino, path.clone());
+                }
 
                 reply.entry(&TTL, &file_attr, 0);
-                self.inodes.insert(path.clone(), file_attr.ino);
-                self.inodes_reverse.insert(file_attr.ino, path.clone());
             }
             Err(_) => {
                 reply.error(libc::EIO);
@@ -223,9 +232,10 @@ impl Client {
 
                 file_attr.ino = self.get_new_inode();
 
-                reply.created(&TTL, &file_attr, 0, 0, 0);
                 self.inodes.insert(path.clone(), file_attr.ino);
                 self.inodes_reverse.insert(file_attr.ino, path.clone());
+
+                reply.created(&TTL, &file_attr, 0, 0, 0);
             }
             Err(_) => {
                 reply.error(libc::EIO);
@@ -276,16 +286,20 @@ impl Client {
                     "getattr_remote recv_meta_data: {:?}",
                     &recv_meta_data[..recv_meta_data_length]
                 );
-                let file_attr = {
+                let mut file_attr: FileAttr = {
                     let file_attr_simple: FileAttrSimple =
                         bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
                     file_attr_simple.into()
                 };
                 debug!("getattr_remote file_attr: {:?}", file_attr);
+                if self.inodes.contains_key(&path) {
+                    file_attr.ino = *self.inodes.get(&path).unwrap().value();
+                } else {
+                    file_attr.ino = self.get_new_inode();
+                    self.inodes.insert(path.clone(), file_attr.ino);
+                    self.inodes_reverse.insert(file_attr.ino, path.clone());
+                }
                 reply.attr(&TTL, &file_attr);
-                debug!("getattr_remote reply.attr");
-                self.inodes.insert(path.clone(), ino);
-                self.inodes_reverse.insert(ino, path.clone());
                 debug!("getattr_remote success");
             }
             Err(_) => {
@@ -486,12 +500,15 @@ impl Client {
                 return;
             }
         };
+        debug!("mkdir_remote ,path: {:?}", &path);
         let server_address = self.get_connection_address(&path).unwrap();
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
+
+        let mut recv_meta_data = vec![0u8; 1024];
 
         let result = self.client.call_remote(
             &server_address,
@@ -504,30 +521,31 @@ impl Client {
             &mut rsp_flags,
             &mut recv_meta_data_length,
             &mut recv_data_length,
-            &mut [],
+            &mut recv_meta_data,
             &mut [],
         );
         match result {
             Ok(_) => {
-                let file_attr = FileAttr {
-                    ino: 0,
-                    size: 0,
-                    blocks: 0,
-                    atime: UNIX_EPOCH,
-                    mtime: UNIX_EPOCH,
-                    ctime: UNIX_EPOCH,
-                    crtime: UNIX_EPOCH,
-                    kind: fuser::FileType::RegularFile,
-                    perm: 0,
-                    nlink: 0,
-                    uid: 0,
-                    gid: 0,
-                    rdev: 0,
-                    flags: 0,
-                    blksize: 0,
+                if status != 0 {
+                    reply.error(status);
+                    return;
+                }
+                debug!(
+                    "create_remote recv_meta_data: {:?}",
+                    &recv_meta_data[..recv_meta_data_length]
+                );
+                let mut file_attr: FileAttr = {
+                    let file_attr_simple: FileAttrSimple =
+                        bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                    file_attr_simple.into()
                 };
 
+                file_attr.ino = self.get_new_inode();
+
                 reply.entry(&TTL, &file_attr, 0);
+
+                self.inodes.insert(path.clone(), file_attr.ino);
+                self.inodes_reverse.insert(file_attr.ino, path.clone());
             }
             Err(_) => {
                 reply.error(libc::EIO);
