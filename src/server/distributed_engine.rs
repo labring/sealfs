@@ -1,5 +1,3 @@
-pub mod engine_rpc;
-
 use super::storage_engine::StorageEngine;
 use super::EngineError;
 use crate::common::{
@@ -81,8 +79,8 @@ where
                     &address,
                     OperationType::DirectoryAddEntry as u32,
                     0,
-                    &parent_dir,
-                    file_name.as_bytes(),
+                    &path,
+                    &[],
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -133,8 +131,8 @@ where
                     &address,
                     OperationType::DirectoryDeleteEntry as u32,
                     0,
-                    &parent_dir,
-                    file_name.as_bytes(),
+                    &path,
+                    &[],
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -190,8 +188,8 @@ where
                     &address,
                     OperationType::DirectoryAddEntry as u32,
                     0,
-                    &parent_dir,
-                    file_name.as_bytes(),
+                    &path,
+                    &[],
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -242,8 +240,8 @@ where
                     &address,
                     OperationType::DirectoryDeleteEntry as u32,
                     0,
-                    &parent_dir,
-                    file_name.as_bytes(),
+                    &path,
+                    &[],
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -294,5 +292,165 @@ where
 
     pub async fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError> {
         self.local_storage.open_file(path, mode)
+    }
+
+    pub async fn directory_add_entry(&self, path: String) -> i32 {
+        let status = match path_split(path) {
+            Ok((parentdir, filename)) => {
+                match self.local_storage.directory_add_entry(parentdir, filename) {
+                    Ok(()) => 0,
+                    Err(value) => value.into(),
+                }
+            }
+            Err(value) => value.into(),
+        };
+        status as i32
+    }
+
+    pub async fn directory_delete_entry(&self, path: String) -> i32 {
+        let status = match path_split(path) {
+            Ok((parentdir, filename)) => {
+                match self
+                    .local_storage
+                    .directory_delete_entry(parentdir, filename)
+                {
+                    Ok(()) => 0,
+                    Err(value) => value.into(),
+                }
+            }
+            Err(value) => value.into(),
+        };
+        status as i32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // use super::{enginerpc::enginerpc_client::EnginerpcClient, RPCService};
+    use crate::common::distribute_hash_table::build_hash_ring;
+    use crate::rpc::server::Server;
+    use crate::server::storage_engine::{default_engine::DefaultEngine, StorageEngine};
+    use crate::server::{DistributedEngine, EngineError, FileRequestHandler};
+    use nix::sys::stat::Mode;
+    use std::sync::Arc;
+    use tokio::time::sleep;
+
+    async fn add_server(
+        database_path: String,
+        storage_path: String,
+        server_address: String,
+    ) -> Arc<DistributedEngine<DefaultEngine>> {
+        let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
+        local_storage.init();
+
+        let engine = Arc::new(DistributedEngine::new(
+            server_address.clone(),
+            local_storage,
+        ));
+        let handler = Arc::new(FileRequestHandler::new(engine.clone()));
+        let server = Server::new(handler, &server_address);
+        tokio::spawn(async move {
+            server.run().await.unwrap();
+        });
+        sleep(std::time::Duration::from_millis(3000)).await;
+        engine
+    }
+
+    async fn test_file(engine0: Arc<DistributedEngine<DefaultEngine>>) {
+        let mode = Mode::S_IRUSR
+            | Mode::S_IWUSR
+            | Mode::S_IRGRP
+            | Mode::S_IWGRP
+            | Mode::S_IROTH
+            | Mode::S_IWOTH;
+        // end with '/'
+        match engine0.create_file("/test/".into(), mode).await {
+            Err(EngineError::IsDir) => assert!(true),
+            _ => assert!(false),
+        };
+        match engine0.create_file("/test".into(), mode).await {
+            Ok(_) => assert!(true),
+            _ => assert!(false),
+        };
+        // repeat the same file
+        match engine0.create_file("/test".into(), mode).await {
+            Err(EngineError::Exist) => assert!(true),
+            _ => assert!(false),
+        };
+        match engine0.delete_file("/test".into()).await {
+            Ok(_) => assert!(true),
+            _ => assert!(false),
+        };
+        println!("OK test_file");
+    }
+
+    async fn test_dir(
+        engine0: Arc<DistributedEngine<DefaultEngine>>,
+        engine1: Arc<DistributedEngine<DefaultEngine>>,
+    ) {
+        let mode = Mode::S_IRUSR
+            | Mode::S_IWUSR
+            | Mode::S_IRGRP
+            | Mode::S_IWGRP
+            | Mode::S_IROTH
+            | Mode::S_IWOTH;
+        // not end with '/'
+        match engine1.create_dir("/test".into(), mode).await {
+            Err(EngineError::NotDir) => assert!(true),
+            _ => assert!(false),
+        };
+        match engine1.create_dir("/test/".into(), mode).await {
+            core::result::Result::Ok(()) => assert!(true),
+            _ => assert!(false),
+        };
+        // repeat the same dir
+        match engine1.create_dir("/test/".into(), mode).await {
+            Err(EngineError::Exist) => assert!(true),
+            _ => assert!(false),
+        };
+        // dir add file
+        match engine0.create_file("/test/t1".into(), mode).await {
+            Ok(_) => assert!(true),
+            _ => assert!(false),
+        };
+        // dir has file
+        match engine1.delete_dir("/test/".into()).await {
+            Err(EngineError::NotEmpty) => assert!(true),
+            _ => assert!(false),
+        };
+        match engine0.delete_file("/test/t1".into()).await {
+            Ok(()) => assert!(true),
+            _ => assert!(false),
+        };
+        match engine1.delete_dir("/test/".into()).await {
+            Ok(()) => assert!(true),
+            _ => assert!(false),
+        };
+        println!("OK test_dir");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_all() {
+        let address0 = "127.0.0.1:18080".to_string();
+        let address1 = "127.0.0.1:18081".to_string();
+        build_hash_ring(vec![address0.clone(), address1.clone()]);
+        let engine0 = add_server(
+            "/tmp/test_file_db0".into(),
+            "/tmp/test0".into(),
+            address0.clone(),
+        )
+        .await;
+        let engine1 = add_server(
+            "/tmp/test_file_db1".into(),
+            "/tmp/test1".into(),
+            address1.clone(),
+        )
+        .await;
+        println!("add_server success!");
+        engine0.add_connection(address1).await;
+        engine1.add_connection(address0).await;
+        println!("add_connection success!");
+        test_file(engine0.clone()).await;
+        test_dir(engine0, engine1).await;
     }
 }
