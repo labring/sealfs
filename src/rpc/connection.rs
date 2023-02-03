@@ -519,7 +519,7 @@ impl OperationCallback {
 
 pub struct CircularQueue {
     callbacks: Vec<*const OperationCallback>,
-    start_index: Arc<AtomicU32>,
+    start_index: *mut u32,
     end_index: Arc<AtomicU32>,
 }
 
@@ -527,7 +527,7 @@ impl Default for CircularQueue {
     fn default() -> Self {
         Self {
             callbacks: vec![std::ptr::null(); REQUEST_QUEUE_LENGTH],
-            start_index: Arc::new(AtomicU32::new(0)),
+            start_index: Box::into_raw(Box::new(0)),
             end_index: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -537,7 +537,7 @@ impl CircularQueue {
     pub fn new() -> Self {
         Self {
             callbacks: vec![std::ptr::null_mut(); REQUEST_QUEUE_LENGTH],
-            start_index: Arc::new(AtomicU32::new(0)),
+            start_index: Box::into_raw(Box::new(0)),
             end_index: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -670,10 +670,10 @@ impl CircularQueue {
 pub fn clean_up(queue: Arc<CircularQueue>) {
     debug!("start to cleanup");
     loop {
-        let mut idx = queue.start_index.load(Ordering::Acquire);
+        let idx = unsafe { &mut *queue.start_index};
         let end_flag = queue.end_index.load(Ordering::Acquire);
-        while idx != end_flag {
-            let id = idx % REQUEST_QUEUE_LENGTH as u32;
+        while *idx != end_flag {
+            let id = *idx % REQUEST_QUEUE_LENGTH as u32;
             unsafe {
                 let callback = queue.callbacks[id as usize];
                 match (*callback).state {
@@ -695,9 +695,8 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
                     debug!("index {idx} has already been cleaned up. ");
                 }
             }
-            idx += 1;
+            *idx += 1;
         }
-        queue.start_index.store(idx, Ordering::Release);
     }
 }
 
@@ -708,7 +707,6 @@ unsafe impl std::marker::Send for CircularQueue {}
 mod tests {
     use super::{CallbackState, CircularQueue, OperationCallback};
     use core::time;
-    use std::sync::atomic::Ordering;
     #[test]
     fn test_register_callback() {
         let mut queue = CircularQueue::new();
@@ -776,7 +774,7 @@ mod tests {
                 let q1 = queue.clone();
                 thread::spawn(|| clean_up(q1));
                 thread::sleep(time::Duration::from_millis(100));
-                if queue.start_index.load(Ordering::Acquire) != id + 1 {
+                if *queue.start_index != id + 1 {
                     assert!(false);
                 }
                 match oc.state {
