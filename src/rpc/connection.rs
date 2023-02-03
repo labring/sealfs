@@ -670,7 +670,7 @@ impl CircularQueue {
 pub fn clean_up(queue: Arc<CircularQueue>) {
     debug!("start to cleanup");
     loop {
-        let idx = unsafe { &mut *queue.start_index};
+        let idx = unsafe { &mut *queue.start_index };
         let end_flag = queue.end_index.load(Ordering::Acquire);
         while *idx != end_flag {
             let id = *idx % REQUEST_QUEUE_LENGTH as u32;
@@ -687,7 +687,9 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
                         break;
                     }
                     CallbackState::Empty => {
-                        debug!("unexpected behavior happen")
+                        //such situation : between fetch_add end_index and set callback state, the state will still be Empty,
+                        //and the state gonna be set WaitingForResponse.
+                        break;
                     }
                 }
                 if let Ok(()) = (*(callback as *mut OperationCallback)).occupied.1.recv() {
@@ -697,6 +699,8 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
             }
             *idx += 1;
         }
+        // sleep for a while
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 
