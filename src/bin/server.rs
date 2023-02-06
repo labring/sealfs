@@ -5,7 +5,7 @@
 use log::info;
 use sealfs::common::serialization::OperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
-use sealfs::rpc::client::ClientAsync;
+use sealfs::rpc::client::Client;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
 
     if properties.heartbeat {
         info!("Connect To Manager.");
-        let client = ClientAsync::new();
+        let client = Client::new();
         client.add_connection(&manager_address).await;
 
         //begin scheduled task
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn begin_heartbeat_report(
-    client: ClientAsync,
+    client: Client,
     manager_address: String,
     server_address: String,
     lifetime: String,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use log::debug;
-use sealfs::rpc::client::ClientAsync;
+use sealfs::rpc::client::Client;
 
 #[tokio::main]
 pub async fn main() {
@@ -11,7 +11,7 @@ pub async fn main() {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
-    let client = Arc::new(ClientAsync::new());
+    let client = Arc::new(Client::new());
     let server_address = "127.0.0.1:50051";
     client.add_connection(server_address).await;
     for i in 0..50 {
