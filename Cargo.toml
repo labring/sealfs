@@ -32,6 +32,11 @@ libc = "0.2"
 [build-dependencies]
 tonic-build = "0.8"
 
+[dev-dependencies]
+tonic = "0.8.2"
+core_affinity = "0.8.0"
+criterion = "0.4"
+
 [[bin]]
 name = "client"
 path = "src/bin/client.rs"
@@ -48,3 +53,11 @@ path = "src/bin/manager.rs"
 members = [
     "intercept",
 ]
+
+[[bench]]
+name = "rpc"
+harness = false
+
+[[bench]]
+name = "grpc"
+harness = false

@@ -1,0 +1,22 @@
+syntax = "proto3";
+package helloworld;
+service Greeter {
+    rpc SayHello (HelloRequest) returns (HelloReply);
+}
+
+message HelloRequest {
+    uint32 id = 1;
+    uint32 type = 2;
+    uint32 flags = 3;
+    string filename = 4;
+    string meta_data = 5;
+    string data = 6;
+}
+
+message HelloReply {
+    uint32 id = 1;
+    int32 status = 2;
+    uint32 flags = 3;
+    string meta_data = 5;
+    string data = 6;
+}
