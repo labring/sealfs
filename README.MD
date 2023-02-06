@@ -1,34 +1,63 @@
 # SEALFS
-[English](https://github.com/labring/sealfs/blob/main/README.MD)|[简体中文](https://github.com/labring/sealfs/blob/main/README-ZH.MD)
+[English](https://github.com/labring/sealfs/blob/main/README.MD) | [简体
+中文](https://github.com/labring/sealfs/blob/main/README-ZH.MD)
 
-The storage system of [sealos](https://github.com/labring/sealos),aim to be a high-performance,high reliability and auto-scaling distributed file system which suit to cloud native.
+The storage system of [sealos](https://github.com/labring/sealos),
+aiming to be a high-performance, highly reliable and auto-scalable
+distributed file system which fits the cloud native environment.
 
 ## System Architecture
-The architecture of sealfs is non centralized, and there is no single metadata node. We hope to improve the read and write performance as much as possible and solve the problem of storing large amounts of small files.
 
-Sealfs consists of three components
--Server:Responsible for storing files and metadata。Metadata is undoubtedly the hot file of the distributed file system, so we store data and metadata in the way of separate disks. Users can choose better hardware to store metadata.
--client:It implements the file system in user mode, intercepts file requests, and stores and addresses them through the hash algorithm.
--manager:Responsible for Coordinate cluster.
+The architecture of sealfs is decentralized, and there is no single
+metadata node. sealfs hopes to improve the read and write performance
+as much as possible and solve the problems of storing large amounts of
+small files.
 
-The System Architecture picture as follows:
+### Main Components
+Sealfs consists of the following three components:
+
+#### Server
+
+Server component is responsible for storing files and metadata. sealfs
+separates data and metadata into different disks, since metadata is
+undoubtedly the hot file on distributed file-system. This way, users
+can choose better hardware to store metadata.
+
+#### Client
+
+Client component implements the file-system in user mode. It
+intercepts file requests, stores, and addresses them through hash
+algorithms.
+
+#### Manager
+
+Manager component is responsible for coordinating the cluster.
+
+
+The System Architecture can be shown as follow:
 ![](docs/images/architecture.jpg)
 
-### User Mode in Overall Chain
-We hope to create an overall chain user mode distributed file storage system from client file request hijacking to network to storage with specific hardware, so as to obtain the ultimate performance experience.
+### User Mode All The Way
+
+With specific hardware, sealos hopes to support user-mode completely,
+from file request hijacking on the client side, to the network, and to
+the storage, for maximum performance improvement.
 
 More designs can be referred to:
 ### Design Document
 [design document](https://github.com/labring/sealfs/blob/main/docs/README.MD)
 
 ## RoadMap
-At present, we are committed to improving the performance of the whole link. For other aspects of construction, such as high reliability and high availability, the priority will be lower.
+Currently, we are committed to improving the performance
+thoroughly. For other design aspects, such as high reliability and
+high availability, the priority would be lower.
+
 - first version Function:
   - Client:
     - [ ] fuse file system interface
     - [ ] System call hijacking(file system of user mode)
     - [ ] location algorithm
-    - [ ] batch process 
+    - [ ] batch process
 
   - Sever:
     - [ ] bypass  file system
@@ -39,14 +68,14 @@ At present, we are committed to improving the performance of the whole link. For
     - [ ] file index
     - [ ] file lock
     - [ ] Persistent data structure
-    
+
   - Manger:
     - [ ] heart manager
-    
+
   - Network:
     - [ ] RDMA
-    - [ ] socket network 
-    
+    - [ ] socket network
+
   - Test
     - [ ] IO500
     - [ ] function test
