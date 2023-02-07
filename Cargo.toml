@@ -61,3 +61,7 @@ harness = false
 [[bench]]
 name = "grpc"
 harness = false
+
+[[bench]]
+name = "local_storage"
+harness = false
