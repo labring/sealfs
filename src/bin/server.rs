@@ -90,24 +90,24 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         false => Properties {
             manager_address: args
                 .manager_address
-                .unwrap_or_else(|| default_properties.manager_address),
+                .unwrap_or(default_properties.manager_address),
             server_address: args
                 .server_address
-                .unwrap_or_else(|| default_properties.server_address),
+                .unwrap_or(default_properties.server_address),
             all_servers_address: args
                 .all_servers_address
-                .unwrap_or_else(|| default_properties.all_servers_address),
+                .unwrap_or(default_properties.all_servers_address),
 
-            lifetime: args.lifetime.unwrap_or_else(|| default_properties.lifetime),
+            lifetime: args.lifetime.unwrap_or(default_properties.lifetime),
             database_path: args
                 .database_path
-                .unwrap_or_else(|| default_properties.database_path),
+                .unwrap_or(default_properties.database_path),
             storage_path: args
                 .storage_path
-                .unwrap_or_else(|| default_properties.storage_path),
+                .unwrap_or(default_properties.storage_path),
             heartbeat: args
                 .heartbeat
-                .unwrap_or_else(|| default_properties.heartbeat),
+                .unwrap_or(default_properties.heartbeat),
         },
     };
 

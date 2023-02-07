@@ -63,10 +63,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         false => Properties {
-            address: args.address.unwrap_or_else(|| default_properties.address),
+            address: args.address.unwrap_or(default_properties.address),
             protect_threshold: args
                 .protect_threshold
-                .unwrap_or_else(|| default_properties.protect_threshold),
+                .unwrap_or(default_properties.protect_threshold),
         },
     };
 
