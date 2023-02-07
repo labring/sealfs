@@ -7,6 +7,7 @@ use sealfs::{manager::manager_service::ManagerService, rpc::server::Server};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::{fmt::Debug, sync::Arc};
+use log::warn;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -17,6 +18,9 @@ struct Args {
     protect_threshold: Option<String>,
     #[arg(long)]
     config_file: Option<String>,
+    /// To use customized configuration or not. If this flag is used, please provide a config file through --config_file <path>
+    #[arg(long)]
+    use_config_file: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,31 +36,38 @@ async fn main() -> anyhow::Result<()> {
         .format_timestamp(None)
         .filter(None, log::LevelFilter::Debug);
     builder.init();
-    let mut properties: Properties;
+
+    // read from default configuration.
+    let default_yaml_str = include_str!("../../examples/manager.yaml");
+    let default_properties: Properties =
+        serde_yaml::from_str(default_yaml_str).expect("manager.yaml read failed!");
+
     // read from command line.
-    let args = Args::parse();
-    // if the user provides the config file, parse it and use the arguments from the config file.
-    match args.config_file {
-        None => {
-            //read from default configuration.
-            let yaml_str = include_str!("../../examples/manager.yaml");
-            properties = serde_yaml::from_str(yaml_str).expect("manager.yaml read failed!");
-        }
-        Some(c) => {
+    let args: Args = Args::parse();
+    let properties: Properties = match args.use_config_file {
+        true => {
             // read from user-provided config file
-            let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
-            properties = serde_yaml::from_str(&yaml_str).expect("server.yaml read failed!");
+            match args.config_file {
+                Some(c) => {
+                    let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
+                    let result: Properties =
+                        serde_yaml::from_str(&yaml_str).expect("manager.yaml read failed!");
+                    result
+                }
+                _ => {
+                    warn!("No custom configuration provided, fallback to the default configuration.");
+                    default_properties
+                }
+            }
         }
-    }
-    properties.address = if let Some(addr) = args.address {
-        addr
-    } else {
-        properties.address
-    };
-    properties.protect_threshold = if let Some(t) = args.protect_threshold {
-        t
-    } else {
-        properties.protect_threshold
+        false => Properties {
+            address: args
+                .address
+                .unwrap_or_else(|| default_properties.address),
+            protect_threshold: args
+                .protect_threshold
+                .unwrap_or_else(|| default_properties.protect_threshold),
+        },
     };
 
     let address = properties.address;

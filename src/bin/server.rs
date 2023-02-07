@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use log::info;
+use log::{info, warn};
 use sealfs::common::serialization::OperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::ClientAsync;
@@ -33,8 +33,12 @@ struct Args {
     storage_path: Option<String>,
     #[arg(long)]
     heartbeat: Option<bool>,
+    /// The path of the configuration file
     #[arg(long)]
     config_file: Option<String>,
+    /// To use customized configuration or not. If this flag is used, please provide a config file through --config_file <path>
+    #[arg(long)]
+    use_config_file: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -56,57 +60,41 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
-    let mut properties: Properties;
+    // read from default configuration.
+    let default_yaml_str = include_str!("../../examples/server.yaml");
+    let default_properties: Properties = serde_yaml::from_str(default_yaml_str).expect("server.yaml read failed!");
+
     // read from command line.
-    let args = Args::parse();
+    let args: Args = Args::parse();
     // if the user provides the config file, parse it and use the arguments from the config file.
-    match args.config_file {
-        None => {
+    let properties: Properties = match args.use_config_file {
+        true => {
             // read from default configuration.
-            let yaml_str = include_str!("../../examples/server.yaml");
-            properties = serde_yaml::from_str(yaml_str).expect("server.yaml read failed!");
+            match args.config_file {
+                Some(c) => {
+                    // read from user-provided config file
+                    let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
+                    let result: Properties =
+                        serde_yaml::from_str(&yaml_str).expect("server.yaml read failed!");
+                    result
+                }
+                _ => {
+                    warn!("No custom configuration provided, fallback to the default configuration.");
+                        default_properties
+                }
+            }
+
         }
-        Some(c) => {
-            // read from user-provided config file
-            let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
-            properties = serde_yaml::from_str(&yaml_str).expect("server.yaml read failed!");
+        false => Properties {
+            manager_address: args.manager_address.unwrap_or_else(|| default_properties.manager_address),
+            server_address: args.server_address.unwrap_or_else(|| default_properties.server_address),
+            all_servers_address: args.all_servers_address.unwrap_or_else(|| default_properties.all_servers_address),
+
+            lifetime: args.lifetime.unwrap_or_else(|| default_properties.lifetime),
+            database_path: args.database_path.unwrap_or_else(|| default_properties.database_path),
+            storage_path: args.storage_path.unwrap_or_else(|| default_properties.storage_path),
+            heartbeat: args.heartbeat.unwrap_or_else(|| default_properties.heartbeat)
         }
-    }
-    // if the user provides/initialize arguments through the command line, replace the corresponding ones.
-    properties.manager_address = if let Some(addr) = args.manager_address {
-        addr
-    } else {
-        properties.manager_address
-    };
-    properties.server_address = if let Some(addr) = args.server_address {
-        addr
-    } else {
-        properties.server_address
-    };
-    properties.all_servers_address = if let Some(addr) = args.all_servers_address {
-        addr
-    } else {
-        properties.all_servers_address
-    };
-    properties.lifetime = if let Some(l) = args.lifetime {
-        l
-    } else {
-        properties.lifetime
-    };
-    properties.database_path = if let Some(p) = args.database_path {
-        p
-    } else {
-        properties.database_path
-    };
-    properties.storage_path = if let Some(p) = args.storage_path {
-        p
-    } else {
-        properties.storage_path
-    };
-    properties.heartbeat = if let Some(h) = args.heartbeat {
-        h
-    } else {
-        properties.heartbeat
     };
 
     let manager_address = properties.manager_address;
