@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use clap::Parser;
 use log::info;
 use sealfs::common::serialization::OperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
@@ -9,10 +10,32 @@ use sealfs::rpc::client::ClientAsync;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::fs;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
 const SERVER_FLAG: u32 = 1;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long)]
+    manager_address: Option<String>,
+    #[arg(long)]
+    server_address: Option<String>,
+    #[arg(long)]
+    all_servers_address: Option<Vec<String>>,
+    #[arg(long)]
+    lifetime: Option<String>,
+    #[arg(long)]
+    database_path: Option<String>,
+    #[arg(long)]
+    storage_path: Option<String>,
+    #[arg(long)]
+    heartbeat: Option<bool>,
+    #[arg(long)]
+    config_file: Option<String>,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Properties {
@@ -33,12 +56,59 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
-    //todo
-    //read from command line.
+    let mut properties: Properties;
+    // read from command line.
+    let args = Args::parse();
+    // if the user provides the config file, parse it and use the arguments from the config file.
+    match args.config_file {
+        None => {
+            // read from default configuration.
+            let yaml_str = include_str!("../../examples/server.yaml");
+            properties = serde_yaml::from_str(yaml_str).expect("server.yaml read failed!");
+        }
+        Some(c) => {
+            // read from user-provided config file
+            let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
+            properties = serde_yaml::from_str(&yaml_str).expect("server.yaml read failed!");
+        }
+    }
+    // if the user provides/initialize arguments through the command line, replace the corresponding ones.
+    properties.manager_address = if let Some(addr) = args.manager_address {
+        addr
+    } else {
+        properties.manager_address
+    };
+    properties.server_address = if let Some(addr) = args.server_address {
+        addr
+    } else {
+        properties.server_address
+    };
+    properties.all_servers_address = if let Some(addr) = args.all_servers_address {
+        addr
+    } else {
+        properties.all_servers_address
+    };
+    properties.lifetime = if let Some(l) = args.lifetime {
+        l
+    } else {
+        properties.lifetime
+    };
+    properties.database_path = if let Some(p) = args.database_path {
+        p
+    } else {
+        properties.database_path
+    };
+    properties.storage_path = if let Some(p) = args.storage_path {
+        p
+    } else {
+        properties.storage_path
+    };
+    properties.heartbeat = if let Some(h) = args.heartbeat {
+        h
+    } else {
+        properties.heartbeat
+    };
 
-    //read from yaml
-    let yaml_str = include_str!("../../examples/server.yaml");
-    let properties: Properties = serde_yaml::from_str(yaml_str).expect("server.yaml read failed!");
     let manager_address = properties.manager_address;
     let _server_address = properties.server_address.clone();
     //connect to manager
