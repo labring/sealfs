@@ -23,12 +23,20 @@ extern "C" {
         extern "C" fn(c_long, c_long, c_long, c_long, c_long, c_long, c_long, *mut c_long) -> c_int;
 }
 
+pub async fn init_client_wrap(server_address: String) {
+    CLIENT.add_connection(&server_address);
+}
+
 extern "C" fn initialize() {
     unsafe {
         intercept_hook_point = dispatch;
         let server_address =
             env::var("SEALFS_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8085".to_string());
-        CLIENT.add_connection(&server_address);
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(init_client_wrap(server_address));
     }
 }
 

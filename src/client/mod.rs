@@ -15,7 +15,7 @@ use std::ffi::OsStr;
 
 use crate::{
     common::serialization::OperationType, manager::manager_service::MetadataRequest,
-    rpc::client::ClientAsync,
+    rpc::client::Client,
 };
 
 const CLIENT_FLAG: u32 = 2;
@@ -133,7 +133,11 @@ impl Filesystem for SealFS {
     }
 }
 
-pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn test() -> Result<(), Box<dyn std::error::Error>> {
+    CLIENT.temp_init("127.0.0.1:8085").await
+}
+
+pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let mut builder = env_logger::Builder::from_default_env();
     builder
@@ -157,9 +161,16 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("spawn client");
 
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
     if config.heartbeat {
-        tokio::spawn(async move {
-            let client = ClientAsync::new();
+        info!("connect manager");
+
+        runtime.spawn(async move {
+            let client = Client::new();
             client.add_connection(&_http_manager_address).await;
             let request = MetadataRequest { flags: CLIENT_FLAG };
             let mut status = 0i32;
@@ -186,13 +197,13 @@ pub async fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
             if result.is_err() {
                 panic!("get metadata error.");
             }
-        })
-        .await?;
+        });
     }
 
-    info!("init manager");
+    info!("init client");
 
-    let result = CLIENT.temp_init("127.0.0.1:8085");
+    // let result = runtime.block_on(CLIENT.temp_init("127.0.0.1:8085"));
+    let result = runtime.block_on(test());
     match result {
         Ok(_) => info!("init manager success"),
         Err(e) => panic!("init manager failed, error = {}", e),

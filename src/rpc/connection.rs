@@ -6,6 +6,7 @@ use crate::rpc::protocol::{
     RequestHeader, ResponseHeader, CLIENT_REQUEST_TIMEOUT, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH,
     MAX_METADATA_LENGTH, REQUEST_HEADER_SIZE, REQUEST_QUEUE_LENGTH, RESPONSE_HEADER_SIZE,
 };
+use core::time;
 use log::{debug, error};
 use std::{
     io::{Read, Write},
@@ -519,7 +520,6 @@ impl OperationCallback {
 
 pub struct CircularQueue {
     callbacks: Vec<*const OperationCallback>,
-    start_index: *mut u32,
     end_index: Arc<AtomicU32>,
 }
 
@@ -527,7 +527,6 @@ impl Default for CircularQueue {
     fn default() -> Self {
         Self {
             callbacks: vec![std::ptr::null(); REQUEST_QUEUE_LENGTH],
-            start_index: Box::into_raw(Box::new(0)),
             end_index: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -537,7 +536,6 @@ impl CircularQueue {
     pub fn new() -> Self {
         Self {
             callbacks: vec![std::ptr::null_mut(); REQUEST_QUEUE_LENGTH],
-            start_index: Box::into_raw(Box::new(0)),
             end_index: Arc::new(AtomicU32::new(1)),
         }
     }
@@ -667,13 +665,13 @@ impl CircularQueue {
     }
 }
 
-pub fn clean_up(queue: Arc<CircularQueue>) {
+pub async fn clean_up(queue: Arc<CircularQueue>) {
     debug!("start to cleanup");
+    let mut start_index = 0;
     loop {
-        let idx = unsafe { &mut *queue.start_index };
         let end_flag = queue.end_index.load(Ordering::Acquire);
-        while *idx != end_flag {
-            let id = *idx % REQUEST_QUEUE_LENGTH as u32;
+        while start_index != end_flag {
+            let id = start_index % REQUEST_QUEUE_LENGTH as u32;
             unsafe {
                 let callback = queue.callbacks[id as usize];
                 match (*callback).state {
@@ -694,13 +692,13 @@ pub fn clean_up(queue: Arc<CircularQueue>) {
                 }
                 if let Ok(()) = (*(callback as *mut OperationCallback)).occupied.1.recv() {
                     // match Ok(())
-                    debug!("index {idx} has already been cleaned up. ");
+                    debug!("index {start_index} has already been cleaned up. ");
                 }
             }
-            *idx += 1;
+            start_index += 1;
         }
         // sleep for a while
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        tokio::time::sleep(time::Duration::from_millis(10)).await;
     }
 }
 
@@ -760,10 +758,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_clean_up() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_clean_up() {
         use super::clean_up;
-        use std::{sync::Arc, thread};
+        use std::sync::Arc;
         let mut queue = CircularQueue::new();
         queue.init();
         let queue = Arc::new(queue);
@@ -776,11 +774,8 @@ mod tests {
                 let oc = &mut *(callback as *mut OperationCallback);
                 oc.state = CallbackState::Done;
                 let q1 = queue.clone();
-                thread::spawn(|| clean_up(q1));
-                thread::sleep(time::Duration::from_millis(100));
-                if *queue.start_index != id + 1 {
-                    assert!(false);
-                }
+                tokio::spawn(clean_up(q1));
+                tokio::time::sleep(time::Duration::from_millis(100)).await;
                 match oc.state {
                     CallbackState::Empty => assert!(true),
                     _ => assert!(false),

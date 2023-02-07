@@ -5,14 +5,14 @@ use crate::common::{
     serialization::OperationType,
 };
 
-use crate::rpc::client::ClientAsync;
+use crate::rpc::client::Client;
 use log::debug;
 use nix::sys::stat::Mode;
 use std::{sync::Arc, vec};
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub local_storage: Arc<Storage>,
-    pub client: ClientAsync,
+    pub client: Client,
 }
 
 //  path_split: the path should not be empty, and it does not end with a slash unless it is the root directory.
@@ -48,7 +48,7 @@ where
         Self {
             address,
             local_storage,
-            client: ClientAsync::new(),
+            client: Client::new(),
         }
     }
 
@@ -444,6 +444,8 @@ mod tests {
         engine1.add_connection(address0).await;
         println!("add_connection success!");
         test_file(engine0.clone()).await;
-        test_dir(engine0, engine1).await;
+        test_dir(engine0.clone(), engine1.clone()).await;
+        engine0.client.close().await;
+        engine1.client.close().await;
     }
 }

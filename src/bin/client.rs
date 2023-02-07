@@ -4,9 +4,8 @@
 
 use sealfs::client;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let result = client::init_fs_client().await;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let result = client::init_fs_client();
     println!("client stopped. success = {:?}", result.is_ok());
     Ok(())
 }

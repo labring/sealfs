@@ -23,6 +23,7 @@ pub struct Client {
     pub inodes_reverse: DashMap<u64, String>,
     pub inode_counter: std::sync::atomic::AtomicU64,
     pub fd_counter: std::sync::atomic::AtomicU64,
+    pub handle: tokio::runtime::Handle,
 }
 
 impl Default for Client {
@@ -39,11 +40,12 @@ impl Client {
             inodes_reverse: DashMap::new(),
             inode_counter: std::sync::atomic::AtomicU64::new(0),
             fd_counter: std::sync::atomic::AtomicU64::new(0),
+            handle: tokio::runtime::Handle::current(),
         }
     }
 
-    pub fn add_connection(&self, server_address: &str) {
-        self.client.add_connection(server_address);
+    pub async fn add_connection(&self, server_address: &str) {
+        self.client.add_connection(server_address).await;
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -73,13 +75,11 @@ impl Client {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
     }
 
-    pub fn temp_init(
+    pub async fn temp_init(
         &'static self,
         server_address: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("temp init");
-        debug!("add connection");
-        self.add_connection(server_address);
 
         self.inodes_reverse.insert(1, "/".to_string());
         self.inodes.insert("/".to_string(), 1);
@@ -89,9 +89,8 @@ impl Client {
         self.fd_counter
             .fetch_add(2, std::sync::atomic::Ordering::AcqRel);
 
-        debug!("spawn parse thread");
-        // spawn a thread to handle the connection using self.parse_response
-        std::thread::spawn(|| self.client.parse_response());
+        debug!("add connection");
+        self.add_connection(server_address).await;
         Ok(())
     }
 
@@ -126,7 +125,7 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::GetFileAttr.into(),
             0,
@@ -139,7 +138,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
-        );
+        ));
         match result {
             Ok(_) => {
                 debug!("lookup_remote status: {}", status);
@@ -200,7 +199,7 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::CreateFile.into(),
             0,
@@ -213,7 +212,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
-        );
+        ));
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -262,7 +261,7 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::GetFileAttr.into(),
             0,
@@ -275,7 +274,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
-        );
+        ));
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -333,7 +332,7 @@ impl Client {
 
         let mut recv_data = vec![0u8; 1024];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::ReadDir.into(),
             0,
@@ -346,7 +345,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut recv_data,
-        );
+        ));
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -410,7 +409,7 @@ impl Client {
 
         let mut recv_data = vec![0u8; size as usize];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::ReadFile.into(),
             0,
@@ -423,7 +422,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut recv_data,
-        );
+        ));
         match result {
             Ok(()) => {
                 if status != 0 {
@@ -462,7 +461,7 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 4];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::WriteFile.into(),
             0,
@@ -475,7 +474,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
-        );
+        ));
         match result {
             Ok(()) => {
                 let size: u32 =
@@ -510,7 +509,7 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::CreateDir.into(),
             0,
@@ -523,7 +522,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
-        );
+        ));
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -570,7 +569,7 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::OpenFile.into(),
             0,
@@ -583,7 +582,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut [],
-        );
+        ));
         match result {
             Ok(()) => {
                 reply.opened(self.get_new_fd(), 0);
@@ -612,7 +611,7 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::DeleteFile.into(),
             0,
@@ -625,7 +624,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut [],
-        );
+        ));
         match result {
             Ok(_) => {
                 reply.ok();
@@ -653,7 +652,7 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let result = self.client.call_remote(
+        let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::DeleteDir.into(),
             0,
@@ -666,7 +665,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut [],
-        );
+        ));
         match result {
             Ok(_) => {
                 reply.ok();

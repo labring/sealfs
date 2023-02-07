@@ -9,41 +9,31 @@ use sealfs::common::serialization::OperationType;
 use sealfs::rpc;
 pub struct Client {
     // TODO replace with a thread safe data structure
-    pub client: rpc::client::ClientAsync,
+    pub client: rpc::client::Client,
     pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
-    runtime: tokio::runtime::Runtime,
+    handle: tokio::runtime::Handle,
 }
 
 impl Default for Client {
     fn default() -> Self {
-        Self {
-            client: rpc::client::ClientAsync::default(),
-            inodes: DashMap::new(),
-            inodes_reverse: DashMap::new(),
-            runtime: tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
-        }
+        Self::new()
     }
 }
 
 impl Client {
     pub fn new() -> Self {
+        let handle = tokio::runtime::Handle::current();
         Self {
-            client: rpc::client::ClientAsync::default(),
+            client: rpc::client::Client::default(),
             inodes: DashMap::new(),
             inodes_reverse: DashMap::new(),
-            runtime: tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
+            handle,
         }
     }
 
     pub fn add_connection(&self, server_address: &str) {
-        self.runtime
+        self.handle
             .block_on(self.client.add_connection(server_address));
     }
 
@@ -83,7 +73,7 @@ impl Client {
 
         // todo: Err -> errno
         if self
-            .runtime
+            .handle
             .block_on(self.client.call_remote(
                 &server_address,
                 OperationType::OpenFile.into(),

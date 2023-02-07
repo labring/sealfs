@@ -2,195 +2,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::connection::{clean_up, CircularQueue, ClientConnection, ClientConnectionAsync};
+use super::connection::{clean_up, CircularQueue, ClientConnectionAsync};
 use dashmap::DashMap;
 use log::debug;
-use std::{sync::Arc, thread};
-use tokio::net::tcp::OwnedReadHalf;
+use std::sync::Arc;
+use tokio::{net::tcp::OwnedReadHalf, task::JoinHandle};
+
 pub struct Client {
-    connections: DashMap<String, Arc<ClientConnection>>,
+    connections: DashMap<String, Arc<ClientConnectionAsync>>,
     queue: Arc<CircularQueue>,
+    job_handle: JoinHandle<()>,
 }
 
 impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Client {
-    pub fn new() -> Self {
-        let mut queue = CircularQueue::new();
-        queue.init();
-        let queue = Arc::new(queue);
-        let q1 = queue.clone();
-        thread::spawn(|| clean_up(q1));
-        Self {
-            connections: DashMap::new(),
-            queue,
-        }
-    }
-
-    pub fn add_connection(&self, server_address: &str) {
-        let mut connection = ClientConnection::new(server_address);
-        let result = connection.connect();
-        match result {
-            Ok(_) => {
-                debug!("connect success");
-            }
-            Err(e) => {
-                debug!("connect error: {}", e);
-            }
-        }
-        let connection = Arc::new(connection);
-        self.connections
-            .insert(server_address.to_string(), connection);
-    }
-
-    pub fn remove_connection(&self, server_address: &str) {
-        self.connections.remove(server_address);
-    }
-
-    // parse_response
-    // try to get response from sequence of connections and write to callbacks
-    pub fn parse_response(&self) {
-        loop {
-            // TODO: use epoll to watch all connections
-            for it in self.connections.iter() {
-                let connection = it.value();
-                debug!("parse_response: {:?}", connection.server_address);
-                let result = connection.receive_response_header();
-                match result {
-                    Ok(header) => {
-                        let id = header.id;
-                        let total_length = header.total_length;
-                        let meta_data_result = self
-                            .queue
-                            .get_meta_data_ref(id, header.meta_data_length as usize);
-                        let data_result = self.queue.get_data_ref(id, header.data_length as usize);
-                        match (data_result, meta_data_result) {
-                            (Ok(data), Ok(meta_data)) => {
-                                let response = connection.receive_response(meta_data, data);
-                                match response {
-                                    Ok(_) => {
-                                        let result = self.queue.response(
-                                            id,
-                                            header.status,
-                                            header.flags,
-                                            header.meta_data_length as usize,
-                                            header.data_length as usize,
-                                        );
-                                        match result {
-                                            Ok(_) => {
-                                                debug!("Response success");
-                                            }
-                                            Err(e) => {
-                                                debug!("Error writing response back: {}", e);
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        debug!("Error receiving response: {}", e);
-                                    }
-                                }
-                            }
-                            _ => {
-                                let result = connection.clean_response(total_length);
-                                match result {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        debug!("Error cleaning up response: {}", e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        debug!("Error parsing header: {}", e);
-                    }
-                }
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn call_remote(
-        &self,
-        server_address: &str,
-        operation_type: u32,
-        req_flags: u32,
-        path: &str,
-        send_meta_data: &[u8],
-        send_data: &[u8],
-        status: &mut i32,
-        rsp_flags: &mut u32,
-        recv_meta_data_length: &mut usize,
-        recv_data_length: &mut usize,
-        recv_meta_data: &mut [u8],
-        recv_data: &mut [u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("call_remote on connection: {}", server_address);
-        let connection = self.connections.get(server_address).unwrap();
-        debug!(
-            "call_remote on connection: {:?}",
-            connection.value().server_address
-        );
-        let result = self.queue.register_callback(recv_meta_data, recv_data);
-        debug!("call_remote on connection: {:?}", result);
-        match result {
-            Ok(id) => {
-                let send_result = connection.send_request(
-                    id,
-                    operation_type,
-                    req_flags,
-                    path,
-                    send_meta_data,
-                    send_data,
-                );
-                match send_result {
-                    Ok(_) => {
-                        let result = self.queue.wait_for_callback(id);
-                        match result {
-                            Ok((s, f, meta_data_length, data_length)) => {
-                                debug!("call_remote success, status: {}, flags: {}, meta_data_length: {}, data_length: {}", s, f, meta_data_length, data_length);
-                                *status = s;
-                                *rsp_flags = f;
-                                *recv_meta_data_length = meta_data_length;
-                                *recv_data_length = data_length;
-                                Ok(())
-                            }
-                            Err(_) => {
-                                self.queue.error(id)?;
-                                Err(Box::new(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    "Error waiting for callback",
-                                )))
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        self.queue.error(id)?;
-                        Err(Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            "Error sending request",
-                        )))
-                    }
-                }
-            }
-            Err(_) => Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Error registering callback",
-            ))),
-        }
-    }
-}
-
-pub struct ClientAsync {
-    connections: DashMap<String, Arc<ClientConnectionAsync>>,
-    queue: Arc<CircularQueue>,
-}
-
-impl Default for ClientAsync {
     fn default() -> Self {
         Self::new()
     }
@@ -275,17 +99,23 @@ pub async fn parse_response(
     }
 }
 
-impl ClientAsync {
+impl Client {
     pub fn new() -> Self {
         let mut queue = CircularQueue::new();
         queue.init();
         let queue = Arc::new(queue);
         let q1 = queue.clone();
-        thread::spawn(|| clean_up(q1));
+        let job = tokio::spawn(clean_up(q1));
+
         Self {
             connections: DashMap::new(),
             queue,
+            job_handle: job,
         }
+    }
+
+    pub async fn close(&self) {
+        self.job_handle.abort()
     }
 
     pub async fn add_connection(&self, server_address: &str) {
