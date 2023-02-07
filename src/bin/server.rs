@@ -62,7 +62,8 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
 
     // read from default configuration.
     let default_yaml_str = include_str!("../../examples/server.yaml");
-    let default_properties: Properties = serde_yaml::from_str(default_yaml_str).expect("server.yaml read failed!");
+    let default_properties: Properties =
+        serde_yaml::from_str(default_yaml_str).expect("server.yaml read failed!");
 
     // read from command line.
     let args: Args = Args::parse();
@@ -79,22 +80,35 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
                     result
                 }
                 _ => {
-                    warn!("No custom configuration provided, fallback to the default configuration.");
-                        default_properties
+                    warn!(
+                        "No custom configuration provided, fallback to the default configuration."
+                    );
+                    default_properties
                 }
             }
-
         }
         false => Properties {
-            manager_address: args.manager_address.unwrap_or_else(|| default_properties.manager_address),
-            server_address: args.server_address.unwrap_or_else(|| default_properties.server_address),
-            all_servers_address: args.all_servers_address.unwrap_or_else(|| default_properties.all_servers_address),
+            manager_address: args
+                .manager_address
+                .unwrap_or_else(|| default_properties.manager_address),
+            server_address: args
+                .server_address
+                .unwrap_or_else(|| default_properties.server_address),
+            all_servers_address: args
+                .all_servers_address
+                .unwrap_or_else(|| default_properties.all_servers_address),
 
             lifetime: args.lifetime.unwrap_or_else(|| default_properties.lifetime),
-            database_path: args.database_path.unwrap_or_else(|| default_properties.database_path),
-            storage_path: args.storage_path.unwrap_or_else(|| default_properties.storage_path),
-            heartbeat: args.heartbeat.unwrap_or_else(|| default_properties.heartbeat)
-        }
+            database_path: args
+                .database_path
+                .unwrap_or_else(|| default_properties.database_path),
+            storage_path: args
+                .storage_path
+                .unwrap_or_else(|| default_properties.storage_path),
+            heartbeat: args
+                .heartbeat
+                .unwrap_or_else(|| default_properties.heartbeat),
+        },
     };
 
     let manager_address = properties.manager_address;

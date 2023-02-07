@@ -3,11 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+use log::warn;
 use sealfs::{manager::manager_service::ManagerService, rpc::server::Server};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::{fmt::Debug, sync::Arc};
-use log::warn;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -55,15 +55,15 @@ async fn main() -> anyhow::Result<()> {
                     result
                 }
                 _ => {
-                    warn!("No custom configuration provided, fallback to the default configuration.");
+                    warn!(
+                        "No custom configuration provided, fallback to the default configuration."
+                    );
                     default_properties
                 }
             }
         }
         false => Properties {
-            address: args
-                .address
-                .unwrap_or_else(|| default_properties.address),
+            address: args.address.unwrap_or_else(|| default_properties.address),
             protect_threshold: args
                 .protect_threshold
                 .unwrap_or_else(|| default_properties.protect_threshold),
