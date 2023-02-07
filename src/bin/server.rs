@@ -102,12 +102,8 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
             database_path: args
                 .database_path
                 .unwrap_or(default_properties.database_path),
-            storage_path: args
-                .storage_path
-                .unwrap_or(default_properties.storage_path),
-            heartbeat: args
-                .heartbeat
-                .unwrap_or(default_properties.heartbeat),
+            storage_path: args.storage_path.unwrap_or(default_properties.storage_path),
+            heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
         },
     };
 
