@@ -194,6 +194,7 @@ impl StorageEngine for DefaultEngine {
             "read_file path: {}, size: {}, offset: {}, data: {:?}",
             path, real_size, offset, data
         );
+        nix::unistd::close(fd)?;
 
         // this is a temporary solution, which results in an extra memory copy.
         // TODO: optimize it by return the hole data vector and the real size both.
@@ -237,6 +238,7 @@ impl StorageEngine for DefaultEngine {
             write_size,
             data.len()
         );
+        nix::unistd::close(fd)?;
         file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
         let file_attr_bytes = bincode::serialize(&file_attr).unwrap();
         self.file_attr_db.db.put(path.as_bytes(), file_attr_bytes)?;
@@ -301,7 +303,8 @@ impl StorageEngine for DefaultEngine {
     fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
         let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
-        let _ = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+        let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+        nix::unistd::close(fd)?;
         self.file_db.db.put(&local_file_name, &path)?;
         let attr = FileAttrSimple::new(fuser::FileType::RegularFile);
         self.add_file_attr(&path, attr)
