@@ -445,7 +445,7 @@ mod tests {
         println!("add_connection success!");
         test_file(engine0.clone()).await;
         test_dir(engine0.clone(), engine1.clone()).await;
-        engine0.client.close().await;
-        engine1.client.close().await;
+        engine0.client.close();
+        engine1.client.close();
     }
 }

@@ -16,7 +16,7 @@ pub const REQUEST_FILENAME_LENGTH_SIZE: usize = 4;
 pub const REQUEST_METADATA_LENGTH_SIZE: usize = 4;
 pub const REQUEST_DATA_LENGTH_SIZE: usize = 4;
 
-pub const REQUEST_QUEUE_LENGTH: usize = 65536;
+pub const REQUEST_POOL_SIZE: usize = 65536;
 pub const CLIENT_REQUEST_TIMEOUT: time::Duration = time::Duration::from_secs(10);
 
 /* receive operation response and wake up the operation thread using condition variable
