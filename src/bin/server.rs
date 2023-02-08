@@ -2,17 +2,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use log::info;
+use clap::Parser;
+use log::{info, warn};
 use sealfs::common::serialization::OperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::Client;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::fs;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
 const SERVER_FLAG: u32 = 1;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(long)]
+    manager_address: Option<String>,
+    #[arg(long)]
+    server_address: Option<String>,
+    #[arg(long)]
+    all_servers_address: Option<Vec<String>>,
+    #[arg(long)]
+    lifetime: Option<String>,
+    #[arg(long)]
+    database_path: Option<String>,
+    #[arg(long)]
+    storage_path: Option<String>,
+    #[arg(long)]
+    heartbeat: Option<bool>,
+    /// The path of the configuration file
+    #[arg(long)]
+    config_file: Option<String>,
+    /// To use customized configuration or not. If this flag is used, please provide a config file through --config_file <path>
+    #[arg(long)]
+    use_config_file: bool,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Properties {
@@ -33,12 +60,53 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         .filter(None, log::LevelFilter::Debug);
     builder.init();
 
-    //todo
-    //read from command line.
+    // read from default configuration.
+    let default_yaml_str = include_str!("../../examples/server.yaml");
+    let default_properties: Properties =
+        serde_yaml::from_str(default_yaml_str).expect("server.yaml read failed!");
 
-    //read from yaml
-    let yaml_str = include_str!("../../examples/server.yaml");
-    let properties: Properties = serde_yaml::from_str(yaml_str).expect("server.yaml read failed!");
+    // read from command line.
+    let args: Args = Args::parse();
+    // if the user provides the config file, parse it and use the arguments from the config file.
+    let properties: Properties = match args.use_config_file {
+        true => {
+            // read from default configuration.
+            match args.config_file {
+                Some(c) => {
+                    // read from user-provided config file
+                    let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
+                    let result: Properties =
+                        serde_yaml::from_str(&yaml_str).expect("server.yaml read failed!");
+                    result
+                }
+                _ => {
+                    warn!(
+                        "No custom configuration provided, fallback to the default configuration."
+                    );
+                    default_properties
+                }
+            }
+        }
+        false => Properties {
+            manager_address: args
+                .manager_address
+                .unwrap_or(default_properties.manager_address),
+            server_address: args
+                .server_address
+                .unwrap_or(default_properties.server_address),
+            all_servers_address: args
+                .all_servers_address
+                .unwrap_or(default_properties.all_servers_address),
+
+            lifetime: args.lifetime.unwrap_or(default_properties.lifetime),
+            database_path: args
+                .database_path
+                .unwrap_or(default_properties.database_path),
+            storage_path: args.storage_path.unwrap_or(default_properties.storage_path),
+            heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
+        },
+    };
+
     let manager_address = properties.manager_address;
     let _server_address = properties.server_address.clone();
     //connect to manager
