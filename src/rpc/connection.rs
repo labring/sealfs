@@ -566,8 +566,7 @@ impl CircularQueue {
     ) -> Result<u32, Box<dyn std::error::Error>> {
         let idx = self.end_index.fetch_add(1, Ordering::Relaxed);
         let id = idx % REQUEST_QUEUE_LENGTH as u32;
-        let sender = &self.occupied_senders[id as usize];
-        sender.send(()).await?;
+        self.occupied_senders[id as usize].send(()).await?;
         let callback = unsafe { &mut *(self.callbacks[id as usize] as *mut OperationCallback) };
         callback.state = CallbackState::WaitingForResponse;
         callback.data = rsp_data.as_ptr();
