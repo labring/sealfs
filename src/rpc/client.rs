@@ -58,13 +58,15 @@ pub async fn parse_response(
                             .await;
                         match response {
                             Ok(_) => {
-                                let result = queue.response(
-                                    id,
-                                    header.status,
-                                    header.flags,
-                                    header.meta_data_length as usize,
-                                    header.data_length as usize,
-                                );
+                                let result = queue
+                                    .response(
+                                        id,
+                                        header.status,
+                                        header.flags,
+                                        header.meta_data_length as usize,
+                                        header.data_length as usize,
+                                    )
+                                    .await;
                                 match result {
                                     Ok(_) => {
                                         debug!("Response success");
@@ -101,11 +103,11 @@ pub async fn parse_response(
 
 impl Client {
     pub fn new() -> Self {
-        let mut queue = CircularQueue::new();
+        let (mut queue, occupied_receivers) = CircularQueue::new();
         queue.init();
         let queue = Arc::new(queue);
         let q1 = queue.clone();
-        let job = tokio::spawn(clean_up(q1));
+        let job = tokio::spawn(clean_up(q1, occupied_receivers));
 
         Self {
             connections: DashMap::new(),
@@ -171,7 +173,11 @@ impl Client {
             connection.value().server_address
         );
         let result = {
-            match self.queue.register_callback(recv_meta_data, recv_data) {
+            match self
+                .queue
+                .register_callback(recv_meta_data, recv_data)
+                .await
+            {
                 Ok(result) => Ok(result),
                 Err(_) => Err("register_callback error"),
             }
