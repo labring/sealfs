@@ -523,15 +523,11 @@ pub struct CircularQueue {
     end_index: Arc<AtomicU32>,
 }
 
-// impl Default for CircularQueue {
-//     fn default() -> Self {
-//         Self {
-//             callbacks: vec![std::ptr::null(); REQUEST_QUEUE_LENGTH],
-//             occupied_sender: vec![mpsc::channel(1); REQUEST_QUEUE_LENGTH],
-//             end_index: Arc::new(AtomicU32::new(1)),
-//         }
-//     }
-// }
+impl Default for CircularQueue {
+    fn default() -> Self {
+        CircularQueue::new().0
+    }
+}
 
 impl CircularQueue {
     pub fn new() -> (Self, Vec<Receiver<()>>) {
@@ -621,8 +617,8 @@ impl CircularQueue {
             (*(callback as *mut OperationCallback)).flags = flags;
             (*(callback as *mut OperationCallback)).meta_data_length = meta_data_length;
             (*(callback as *mut OperationCallback)).data_length = data_lenght;
-        }
-        self.occupied_senders[id as usize].send(()).await?;
+            (*(callback as *mut OperationCallback)).channel.0.send(())?;
+        };
         Ok(())
     }
 
@@ -700,7 +696,6 @@ pub async fn clean_up(queue: Arc<CircularQueue>, mut recv: Vec<Receiver<()>>) {
                     }
                 }
             }
-            // let mut receiver = recv[id as usize];
             if let Some(()) = recv[id as usize].recv().await {
                 // match Some(())
                 debug!("index {start_index} has already been cleaned up. ");
@@ -715,143 +710,159 @@ pub async fn clean_up(queue: Arc<CircularQueue>, mut recv: Vec<Receiver<()>>) {
 unsafe impl std::marker::Sync for CircularQueue {}
 unsafe impl std::marker::Send for CircularQueue {}
 
-// #[cfg(test)]
-// mod tests {
-//     use super::{CallbackState, CircularQueue, OperationCallback};
-//     use core::time;
-//     #[test]
-//     fn test_register_callback() {
-//         let mut queue = CircularQueue::new();
-//         queue.init();
-//         let mut recv_meta_data: Vec<u8> = vec![];
-//         let mut recv_data = vec![0u8; 1024];
-//         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-//         match result {
-//             Ok(_) => assert!(true),
-//             Err(_) => assert!(false),
-//         }
-//     }
+#[allow(unused)]
+#[cfg(test)]
+mod tests {
+    use super::{clean_up, CallbackState, CircularQueue, OperationCallback};
+    use core::time;
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_register_callback() {
+        let (mut queue, recv) = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data: Vec<u8> = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue
+            .register_callback(&mut recv_meta_data, &mut recv_data)
+            .await;
+        match result {
+            Ok(_) => assert!(true),
+            Err(_) => assert!(false),
+        }
+    }
 
-//     #[test]
-//     fn test_get_metadata_ref() {
-//         let mut queue = CircularQueue::new();
-//         queue.init();
-//         let mut recv_meta_data = vec![];
-//         let mut recv_data = vec![0u8; 1024];
-//         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-//         match result {
-//             Ok(id) => match queue.get_meta_data_ref(id, recv_meta_data.len()) {
-//                 Ok(recv_meta_data_ref) => {
-//                     assert_eq!(recv_meta_data_ref, &mut recv_meta_data);
-//                 }
-//                 Err(_) => assert!(false),
-//             },
-//             Err(_) => assert!(false),
-//         }
-//     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_get_metadata_ref() {
+        let (mut queue, recv) = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue
+            .register_callback(&mut recv_meta_data, &mut recv_data)
+            .await;
+        match result {
+            Ok(id) => match queue.get_meta_data_ref(id, recv_meta_data.len()) {
+                Ok(recv_meta_data_ref) => {
+                    assert_eq!(recv_meta_data_ref, &mut recv_meta_data);
+                }
+                Err(_) => assert!(false),
+            },
+            Err(_) => assert!(false),
+        }
+    }
 
-//     #[test]
-//     fn test_get_data_ref() {
-//         let mut queue = CircularQueue::new();
-//         queue.init();
-//         let mut recv_meta_data = vec![];
-//         let mut recv_data = vec![0u8; 1024];
-//         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-//         match result {
-//             Ok(id) => match queue.get_data_ref(id, recv_data.len()) {
-//                 Ok(recv_data_ref) => {
-//                     assert_eq!(recv_data_ref, &mut recv_data);
-//                 }
-//                 Err(_) => assert!(false),
-//             },
-//             Err(_) => assert!(false),
-//         }
-//     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_get_data_ref() {
+        let (mut queue, recv) = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue
+            .register_callback(&mut recv_meta_data, &mut recv_data)
+            .await;
+        match result {
+            Ok(id) => match queue.get_data_ref(id, recv_data.len()) {
+                Ok(recv_data_ref) => {
+                    assert_eq!(recv_data_ref, &mut recv_data);
+                }
+                Err(_) => assert!(false),
+            },
+            Err(_) => assert!(false),
+        }
+    }
 
-//     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-//     async fn test_clean_up() {
-//         use super::clean_up;
-//         use std::sync::Arc;
-//         let mut queue = CircularQueue::new();
-//         queue.init();
-//         let queue = Arc::new(queue);
-//         let mut recv_meta_data = vec![];
-//         let mut recv_data = vec![0u8; 1024];
-//         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-//         match result {
-//             Ok(id) => unsafe {
-//                 let callback = queue.callbacks[id as usize];
-//                 let oc = &mut *(callback as *mut OperationCallback);
-//                 oc.state = CallbackState::Done;
-//                 let q1 = queue.clone();
-//                 tokio::spawn(clean_up(q1));
-//                 tokio::time::sleep(time::Duration::from_millis(100)).await;
-//                 match oc.state {
-//                     CallbackState::Empty => assert!(true),
-//                     _ => assert!(false),
-//                 }
-//             },
-//             Err(_) => assert!(false),
-//         }
-//     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_clean_up() {
+        use super::clean_up;
+        use std::sync::Arc;
+        let (mut queue, recv) = CircularQueue::new();
+        queue.init();
+        let queue = Arc::new(queue);
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue
+            .register_callback(&mut recv_meta_data, &mut recv_data)
+            .await;
+        match result {
+            Ok(id) => unsafe {
+                let callback = queue.callbacks[id as usize];
+                let oc = &mut *(callback as *mut OperationCallback);
+                oc.state = CallbackState::Done;
+                let q1 = queue.clone();
+                tokio::spawn(clean_up(q1, recv));
+                tokio::time::sleep(time::Duration::from_millis(100)).await;
+                match oc.state {
+                    CallbackState::Empty => assert!(true),
+                    _ => assert!(false),
+                }
+            },
+            Err(_) => assert!(false),
+        }
+    }
 
-//     #[test]
-//     fn test_wait_for_callback() {
-//         let mut queue = CircularQueue::new();
-//         queue.init();
-//         let mut recv_meta_data = vec![];
-//         let mut recv_data = vec![0u8; 1024];
-//         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-//         match result {
-//             Ok(id) => {
-//                 let callback = queue.callbacks[id as usize];
-//                 unsafe {
-//                     let oc = &*(callback as *mut OperationCallback);
-//                     match oc.channel.0.send(()) {
-//                         Ok(_) => assert!(true),
-//                         Err(_) => assert!(false),
-//                     };
-//                     match queue.wait_for_callback(id) {
-//                         Ok(_) => match oc.state {
-//                             CallbackState::Done => assert!(true),
-//                             _ => assert!(false),
-//                         },
-//                         Err(_) => assert!(false),
-//                     };
-//                 }
-//             }
-//             Err(_) => assert!(false),
-//         }
-//     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_wait_for_callback() {
+        let (mut queue, recv) = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue
+            .register_callback(&mut recv_meta_data, &mut recv_data)
+            .await;
+        match result {
+            Ok(id) => {
+                let callback = queue.callbacks[id as usize];
+                unsafe {
+                    let oc = &*(callback as *mut OperationCallback);
+                    match oc.channel.0.send(()) {
+                        Ok(_) => assert!(true),
+                        Err(_) => assert!(false),
+                    };
+                    match queue.wait_for_callback(id) {
+                        Ok(_) => match oc.state {
+                            CallbackState::Done => assert!(true),
+                            _ => assert!(false),
+                        },
+                        Err(_) => assert!(false),
+                    };
+                }
+            }
+            Err(_) => assert!(false),
+        }
+    }
 
-//     #[test]
-//     fn test_reponse() {
-//         let mut queue = CircularQueue::new();
-//         queue.init();
-//         let mut recv_meta_data = vec![];
-//         let mut recv_data = vec![0u8; 1024];
-//         let result = queue.register_callback(&mut recv_meta_data, &mut recv_data);
-//         match result {
-//             Ok(id) => {
-//                 let callback = queue.callbacks[id as usize];
-//                 unsafe {
-//                     match queue.response(id, 1 as i32, 2 as u32, 24 as usize, 512 as usize) {
-//                         Ok(_) => assert!(true),
-//                         Err(_) => assert!(false),
-//                     };
-//                     let oc = &*(callback as *mut OperationCallback);
-//                     match oc.channel.1.recv() {
-//                         Ok(_) => {
-//                             assert_eq!(oc.request_status, 1);
-//                             assert_eq!(oc.flags, 2);
-//                             assert_eq!(oc.meta_data_length, 24);
-//                             assert_eq!(oc.data_length, 512);
-//                         }
-//                         Err(_) => assert!(false),
-//                     }
-//                 }
-//             }
-//             Err(_) => assert!(false),
-//         }
-//     }
-// }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn test_reponse() {
+        let (mut queue, recv) = CircularQueue::new();
+        queue.init();
+        let mut recv_meta_data = vec![];
+        let mut recv_data = vec![0u8; 1024];
+        let result = queue
+            .register_callback(&mut recv_meta_data, &mut recv_data)
+            .await;
+        match result {
+            Ok(id) => {
+                let callback = queue.callbacks[id as usize];
+                unsafe {
+                    match queue
+                        .response(id, 1 as i32, 2 as u32, 24 as usize, 512 as usize)
+                        .await
+                    {
+                        Ok(_) => assert!(true),
+                        Err(_) => assert!(false),
+                    };
+                    let oc = &*(callback as *mut OperationCallback);
+                    match oc.channel.1.recv() {
+                        Ok(_) => {
+                            assert_eq!(oc.request_status, 1);
+                            assert_eq!(oc.flags, 2);
+                            assert_eq!(oc.meta_data_length, 24);
+                            assert_eq!(oc.data_length, 512);
+                        }
+                        Err(_) => assert!(false),
+                    }
+                }
+            }
+            Err(_) => assert!(false),
+        }
+    }
+}
