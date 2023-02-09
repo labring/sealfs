@@ -2,11 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use fasthash::Murmur3Hasher;
+use ahash::RandomState;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 //todo configurable
@@ -18,9 +17,12 @@ lazy_static! {
 }
 
 pub fn hash(path: &str) -> u64 {
-    let mut hasher: Murmur3Hasher = Default::default();
-    path.hash(&mut hasher);
-    hasher.finish()
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let hash_builder = RandomState::with_seed(now as usize);
+    hash_builder.hash_one(path)
 }
 
 pub fn index_selector(hash: u64) -> String {
@@ -65,7 +67,7 @@ fn binary_search(hash_vec: Vec<&u64>, file_hash: u64) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::distribute_hash_table::{binary_search, index_selector};
+    use crate::common::distribute_hash_table::binary_search;
     use std::collections::BTreeMap;
 
     #[test]
