@@ -292,7 +292,9 @@ impl ServerConnection {
                 debug!("received data length: {}", len);
             }
             Err(e) => {
-                error!("failed to read data from stream, error: {}", e);
+                if e.to_string() != "early eof" {
+                    error!("failed to read data from stream, error: {}", e);
+                }
                 return Err(e.into());
             }
         }

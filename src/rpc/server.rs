@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{debug, info};
+use log::{debug, info, error};
 use tokio::net::{tcp::OwnedReadHalf, TcpListener};
 
 use super::connection::ServerConnection;
@@ -78,7 +78,11 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
             let header = match connection.receive_request_header(&mut read_stream).await {
                 Ok(header) => header,
                 Err(e) => {
-                    debug!("parse_request, header error: {}", e);
+                    if e.to_string() == "early eof" {
+                        info!("client disconnection.")
+                    }else {
+                        error!("parse_request, header error: {}", e);
+                    }
                     break;
                 }
             };
