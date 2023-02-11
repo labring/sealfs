@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{debug, info, error};
+use log::{debug, error, info};
 use tokio::net::{tcp::OwnedReadHalf, TcpListener};
 
 use super::connection::ServerConnection;
@@ -74,28 +74,29 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
 ) {
     loop {
         {
-            debug!("parse_request, start");
+            let id = connection.id();
+            debug!("{} parse_request, start", id);
             let header = match connection.receive_request_header(&mut read_stream).await {
                 Ok(header) => header,
                 Err(e) => {
                     if e.to_string() == "early eof" {
-                        info!("client disconnection.")
-                    }else {
-                        error!("parse_request, header error: {}", e);
+                        info!("client {} disconnection.", id);
+                    } else {
+                        error!("{} parse_request, header error: {}", id, e);
                     }
                     break;
                 }
             };
-            debug!("parse_request, header: {:?}", header.id);
+            debug!("{} parse_request, header: {}", id, header.id);
             let data_result = connection.receive_request(&mut read_stream, &header).await;
             let (path, data, metadata) = match data_result {
                 Ok(data) => data,
                 Err(e) => {
-                    debug!("parse_request, data error: {}", e);
+                    debug!("{} parse_request, data error: {}", id, e);
                     break;
                 }
             };
-            debug!("parse_request, data: {:?}", header.id);
+            debug!("{} parse_request, data: {}", id, header.id);
             let handler = handler.clone();
             let connection = connection.clone();
             tokio::spawn(handle(
@@ -131,18 +132,20 @@ impl<H: Handler + std::marker::Sync + std::marker::Send> Server<H> {
     // 2. spawn a receive thread to handle the connection
     // 3. loop to 1
     pub async fn run(&self) -> anyhow::Result<()> {
-        info!("Listening");
+        info!("Listening on {:?}", self.bind_address);
         let listener = TcpListener::bind(&self.bind_address).await?;
+        let mut id = 1;
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
                     let (read_stream, write_stream) = stream.into_split();
-                    info!("Connection accepted");
+                    info!("Connection {id} accepted");
                     let handler = Arc::clone(&self.handler);
-                    let connection = Arc::new(ServerConnection::new(write_stream));
+                    let connection = Arc::new(ServerConnection::new(write_stream, id));
                     tokio::spawn(async move {
                         receive(handler, connection, read_stream).await;
                     });
+                    id = id + 1;
                 }
                 Err(e) => {
                     panic!("Failed to create tcp stream, error is {}", e)

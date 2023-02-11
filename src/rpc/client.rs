@@ -38,7 +38,7 @@ impl Client {
         let result = tokio::net::TcpStream::connect(server_address).await;
         let connection = match result {
             Ok(stream) => {
-                debug!("connect success");
+                debug!("connect {:?} success", server_address);
                 let (read_stream, write_stream) = stream.into_split();
                 let connection = Arc::new(ClientConnectionAsync::new(
                     server_address,

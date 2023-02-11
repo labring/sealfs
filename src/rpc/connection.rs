@@ -170,13 +170,15 @@ impl ClientConnectionAsync {
 }
 
 pub struct ServerConnection {
+    id: u32,
     write_stream: tokio::sync::Mutex<OwnedWriteHalf>,
     status: ConnectionStatus,
 }
 
 impl ServerConnection {
-    pub fn new(write_stream: OwnedWriteHalf) -> Self {
+    pub fn new(write_stream: OwnedWriteHalf, id: u32) -> Self {
         ServerConnection {
+            id,
             write_stream: tokio::sync::Mutex::new(write_stream),
             status: ConnectionStatus::Connected,
         }
@@ -193,6 +195,10 @@ impl ServerConnection {
         }
     }
 
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
     // response
     // | id | status | flags | total_length | meta_data_lenght | data_length | meta_data | data |
     // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 0~ | 0~ |
@@ -204,11 +210,13 @@ impl ServerConnection {
         meta_data: &[u8],
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("send response, id: {}", id);
         let response = {
             let data_length = data.len();
             let meta_data_length = meta_data.len();
             let total_length = data_length + meta_data_length;
+            debug!(
+                "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}, data: {:?}",
+                self.id, id, status, flags, total_length, meta_data_length, data_length, meta_data, data);
             let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
             response.extend_from_slice(&id.to_le_bytes());
             response.extend_from_slice(&status.to_le_bytes());
@@ -220,7 +228,6 @@ impl ServerConnection {
             response.extend_from_slice(data);
             response
         };
-        debug!("response: {:?}", response);
         self.write_stream.lock().await.write_all(&response).await?;
         Ok(())
     }
@@ -230,6 +237,10 @@ impl ServerConnection {
         read_stream: &mut OwnedReadHalf,
     ) -> Result<RequestHeader, Box<dyn std::error::Error>> {
         let mut header = [0; REQUEST_HEADER_SIZE];
+        debug!(
+            "{} waiting for request_header, length: {}",
+            self.id, REQUEST_HEADER_SIZE
+        );
         self.receive(read_stream, &mut header).await?;
         let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
         let operation_type = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
@@ -239,8 +250,8 @@ impl ServerConnection {
         let meta_data_length = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
         let data_length = u32::from_le_bytes([header[24], header[25], header[26], header[27]]);
         debug!(
-            "received request header: id: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
-            id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
+            "{} received request header: id: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
+            self.id, id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
         );
         Ok(RequestHeader {
             id,
@@ -270,12 +281,34 @@ impl ServerConnection {
         let mut path = vec![0u8; path_length as usize];
         let mut data = vec![0u8; data_length as usize];
         let mut meta_data = vec![0u8; meta_data_length as usize];
+
+        debug!("{} waiting for path, length: {}", self.id, path_length);
         self.receive(read_stream, &mut path[0..path_length as usize])
             .await?;
+        debug!(
+            "{} received path length: {}, path: {:?}",
+            self.id, path_length, path
+        );
+
+        debug!(
+            "{} waiting for meta_data, length: {}",
+            self.id, meta_data_length
+        );
         self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
             .await?;
+        debug!(
+            "{} received meta_data length: {}, meta_data: {:?}",
+            self.id, meta_data_length, meta_data
+        );
+
+        debug!("{} waiting for data, length: {}", self.id, data_length);
         self.receive(read_stream, &mut data[0..data_length as usize])
             .await?;
+        debug!(
+            "{} received data length: {}, data: {:?}",
+            self.id, data_length, data
+        );
+
         Ok((path, data, meta_data))
     }
 
@@ -284,19 +317,12 @@ impl ServerConnection {
         read_stream: &mut OwnedReadHalf,
         data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("waiting for request, data length: {}", data.len());
-
         let result = read_stream.read_exact(data).await;
-        match result {
-            Ok(len) => {
-                debug!("received data length: {}", len);
+        if let Err(e) = result {
+            if e.to_string() != "early eof" {
+                error!("{} failed to read data from stream, error: {}", self.id, e);
             }
-            Err(e) => {
-                if e.to_string() != "early eof" {
-                    error!("failed to read data from stream, error: {}", e);
-                }
-                return Err(e.into());
-            }
+            return Err(e.into());
         }
         Ok(())
     }
