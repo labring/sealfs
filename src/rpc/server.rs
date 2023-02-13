@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use tokio::net::{tcp::OwnedReadHalf, TcpListener};
 
 use super::connection::ServerConnection;
@@ -80,7 +80,7 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
                 Ok(header) => header,
                 Err(e) => {
                     if e.to_string() == "early eof" {
-                        info!("client {} disconnection.", id);
+                        warn!("connection {} is closed abnormally.", id);
                     } else {
                         error!("{} parse_request, header error: {}", id, e);
                     }
