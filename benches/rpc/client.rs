@@ -65,4 +65,5 @@ pub async fn run_cli(total: u32) {
     for handle in handles {
         handle.await;
     }
+    client.close();
 }
