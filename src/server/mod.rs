@@ -45,6 +45,9 @@ pub enum EngineError {
     #[error("ENOTEMPTY")]
     NotEmpty,
 
+    #[error("EBLOCKINFO")]
+    BlockInfo,
+
     #[error(transparent)]
     StdIo(#[from] std::io::Error),
 
