@@ -44,8 +44,8 @@ impl OperationCallback {
 
 pub struct CallbackPool {
     callbacks: Vec<*const OperationCallback>,
-    channels: Vec<(kanal::Sender<()>, kanal::Receiver<()>)>,
-    ids: (kanal::Sender<u32>, kanal::Receiver<u32>),
+    channels: Vec<(kanal::AsyncSender<()>, kanal::AsyncReceiver<()>)>,
+    ids: (kanal::AsyncSender<u32>, kanal::AsyncReceiver<u32>),
 }
 
 impl Default for CallbackPool {
@@ -57,10 +57,10 @@ impl Default for CallbackPool {
 impl CallbackPool {
     pub fn new() -> Self {
         let mut channels = Vec::with_capacity(REQUEST_POOL_SIZE);
-        let ids = kanal::unbounded::<u32>();
+        let ids = kanal::unbounded_async::<u32>();
         for i in 0..REQUEST_POOL_SIZE as u32 {
-            channels.push(kanal::unbounded());
-            ids.0.clone().send(i).unwrap();
+            channels.push(kanal::unbounded_async());
+            ids.0.clone_sync().send(i).unwrap();
         }
         Self {
             callbacks: vec![std::ptr::null_mut(); REQUEST_POOL_SIZE],
@@ -88,7 +88,7 @@ impl CallbackPool {
         rsp_meta_data: &mut [u8],
         rsp_data: &mut [u8],
     ) -> Result<u32, Box<dyn std::error::Error>> {
-        match self.ids.1.clone_async().recv().await {
+        match self.ids.1.clone().recv().await {
             Ok(id) => {
                 let callback =
                     unsafe { &mut *(self.callbacks[id as usize] as *mut OperationCallback) };
@@ -143,7 +143,7 @@ impl CallbackPool {
             callback.meta_data_length = meta_data_length;
             callback.data_length = data_lenght;
         }
-        self.channels[id as usize].0.clone_async().send(()).await?;
+        self.channels[id as usize].0.clone().send(()).await?;
         Ok(())
     }
 
@@ -153,23 +153,27 @@ impl CallbackPool {
         &self,
         id: u32,
     ) -> Result<(i32, u32, usize, usize), Box<dyn std::error::Error>> {
-        let result = self.channels[id as usize].1.clone_async().recv().await;
+        let result = self.channels[id as usize].1.clone().recv().await;
         match result {
             Ok(_) => {
-                let callback =
-                    unsafe { &mut *(self.callbacks[id as usize] as *mut OperationCallback) };
-                debug!("callback meta data length: {}", callback.meta_data_length);
-                debug!("callback data length: {}", callback.data_length);
-                let status = callback.request_status;
-                let flags = callback.flags;
-                let meta_data_length = callback.meta_data_length;
-                let data_length = callback.data_length;
-                self.ids.0.clone().send(id)?;
+                let (status, flags, meta_data_length, data_length) = {
+                    let callback =
+                        unsafe { &mut *(self.callbacks[id as usize] as *mut OperationCallback) };
+                    debug!("callback meta data length: {}", callback.meta_data_length);
+                    debug!("callback data length: {}", callback.data_length);
+                    (
+                        callback.request_status,
+                        callback.flags,
+                        callback.meta_data_length,
+                        callback.data_length,
+                    )
+                };
+                self.ids.0.clone().send(id).await?;
                 Ok((status, flags, meta_data_length, data_length))
             }
             Err(_) => {
                 debug!("wait_for_callbakc error, id: {:?}", id);
-                self.ids.0.clone().send(id)?;
+                self.ids.0.clone().send(id).await?;
                 Err("wait_for_callbakc error")?
             }
         }
@@ -253,7 +257,7 @@ mod tests {
                 let callback = pool.callbacks[id as usize];
                 unsafe {
                     let oc = &*(callback as *mut OperationCallback);
-                    match pool.channels[id as usize].0.send(()) {
+                    match pool.channels[id as usize].0.send(()).await {
                         Ok(_) => assert!(true),
                         Err(_) => assert!(false),
                     };
@@ -288,7 +292,7 @@ mod tests {
                         Err(_) => assert!(false),
                     };
                     let oc = &*(callback as *mut OperationCallback);
-                    match pool.channels[id as usize].1.recv() {
+                    match pool.channels[id as usize].1.recv().await {
                         Ok(_) => {
                             assert_eq!(oc.request_status, 1);
                             assert_eq!(oc.flags, 2);
