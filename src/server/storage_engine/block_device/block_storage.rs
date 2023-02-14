@@ -7,7 +7,7 @@ use nix::fcntl::{open, OFlag};
 
 use crate::server::EngineError;
 
-const BLOCKGETSIZE: u64 = 0x1260;
+const _BLOCKGETSIZE: u64 = 0x1260;
 
 pub trait BlockStorage {
     /**
@@ -24,17 +24,17 @@ pub trait BlockStorage {
 
     fn delete_file(&self, file_name: String);
 }
-struct BlockDevice {
+struct _BlockDevice {
     block_num: u64,
 }
 
-impl BlockDevice {
-    fn _new(path: String) -> Result<BlockDevice, EngineError> {
-        let block_num = Self::get_block_info(path)?;
-        Ok(BlockDevice { block_num })
+impl _BlockDevice {
+    fn _new(path: String) -> Result<_BlockDevice, EngineError> {
+        let block_num = Self::_get_block_info(path)?;
+        Ok(_BlockDevice { block_num })
     }
 
-    fn get_block_info(path: String) -> Result<u64, EngineError> {
+    fn _get_block_info(path: String) -> Result<u64, EngineError> {
         let fd = open(
             path.as_str(),
             OFlag::O_DIRECT,
@@ -45,12 +45,12 @@ impl BlockDevice {
         }
         let block_num = 0;
         unsafe {
-            let result = ioctl(fd?, BLOCKGETSIZE, &block_num);
+            let result = ioctl(fd?, _BLOCKGETSIZE, &block_num);
             if result < 0 {
                 return Err(EngineError::BlockInfo);
             }
         }
-        return Ok(block_num);
+        Ok(block_num)
     }
 }
 
