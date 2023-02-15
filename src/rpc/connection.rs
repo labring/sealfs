@@ -77,8 +77,8 @@ impl ClientConnectionAsync {
         let data_length = data.len();
         let total_length = filename_length + meta_data_length + data_length;
         debug!(
-            "total_length: {}, filename_length: {}, meta_data_length: {}, data_length: {}",
-            total_length, filename_length, meta_data_length, data_length
+            "send_request id: {}, type: {}, flags: {}, total_length: {}, filname_length: {}, meta_data_length, {}, data_length: {}, filename: {:?}, meta_data: {:?}",
+            id, operation_type, flags, total_length, filename_length, meta_data_length, data_length, filename, meta_data
         );
         let mut request = Vec::with_capacity(total_length + REQUEST_HEADER_SIZE);
         request.extend_from_slice(&id.to_le_bytes());
@@ -91,7 +91,6 @@ impl ClientConnectionAsync {
         request.extend_from_slice(filename.as_bytes());
         request.extend_from_slice(meta_data);
         request.extend_from_slice(data); // Here we copy data to request instead of locking the stream, but it is not sufficient.
-        debug!("request: {:?}", request);
         self.write_stream
             .as_ref()
             .unwrap()
@@ -107,8 +106,11 @@ impl ClientConnectionAsync {
         read_stream: &mut OwnedReadHalf,
     ) -> Result<ResponseHeader> {
         let mut header = [0; RESPONSE_HEADER_SIZE];
+        debug!(
+            "waiting for response_header, length: {}",
+            RESPONSE_HEADER_SIZE
+        );
         self.receive(read_stream, &mut header).await?;
-        debug!("header: {:?}", header);
         let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
         let status = i32::from_le_bytes([header[4], header[5], header[6], header[7]]);
         let flags = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
@@ -116,7 +118,7 @@ impl ClientConnectionAsync {
         let meta_data_length = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
         let data_length = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
         debug!(
-            "id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}",
+            "received response_header id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}",
             id, status, flags, total_length, meta_data_length, data_length
         );
         Ok(ResponseHeader {
@@ -137,23 +139,24 @@ impl ClientConnectionAsync {
     ) -> Result<()> {
         let meta_data_length = meta_data.len();
         let data_length = data.len();
+        debug!(
+            "waiting for response_meta_data, length: {}",
+            meta_data_length
+        );
         self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
             .await?;
+        debug!("received reponse_meta_data, meta_data: {:?}", meta_data);
+        debug!("waiting for response_data, length: {}", data_length);
         self.receive(read_stream, &mut data[0..data_length as usize])
             .await?;
+        debug!("received reponse_data");
         Ok(())
     }
 
     pub async fn receive(&self, read_stream: &mut OwnedReadHalf, data: &mut [u8]) -> Result<()> {
-        debug!("waiting for response, data length: {}", data.len());
         let result = read_stream.read_exact(data).await;
-        match result {
-            Ok(len) => {
-                debug!("received {} bytes", len);
-            }
-            Err(_) => {
-                return Err(anyhow::anyhow!("failed to receive response"));
-            }
+        if result.is_err() {
+            return Err(anyhow::anyhow!("failed to receive response"));
         }
         Ok(())
     }
@@ -215,8 +218,8 @@ impl ServerConnection {
             let meta_data_length = meta_data.len();
             let total_length = data_length + meta_data_length;
             debug!(
-                "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}, data: {:?}",
-                self.id, id, status, flags, total_length, meta_data_length, data_length, meta_data, data);
+                "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
+                self.id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
             let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
             response.extend_from_slice(&id.to_le_bytes());
             response.extend_from_slice(&status.to_le_bytes());
@@ -285,10 +288,7 @@ impl ServerConnection {
         debug!("{} waiting for path, length: {}", self.id, path_length);
         self.receive(read_stream, &mut path[0..path_length as usize])
             .await?;
-        debug!(
-            "{} received path length: {}, path: {:?}",
-            self.id, path_length, path
-        );
+        debug!("{} received path: {:?}", self.id, path);
 
         debug!(
             "{} waiting for meta_data, length: {}",
@@ -296,18 +296,12 @@ impl ServerConnection {
         );
         self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
             .await?;
-        debug!(
-            "{} received meta_data length: {}, meta_data: {:?}",
-            self.id, meta_data_length, meta_data
-        );
+        debug!("{} received meta_data: {:?}", self.id, meta_data);
 
         debug!("{} waiting for data, length: {}", self.id, data_length);
         self.receive(read_stream, &mut data[0..data_length as usize])
             .await?;
-        debug!(
-            "{} received data length: {}, data: {:?}",
-            self.id, data_length, data
-        );
+        debug!("{} received data", self.id);
 
         Ok((path, data, meta_data))
     }

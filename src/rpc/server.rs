@@ -145,7 +145,7 @@ impl<H: Handler + std::marker::Sync + std::marker::Send> Server<H> {
                     tokio::spawn(async move {
                         receive(handler, connection, read_stream).await;
                     });
-                    id = id + 1;
+                    id += 1;
                 }
                 Err(e) => {
                     panic!("Failed to create tcp stream, error is {}", e)

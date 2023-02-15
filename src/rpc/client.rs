@@ -81,17 +81,12 @@ impl Client {
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("call_remote on connection: {}", server_address);
         let connection = self.connections.get(server_address).unwrap();
         let id = self
             .pool
             .register_callback(recv_meta_data, recv_data)
             .await?;
-        debug!(
-            "call_remote: {:?} id: {:?}",
-            connection.value().server_address,
-            id
-        );
+        debug!("call_remote on {:?}, id: {}", server_address, id);
         connection
             .send_request(
                 id,
@@ -104,8 +99,8 @@ impl Client {
             .await?;
         let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
         debug!(
-            "call_remote success, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
-            s, f, meta_data_length, data_length
+            "call_remote success, id: {}, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
+            id, s, f, meta_data_length, data_length
         );
         *status = s;
         *rsp_flags = f;
