@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::common::distribute_hash_table::{hash, index_selector};
 use crate::common::serialization::{FileAttrSimple, OperationType, ReadFileMetaData, SubDirectory};
 use crate::rpc;
 use dashmap::DashMap;
@@ -45,19 +46,20 @@ impl Client {
     }
 
     pub async fn add_connection(&self, server_address: &str) {
-        self.client.add_connection(server_address).await;
+        loop {
+            if self.client.add_connection(server_address).await {
+                break;
+            }
+        }
     }
 
     pub fn remove_connection(&self, server_address: &str) {
         self.client.remove_connection(server_address);
     }
 
-    pub fn get_connection_address(
-        &self,
-        _path: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
-        // mock
-        Ok("127.0.0.1:8085".to_string())
+    pub fn get_connection_address(&self, path: &str) -> Option<String> {
+        debug!("server address: {}", index_selector(hash(path)));
+        Some(index_selector(hash(path)))
     }
 
     pub fn get_new_inode(&self) -> u64 {
@@ -77,7 +79,7 @@ impl Client {
 
     pub async fn temp_init(
         &'static self,
-        server_address: &str,
+        all_servers_address: Vec<String>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         debug!("temp init");
 
@@ -90,7 +92,9 @@ impl Client {
             .fetch_add(2, std::sync::atomic::Ordering::AcqRel);
 
         debug!("add connection");
-        self.add_connection(server_address).await;
+        for server_address in all_servers_address {
+            self.add_connection(&server_address).await;
+        }
         Ok(())
     }
 

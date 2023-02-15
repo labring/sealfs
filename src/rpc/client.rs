@@ -34,7 +34,7 @@ impl Client {
         self.pool.free();
     }
 
-    pub async fn add_connection(&self, server_address: &str) {
+    pub async fn add_connection(&self, server_address: &str) -> bool {
         let result = tokio::net::TcpStream::connect(server_address).await;
         let connection = match result {
             Ok(stream) => {
@@ -53,11 +53,12 @@ impl Client {
             }
             Err(e) => {
                 debug!("connect error: {}", e);
-                Arc::new(ClientConnectionAsync::new(server_address, None))
+                return false;
             }
         };
         self.connections
             .insert(server_address.to_string(), connection);
+        true
     }
 
     pub fn remove_connection(&self, server_address: &str) {

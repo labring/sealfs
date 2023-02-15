@@ -54,11 +54,11 @@ struct Properties {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
-    let mut builder = env_logger::Builder::from_default_env();
-    builder
-        .format_timestamp(None)
-        .filter(None, log::LevelFilter::Debug);
-    builder.init();
+    // let mut builder = env_logger::Builder::from_default_env();
+    // builder
+    //     .format_timestamp(None)
+    //     .filter(None, log::LevelFilter::Debug);
+    // builder.init();
 
     // read from default configuration.
     let default_yaml_str = include_str!("../../examples/server.yaml");
@@ -108,9 +108,9 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     };
 
     let manager_address = properties.manager_address;
-    let _server_address = properties.server_address.clone();
+    let server_address = properties.server_address.clone();
     //connect to manager
-
+    info!("server_address: {}", server_address.clone());
     if properties.heartbeat {
         info!("Connect To Manager.");
         let client = Client::new();
@@ -120,7 +120,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(begin_heartbeat_report(
             client,
             manager_address,
-            properties.server_address.clone(),
+            server_address.clone(),
             properties.lifetime.clone(),
         ));
     }
@@ -134,9 +134,9 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //     .await;
     info!("Start Server");
     server::run(
-        properties.database_path.clone(),
-        properties.storage_path.clone(),
-        properties.server_address.clone(),
+        properties.database_path,
+        properties.storage_path,
+        server_address,
         properties.all_servers_address.clone(),
     )
     .await?;
@@ -145,7 +145,6 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //     .add_service(service::new_fs_service(fs_service))
     //     .serve(properties.server_address.parse().unwrap())
     //     .await?;
-
     Ok(())
 }
 
