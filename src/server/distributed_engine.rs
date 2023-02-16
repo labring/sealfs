@@ -9,6 +9,7 @@ use crate::rpc::client::Client;
 use log::debug;
 use nix::sys::stat::Mode;
 use std::{sync::Arc, vec};
+use tokio::time::Duration;
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub local_storage: Arc<Storage>,
@@ -53,7 +54,12 @@ where
     }
 
     pub async fn add_connection(&self, address: String) {
-        self.client.add_connection(&address).await;
+        loop {
+            if self.client.add_connection(&address).await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     pub fn remove_connection(&self, address: String) {
