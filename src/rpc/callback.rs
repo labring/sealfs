@@ -159,8 +159,6 @@ impl CallbackPool {
                 let (status, flags, meta_data_length, data_length) = {
                     let callback =
                         unsafe { &mut *(self.callbacks[id as usize] as *mut OperationCallback) };
-                    debug!("callback meta data length: {}", callback.meta_data_length);
-                    debug!("callback data length: {}", callback.data_length);
                     (
                         callback.request_status,
                         callback.flags,
