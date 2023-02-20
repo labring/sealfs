@@ -67,7 +67,7 @@ where
     }
 
     pub async fn create_dir(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
-        if self.local_storage.is_exist(path.clone())? {
+        if self.local_storage.is_exist(path.clone()) {
             return Err(EngineError::Exist);
         }
 
@@ -121,7 +121,7 @@ where
     }
 
     pub async fn delete_dir(&self, path: String) -> Result<(), EngineError> {
-        if !self.local_storage.is_exist(path.clone())? {
+        if !self.local_storage.is_exist(path.clone()) {
             return Ok(());
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
@@ -173,7 +173,7 @@ where
 
     pub async fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         debug!("create file: {}", path);
-        if self.local_storage.is_exist(path.clone())? {
+        if self.local_storage.is_exist(path.clone()) {
             return Err(EngineError::Exist);
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
@@ -223,7 +223,7 @@ where
     }
 
     pub async fn delete_file(&self, path: String) -> Result<(), EngineError> {
-        if !self.local_storage.is_exist(path.clone())? {
+        if !self.local_storage.is_exist(path.clone()) {
             return Ok(());
         }
 

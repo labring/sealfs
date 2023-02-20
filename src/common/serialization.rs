@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::SystemTime};
+use std::{collections::BTreeMap, time::SystemTime};
 
 use fuser::FileType;
 use serde::{Deserialize, Serialize};
@@ -90,7 +90,7 @@ impl OperationType {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct FileAttrSimple {
     pub size: u64,
     pub blocks: u64,
@@ -180,9 +180,9 @@ impl From<FileAttrSimple> for fuser::FileAttr {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
 pub struct SubDirectory {
-    pub sub_dir: HashMap<String, String>,
+    pub sub_dir: BTreeMap<String, String>,
 }
 
 impl Default for SubDirectory {
@@ -193,7 +193,7 @@ impl Default for SubDirectory {
 
 impl SubDirectory {
     pub fn new() -> Self {
-        let sub_dir = HashMap::from([
+        let sub_dir = BTreeMap::from([
             (".".to_string(), "d".to_string()),
             ("..".to_string(), "d".to_string()),
         ]);

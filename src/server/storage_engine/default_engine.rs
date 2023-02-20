@@ -8,8 +8,8 @@ use crate::server::distributed_engine::path_split;
 use super::EngineError;
 
 use super::StorageEngine;
+use dashmap::DashMap;
 use log::debug;
-use log::error;
 use nix::{
     fcntl::{self, OFlag},
     sys::{
@@ -18,7 +18,6 @@ use nix::{
     },
     unistd::{self, mkdir},
 };
-use rocksdb::{IteratorMode, Options, DB};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -26,52 +25,19 @@ use std::{
 };
 
 pub struct DefaultEngine {
-    pub file_db: Database,
-    pub dir_db: Database,
-    pub file_attr_db: Database,
+    pub file_map: DashMap<String, String>,
+    pub dir_map: DashMap<String, SubDirectory>,
+    pub file_attr_map: DashMap<String, FileAttrSimple>,
     pub root: String,
 }
 
-pub struct Database {
-    pub db: DB,
-    pub db_opts: Options,
-    pub path: String,
-}
-
 impl StorageEngine for DefaultEngine {
-    fn new(db_path: &str, root: &str) -> Self {
-        let file_db = {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            let path = format!("{}_file", db_path);
-            let db = match DB::open(&db_opts, path.as_str()) {
-                Ok(db) => db,
-                Err(_) => panic!("Failed to create db"),
-            };
-            Database { db, db_opts, path }
-        };
+    fn new(_db_path: &str, root: &str) -> Self {
+        let file_db = DashMap::new();
 
-        let dir_db = {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            let path = format!("{}_dir", db_path);
-            let db = match DB::open(&db_opts, path.as_str()) {
-                Ok(db) => db,
-                Err(_) => panic!("Failed to create db"),
-            };
-            Database { db, db_opts, path }
-        };
+        let dir_db = DashMap::new();
 
-        let file_attr_db = {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            let path = format!("{}_file_attr", db_path);
-            let db = match DB::open(&db_opts, path.as_str()) {
-                Ok(db) => db,
-                Err(_) => panic!("Failed to create db"),
-            };
-            Database { db, db_opts, path }
-        };
+        let file_attr_db = DashMap::new();
 
         if !Path::new(root).exists() {
             let mode =
@@ -80,30 +46,28 @@ impl StorageEngine for DefaultEngine {
         }
 
         Self {
-            file_db,
-            dir_db,
-            file_attr_db,
+            file_map: file_db,
+            dir_map: dir_db,
+            file_attr_map: file_attr_db,
             root: root.to_string(),
         }
     }
 
     fn init(&self) {
-        if !self.dir_db.db.key_may_exist(b"/") {
+        let result = { self.dir_map.contains_key("/") };
+        if !result {
             let root_sub_dir = SubDirectory::new();
-            let _ = self
-                .dir_db
-                .db
-                .put(b"/", bincode::serialize(&root_sub_dir).unwrap());
+            let _ = self.dir_map.insert("/".to_string(), root_sub_dir);
         }
-        if !self.file_attr_db.db.key_may_exist(b"/") {
+        let result = { self.file_attr_map.contains_key("/") };
+        if !result {
             let file_attr = FileAttrSimple::new(fuser::FileType::Directory);
-            let _ = self
-                .file_attr_db
-                .db
-                .put(b"/", bincode::serialize(&file_attr).unwrap());
+            let _ = self.file_attr_map.insert("/".to_string(), file_attr);
         }
-        if !self.file_db.db.key_may_exist(b"/") {
-            let _ = self.file_db.db.put(b"/", b"");
+
+        let result = self.file_map.contains_key("/");
+        if !result {
+            let _ = self.file_map.insert("/".to_string(), "".to_string());
         }
         self.fsck().unwrap();
     }
@@ -114,68 +78,49 @@ impl StorageEngine for DefaultEngine {
 
     fn get_file_attributes(&self, path: String) -> Result<Vec<u8>, EngineError> {
         debug!("get_file_attributes path: {}", path);
-        match self.file_attr_db.db.get(path.as_bytes())? {
+        match self.file_attr_map.get(&path) {
             Some(value) => {
                 debug!("path: {}, value: {:?}", path, value);
-                Ok(value)
+                // value.value().;
+                Ok(bincode::serialize(value.value()).unwrap())
             }
             None => Err(EngineError::NoEntry),
         }
     }
 
     fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError> {
-        if let Some(value) = self.file_attr_db.db.get(path.as_bytes())? {
+        if let Some(value) = self.file_attr_map.get(&path) {
             debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
-            match bincode::deserialize::<FileAttrSimple>(&value) {
-                Ok(file_attr) => {
-                    // fuser::FileType::Directory
-                    if file_attr.kind != 3 {
-                        return Err(EngineError::NotDir);
-                    }
-                }
-                Err(_) => {
-                    return Err(EngineError::IO);
-                }
+            let file_attr = value.value();
+            // fuser::FileType::Directory
+            if file_attr.kind != 3 {
+                return Err(EngineError::NotDir);
             }
         }
-        match self.dir_db.db.get(path.as_bytes())? {
+        match self.dir_map.get(&path) {
             Some(value) => {
                 debug!("read_dir path: {}, value: {:?}", path, value);
-                Ok(value)
+                Ok(bincode::serialize(value.value()).unwrap())
             }
             None => Err(EngineError::NoEntry),
         }
     }
 
     fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
-        match self.file_attr_db.db.get(path.as_bytes()) {
-            Ok(Some(value)) => {
-                match bincode::deserialize::<FileAttrSimple>(&value) {
-                    Ok(file_attr) => {
-                        // fuser::FileType::RegularFile
-                        if file_attr.kind != 4 {
-                            return Err(EngineError::IsDir); // not a file
-                        }
-                    }
-                    Err(e) => {
-                        error!("deserialize error: {:?}", e);
-                        return Err(EngineError::IO);
-                    }
+        match self.file_attr_map.get(&path) {
+            Some(value) => {
+                let file_attr = value.value();
+                // fuser::FileType::RegularFile
+                if file_attr.kind != 4 {
+                    return Err(EngineError::IsDir); // not a file
                 }
             }
-            Ok(None) => {
+            None => {
                 debug!(
                     "read_file path: {}, size: {}, offset: {}, no entry",
                     path, size, offset
                 );
                 return Err(EngineError::NoEntry);
-            }
-            Err(_) => {
-                debug!(
-                    "read_file path: {}, size: {}, offset: {}, io error",
-                    path, size, offset
-                );
-                return Err(EngineError::IO);
             }
         }
 
@@ -202,24 +147,20 @@ impl StorageEngine for DefaultEngine {
     }
 
     fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError> {
-        let mut file_attr = match self.file_attr_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                match bincode::deserialize::<FileAttrSimple>(&value) {
-                    Ok(file_attr) => {
-                        if file_attr.kind != 4 {
-                            // fuser::FileType::RegularFile
-                            return Err(EngineError::IsDir); // not a file
-                        }
-                        file_attr
+        let mut file_attr = {
+            match self.file_attr_map.get(&path) {
+                Some(value) => {
+                    let file_attr = value.value().clone();
+
+                    if file_attr.kind != 4 {
+                        // fuser::FileType::RegularFile
+                        return Err(EngineError::IsDir); // not a file
                     }
-                    Err(e) => {
-                        error!("deserialize error: {:?}", e);
-                        return Err(EngineError::IO);
-                    }
+                    file_attr
                 }
-            }
-            None => {
-                return Err(EngineError::NoEntry);
+                None => {
+                    return Err(EngineError::NoEntry);
+                }
             }
         };
         let local_file_name = generate_local_file_name(&self.root, &path);
@@ -240,24 +181,19 @@ impl StorageEngine for DefaultEngine {
         );
         nix::unistd::close(fd)?;
         file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
-        let file_attr_bytes = bincode::serialize(&file_attr).unwrap();
-        self.file_attr_db.db.put(path.as_bytes(), file_attr_bytes)?;
+        self.file_attr_map.insert(path, file_attr);
         Ok(write_size)
     }
 
     fn delete_directory_recursive(&self, path: String) -> Result<(), EngineError> {
-        self.file_attr_db.db.delete(path.as_bytes())?;
+        self.file_attr_map.remove(&path);
         self.delete_dir_recursive(path.clone())?;
         self.delete_from_parent(path)?;
         Ok(())
     }
 
-    fn is_exist(&self, path: String) -> Result<bool, EngineError> {
-        match self.file_attr_db.db.get(path.as_bytes()) {
-            Ok(Some(_value)) => Ok(true),
-            Ok(None) => Ok(false),
-            Err(_) => Err(EngineError::IO),
-        }
+    fn is_exist(&self, path: String) -> bool {
+        self.file_attr_map.contains_key(&path)
     }
 
     fn directory_add_entry(
@@ -265,22 +201,15 @@ impl StorageEngine for DefaultEngine {
         parent_dir: String,
         file_name: String,
     ) -> Result<(), EngineError> {
-        match self.dir_db.db.get(parent_dir.as_bytes()) {
-            Ok(Some(value)) => {
-                let mut sub_dirs: SubDirectory = bincode::deserialize(&value[..]).unwrap();
-                sub_dirs.add_dir(file_name);
-                self.dir_db.db.put(
-                    parent_dir.as_bytes(),
-                    bincode::serialize(&sub_dirs).unwrap(),
-                )?;
+        match self.dir_map.get_mut(&parent_dir) {
+            Some(mut value) => {
+                (*value).add_dir(file_name);
             }
-            Ok(None) => {
+            None => {
                 return Err(EngineError::NoEntry);
             }
-            Err(_) => {
-                return Err(EngineError::IO);
-            }
         }
+
         Ok(())
     }
 
@@ -289,14 +218,13 @@ impl StorageEngine for DefaultEngine {
         parent_dir: String,
         file_name: String,
     ) -> Result<(), EngineError> {
-        if let Some(value) = self.dir_db.db.get(parent_dir.as_bytes())? {
-            let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-            sub_dirs.delete_dir(file_name);
-            self.dir_db.db.put(
-                parent_dir.as_bytes(),
-                bincode::serialize(&sub_dirs).unwrap(),
-            )?;
+        match self.dir_map.get_mut(&parent_dir) {
+            Some(mut value) => {
+                value.delete_dir(file_name);
+            }
+            None => return Ok(()),
         }
+
         Ok(())
     }
 
@@ -305,7 +233,7 @@ impl StorageEngine for DefaultEngine {
         let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
         let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
         nix::unistd::close(fd)?;
-        self.file_db.db.put(&local_file_name, &path)?;
+        self.file_map.insert(local_file_name, path.clone());
         let attr = FileAttrSimple::new(fuser::FileType::RegularFile);
         self.add_file_attr(&path, attr)
     }
@@ -314,28 +242,31 @@ impl StorageEngine for DefaultEngine {
         let local_file_name = generate_local_file_name(&self.root, &path);
         unistd::unlink(local_file_name.as_str())?;
         self.delete_file_attr(&path)?;
-        self.file_db.db.delete(local_file_name)?;
+        self.file_map.remove(&local_file_name);
         Ok(())
     }
 
     fn create_directory(&self, path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
         let sub_dirs = SubDirectory::new();
-        self.dir_db
-            .db
-            .put(path.as_bytes(), bincode::serialize(&sub_dirs).unwrap())?;
+        self.dir_map.insert(path.clone(), sub_dirs);
         let attr = FileAttrSimple::new(fuser::FileType::Directory);
         self.add_file_attr(&path, attr)
     }
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError> {
-        if let Some(value) = self.dir_db.db.get(path.as_bytes())? {
-            let sub_dir = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-            if sub_dir.sub_dir.len() != 2 {
-                return Err(EngineError::NotEmpty);
+        let sub_dirs = {
+            match self.dir_map.get(&path) {
+                Some(value) => value.value().clone(),
+                None => return Ok(()),
             }
+        };
+
+        if sub_dirs.sub_dir.len() != 2 {
+            return Err(EngineError::NotEmpty);
         }
+
         self.delete_file_attr(&path)?;
-        self.dir_db.db.delete(path.as_bytes())?;
+        self.dir_map.remove(&path);
         Ok(())
     }
 
@@ -348,93 +279,95 @@ impl StorageEngine for DefaultEngine {
 }
 
 impl DefaultEngine {
+    // memory not need
     fn fsck(&self) -> Result<(), EngineError> {
         for entry in std::fs::read_dir(&self.root)? {
             let entry = entry?;
-            let file_name = format!("{}/{}", self.root, entry.file_name().to_str().unwrap());
-            let mut file_str = String::new();
-            if self.file_db.db.key_may_exist(&file_name) {
-                let file_vec = self.file_db.db.get(&file_name).unwrap().unwrap();
-                file_str = String::from_utf8(file_vec).unwrap();
-                if self.file_attr_db.db.key_may_exist(&file_str) {
-                    continue;
-                }
-                let _ = self.file_db.db.delete(&file_name);
-            }
-            if self.file_attr_db.db.key_may_exist(&file_str) {
-                let _ = self.file_attr_db.db.delete(file_str);
-            }
+            // let file_name = format!("{}/{}", self.root, entry.file_name().to_str().unwrap());
+            // let mut file_str = String::new();
+            // if self.file_db.db.key_may_exist(&file_name) {
+            //     let file_vec = self.file_db.db.get(&file_name).unwrap().unwrap();
+            //     file_str = String::from_utf8(file_vec).unwrap();
+            //     if self.file_attr_db.db.key_may_exist(&file_str) {
+            //         continue;
+            //     }
+            //     let _ = self.file_db.db.delete(&file_name);
+            // }
+            // if self.file_attr_db.db.key_may_exist(&file_str) {
+            //     let _ = self.file_attr_db.db.delete(file_str);
+            // }
             let _ = std::fs::remove_file(entry.path());
         }
 
-        for item in self.dir_db.db.iterator(IteratorMode::End) {
-            let (key, _value) = item.unwrap();
-            if !self.file_attr_db.db.key_may_exist(&key) {
-                let _ = self.dir_db.db.delete(&key);
-            }
-        }
+        // for item in self.dir_db.db.iterator(IteratorMode::End) {
+        //     let (key, _value) = item.unwrap();
+        //     if !self.file_attr_db.db.key_may_exist(&key) {
+        //         let _ = self.dir_db.db.delete(&key);
+        //     }
+        // }
         Ok(())
     }
 
     fn delete_from_parent(&self, path: String) -> Result<(), EngineError> {
-        println!("delete_from_parent: {}", path);
         let (parent, name) = path_split(path).unwrap();
-        println!("parent_dir: {}", parent);
-        if let Some(value) = self.dir_db.db.get(parent.as_bytes())? {
-            let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-            sub_dirs.delete_dir(name);
-            self.dir_db
-                .db
-                .put(parent.as_bytes(), bincode::serialize(&sub_dirs).unwrap())?;
-        }
+        let mut sub_dirs = {
+            match self.dir_map.get(&parent) {
+                Some(value) => value.value().clone(),
+                None => return Ok(()),
+            }
+        };
+
+        sub_dirs.delete_dir(name);
+        self.dir_map.insert(parent, sub_dirs);
+
         Ok(())
     }
 
     fn delete_dir_recursive(&self, path: String) -> Result<(), EngineError> {
-        match self.dir_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                let sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-                if sub_dirs == SubDirectory::new() {
-                    self.dir_db.db.delete(path.as_bytes())?;
-                    return Ok(());
-                }
-                for sub_dir in sub_dirs.sub_dir {
-                    if sub_dir.0 == "." || sub_dir.0 == ".." || sub_dir.0.is_empty() {
-                        continue;
-                    }
-                    let p = format!("{}/{}", path, sub_dir.0);
-                    if sub_dir.1.eq("f") {
-                        self.file_attr_db.db.delete(p.as_bytes())?;
-                        let local_file = match self.file_db.db.get(p.as_bytes())? {
-                            Some(value) => String::from_utf8(value).unwrap(),
-                            None => {
-                                return Err(EngineError::NoEntry);
-                            }
-                        };
-                        unistd::unlink(local_file.as_str())?;
-                        self.file_db.db.delete(p.as_bytes())?;
-                        continue;
-                    }
-                    self.delete_dir_recursive(p)?;
-                }
-                self.dir_db.db.delete(path.as_bytes())?;
+        let sub_dirs = {
+            match self.dir_map.get(&path) {
+                Some(value) => value.value().clone(),
+                None => return Ok(()),
             }
-            None => {
-                self.dir_db.db.delete(path.as_bytes())?;
-                return Ok(());
-            }
+        };
+
+        if sub_dirs == SubDirectory::new() {
+            self.dir_map.remove(&path);
+            return Ok(());
         }
+        for sub_dir in sub_dirs.sub_dir {
+            if sub_dir.0 == "." || sub_dir.0 == ".." || sub_dir.0.is_empty() {
+                continue;
+            }
+            let p = format!("{}/{}", path, sub_dir.0);
+            if sub_dir.1.eq("f") {
+                self.file_attr_map.remove(&p);
+                let local_file = {
+                    match self.file_map.get(&p) {
+                        Some(value) => value,
+                        None => {
+                            return Err(EngineError::NoEntry);
+                        }
+                    }
+                };
+                unistd::unlink(local_file.as_str())?;
+                self.file_map.remove(&p);
+                continue;
+            }
+            self.delete_dir_recursive(p)?;
+        }
+        self.dir_map.remove(&path);
+
         Ok(())
     }
 
     fn add_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, EngineError> {
-        let value = bincode::serialize(&attr).unwrap();
-        self.file_attr_db.db.put(&path, &value)?;
-        Ok(value)
+        self.file_attr_map.insert(path.to_string(), attr.clone());
+        Ok(bincode::serialize(&attr).unwrap())
     }
 
     fn delete_file_attr(&self, path: &str) -> Result<(), EngineError> {
-        self.file_attr_db.db.delete(path.as_bytes())?;
+        self.file_attr_map.remove(path);
         Ok(())
     }
 }
@@ -513,21 +446,21 @@ mod tests {
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
             engine.create_directory("/a".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let dirs = engine.dir_map.get("/a").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             let mut sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
-            let v = engine.dir_db.db.get("/").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let dirs = engine.dir_map.get("/").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             sub_dir.add_dir("a".to_string());
             assert_eq!(dirs, sub_dir);
             engine
                 .directory_delete_entry("/".to_string(), "a".to_string())
                 .unwrap();
             engine.delete_directory("/a".to_string()).unwrap();
-            assert_eq!(None, engine.dir_db.db.get("/a").unwrap());
-            let v = engine.dir_db.db.get("/").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            assert_eq!(true, engine.dir_map.get("/a").is_none());
+            let dirs = engine.dir_map.get("/").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             sub_dir.delete_dir("a".to_string());
             assert_eq!(sub_dir, dirs);
         }
@@ -545,8 +478,8 @@ mod tests {
                 | Mode::S_IROTH
                 | Mode::S_IWOTH;
             engine.create_directory("/a1".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a1").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let dirs = engine.dir_map.get("/a1").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             let mut sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
 
@@ -554,32 +487,32 @@ mod tests {
                 .directory_add_entry("/a1".to_string(), "a2".to_string())
                 .unwrap();
             engine.create_directory("/a1/a2".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a1").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let dirs = engine.dir_map.get("/a1").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             sub_dir.add_dir("a2".to_string());
             assert_eq!(dirs, sub_dir);
 
             engine
                 .delete_directory_recursive("/a1".to_string())
                 .unwrap();
-            assert_eq!(None, engine.dir_db.db.get("/a1").unwrap());
+            assert_eq!(true, engine.dir_map.get("/a1").is_none());
 
             engine
                 .directory_add_entry("/".to_string(), "a3".to_string())
                 .unwrap();
             engine.create_directory("/a3".to_string(), mode).unwrap();
-            let v = engine.dir_db.db.get("/a3").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let dirs = engine.dir_map.get("/a3").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             let sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
             engine
                 .directory_delete_entry("/".to_string(), "a3".to_string())
                 .unwrap();
             engine.delete_directory("/a3".to_string()).unwrap();
-            assert_eq!(None, engine.dir_db.db.get("/a3").unwrap());
+            assert_eq!(true, engine.dir_map.get("/a3").is_none());
 
-            let v = engine.dir_db.db.get("/").unwrap().unwrap();
-            let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
+            let dirs = engine.dir_map.get("/").unwrap().value().clone();
+            // let dirs = bincode::deserialize::<SubDirectory>(&v[..]).unwrap();
             assert_eq!(SubDirectory::new(), dirs);
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
