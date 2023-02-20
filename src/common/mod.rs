@@ -3,5 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod byte;
+pub mod cache;
 pub mod distribute_hash_table;
 pub mod serialization;
