@@ -44,7 +44,9 @@ cargo bench --bench rpc
 
 ## log
 
-we use library [env-logger](https://docs.rs/env_logger/0.10.0/env_logger/) including five log level: "ERROR", "WARN", "INFO", "DEBUG", "TRACE".
+We use library [env-logger](https://docs.rs/env_logger/0.10.0/env_logger/) including five log level: "ERROR", "WARN", "INFO", "DEBUG", "TRACE".
+
+For flexible usage, you can specify the log level by `./target/debug/server --log-level info`. The default log level is set in `examples/*.yaml`
 
 Logging principles:
 

@@ -173,15 +173,15 @@ impl ClientConnectionAsync {
 }
 
 pub struct ServerConnection {
-    id: u32,
+    name_id: String,
     write_stream: tokio::sync::Mutex<OwnedWriteHalf>,
     status: ConnectionStatus,
 }
 
 impl ServerConnection {
-    pub fn new(write_stream: OwnedWriteHalf, id: u32) -> Self {
+    pub fn new(write_stream: OwnedWriteHalf, name_id: String) -> Self {
         ServerConnection {
-            id,
+            name_id,
             write_stream: tokio::sync::Mutex::new(write_stream),
             status: ConnectionStatus::Connected,
         }
@@ -198,8 +198,8 @@ impl ServerConnection {
         }
     }
 
-    pub fn id(&self) -> u32 {
-        self.id
+    pub fn name_id(&self) -> String {
+        self.name_id.clone()
     }
 
     // response
@@ -219,7 +219,7 @@ impl ServerConnection {
             let total_length = data_length + meta_data_length;
             debug!(
                 "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
-                self.id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
+                self.name_id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
             let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
             response.extend_from_slice(&id.to_le_bytes());
             response.extend_from_slice(&status.to_le_bytes());
@@ -242,7 +242,7 @@ impl ServerConnection {
         let mut header = [0; REQUEST_HEADER_SIZE];
         debug!(
             "{} waiting for request_header, length: {}",
-            self.id, REQUEST_HEADER_SIZE
+            self.name_id, REQUEST_HEADER_SIZE
         );
         self.receive(read_stream, &mut header).await?;
         let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
@@ -254,7 +254,7 @@ impl ServerConnection {
         let data_length = u32::from_le_bytes([header[24], header[25], header[26], header[27]]);
         debug!(
             "{} received request header: id: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
-            self.id, id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
+            self.name_id, id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
         );
         Ok(RequestHeader {
             id,
@@ -285,23 +285,23 @@ impl ServerConnection {
         let mut data = vec![0u8; data_length as usize];
         let mut meta_data = vec![0u8; meta_data_length as usize];
 
-        debug!("{} waiting for path, length: {}", self.id, path_length);
+        debug!("{} waiting for path, length: {}", self.name_id, path_length);
         self.receive(read_stream, &mut path[0..path_length as usize])
             .await?;
-        debug!("{} received path: {:?}", self.id, path);
+        debug!("{} received path: {:?}", self.name_id, path);
 
         debug!(
             "{} waiting for meta_data, length: {}",
-            self.id, meta_data_length
+            self.name_id, meta_data_length
         );
         self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
             .await?;
-        debug!("{} received meta_data: {:?}", self.id, meta_data);
+        debug!("{} received meta_data: {:?}", self.name_id, meta_data);
 
-        debug!("{} waiting for data, length: {}", self.id, data_length);
+        debug!("{} waiting for data, length: {}", self.name_id, data_length);
         self.receive(read_stream, &mut data[0..data_length as usize])
             .await?;
-        debug!("{} received data", self.id);
+        debug!("{} received data", self.name_id);
 
         Ok((path, data, meta_data))
     }
@@ -314,7 +314,10 @@ impl ServerConnection {
         let result = read_stream.read_exact(data).await;
         if let Err(e) = result {
             if e.to_string() != "early eof" {
-                error!("{} failed to read data from stream, error: {}", self.id, e);
+                error!(
+                    "{} failed to read data from stream, error: {}",
+                    self.name_id, e
+                );
             }
             return Err(e.into());
         }
