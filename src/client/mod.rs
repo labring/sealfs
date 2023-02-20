@@ -11,7 +11,7 @@ use fuser::{
 };
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
+use std::{ffi::OsStr, str::FromStr};
 
 use crate::{
     common::{distribute_hash_table::build_hash_ring, serialization::OperationType},
@@ -26,6 +26,7 @@ struct Config {
     manager_address: String,
     all_servers_address: Vec<String>,
     heartbeat: bool,
+    log_level: String,
 }
 
 struct SealFS;
@@ -140,12 +141,7 @@ pub async fn test(all_servers_address: Vec<String>) -> Result<(), Box<dyn std::e
 
 pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    // let mut builder = env_logger::Builder::from_default_env();
-    // builder
-    //     .format_timestamp(None)
-    //     .filter(None, log::LevelFilter::Debug);
-    // builder.init();
-    info!("starting up");
+    println!("starting up");
     let mountpoint = cli.mount_point.unwrap();
     let mut options = vec![MountOption::RW, MountOption::FSName("seal".to_string())];
     if cli.auto_unmount {
@@ -161,6 +157,17 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let _http_manager_address = format!("http://{}", manager_address);
 
     build_hash_ring(config.all_servers_address.clone());
+
+    let log_level = match cli.log_level {
+        Some(level) => level,
+        None => config.log_level,
+    };
+    let mut builder = env_logger::Builder::from_default_env();
+    builder
+        .format_timestamp(None)
+        .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
+    builder.init();
+
     info!("spawn client");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -234,4 +241,8 @@ struct Cli {
     /// Allow root user to access filesystem
     #[arg(long = "allow-root", name = "allow-root")]
     allow_root: bool,
+
+    /// Log level
+    #[arg(long = "log-level", name = "log-level")]
+    log_level: Option<String>,
 }
