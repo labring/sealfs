@@ -7,10 +7,10 @@ use crate::rpc::protocol::{
     REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
 };
 use log::{debug, error};
-use std::sync::{Mutex, RwLock};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::tcp::{OwnedReadHalf, OwnedWriteHalf},
+    sync::{Mutex, RwLock},
 };
 // use tokio::{
 //     io::{AsyncReadExt, AsyncWriteExt},
@@ -48,13 +48,13 @@ impl ClientConnectionAsync {
         }
     }
 
-    pub fn disconnect(&mut self) {
+    pub async fn disconnect(&mut self) {
         self.write_stream = None;
-        *self.status.write().unwrap() = ConnectionStatus::Disconnected;
+        *self.status.write().await = ConnectionStatus::Disconnected;
     }
 
-    pub fn is_connected(&self) -> bool {
-        match *self.status.read().unwrap() {
+    pub async fn is_connected(&self) -> bool {
+        match *self.status.read().await {
             ConnectionStatus::Connected => true,
             ConnectionStatus::Disconnected => false,
         }
@@ -289,7 +289,7 @@ impl ServerConnection {
         let result = read_stream.read_exact(data).await;
         match result {
             Ok(len) => {
-                debug!("received data length: {}, data: {:?}", len, data);
+                debug!("received data length: {}", len);
             }
             Err(e) => {
                 error!("failed to read data from stream, error: {}", e);

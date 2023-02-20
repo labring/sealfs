@@ -223,7 +223,7 @@ impl StorageEngine for DefaultEngine {
             }
         };
         let local_file_name = generate_local_file_name(&self.root, &path);
-        let oflags = OFlag::O_WRONLY | OFlag::O_SYNC;
+        let oflags = OFlag::O_WRONLY;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP

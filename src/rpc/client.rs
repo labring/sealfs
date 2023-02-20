@@ -123,7 +123,7 @@ pub async fn parse_response(
     pool: Arc<CallbackPool>,
 ) {
     loop {
-        if !connection.is_connected() {
+        if !connection.is_connected().await {
             debug!("parse_response: connection closed");
             break;
         }

@@ -8,3 +8,5 @@ all_servers_address:
  - 127.0.0.1:8089
 heartbeat:
   false
+log_level:
+  debug

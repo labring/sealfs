@@ -16,3 +16,5 @@ storage_path:
   /tmp/storage0/
 heartbeat:
   false
+log_level:
+  debug
