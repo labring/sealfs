@@ -1321,6 +1321,7 @@ dependencies = [
  "nix",
  "parking_lot",
  "prost",
+ "rand",
  "rocksdb",
  "serde",
  "serde_yaml",
