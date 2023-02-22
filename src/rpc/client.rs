@@ -5,6 +5,7 @@
 use super::{callback::CallbackPool, connection::ClientConnectionAsync};
 use dashmap::DashMap;
 use log::debug;
+use uid::IdU64;
 use std::sync::Arc;
 use tokio::net::tcp::OwnedReadHalf;
 
@@ -82,14 +83,16 @@ impl Client {
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let connection = self.connections.get(server_address).unwrap();
-        let id = self
+        let uid = IdU64::<u64>::new().get();
+        let index = self
             .pool
-            .register_callback(recv_meta_data, recv_data)
+            .register_callback(uid, recv_meta_data, recv_data)
             .await?;
-        debug!("call_remote on {:?}, id: {}", server_address, id);
+        debug!("call_remote on {:?}, id: {}", server_address, index);
         connection
             .send_request(
-                id,
+                uid,
+                index,
                 operation_type,
                 req_flags,
                 path,
@@ -97,10 +100,10 @@ impl Client {
                 send_data,
             )
             .await?;
-        let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
+        let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(index).await?;
         debug!(
-            "call_remote success, id: {}, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
-            id, s, f, meta_data_length, data_length
+            "call_remote success, uid: {}, index: {}, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
+            uid, index, s, f, meta_data_length, data_length
         );
         *status = s;
         *rsp_flags = f;
@@ -129,16 +132,47 @@ pub async fn parse_response(
         let result = connection.receive_response_header(&mut read_stream).await;
         match result {
             Ok(header) => {
-                let id = header.id;
+                let uid = header.uid;
+                let index = header.index;
                 let total_length = header.total_length;
+                let result = {
+                    match pool.lock_if_not_timeout(uid, index) {
+                        Ok(_) => {
+                            debug!("parse_response: lock success");
+                            Ok(())
+                        }
+                        Err(_) => {
+                            debug!("parse_response: lock timeout");
+                            Err("lock timeout")
+                        }
+                    }
+                };
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("Error locking callback: {}", e);
+                        let result = connection
+                            .clean_response(&mut read_stream, total_length)
+                            .await;
+                        match result {
+                            Ok(_) => {}
+                            Err(e) => {
+                                debug!("Error cleaning up response: {}", e);
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                }
+
                 let meta_data_result = {
-                    match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
+                    match pool.get_meta_data_ref(index, header.meta_data_length as usize) {
                         Ok(meta_data_result) => Ok(meta_data_result),
                         Err(_) => Err("meta_data_result error"),
                     }
                 };
                 let data_result = {
-                    match pool.get_data_ref(id, header.data_length as usize) {
+                    match pool.get_data_ref(index, header.data_length as usize) {
                         Ok(data_result) => Ok(data_result),
                         Err(_) => Err("data_result error"),
                     }
@@ -153,7 +187,8 @@ pub async fn parse_response(
                             Ok(_) => {
                                 let result = pool
                                     .response(
-                                        id,
+                                        uid,
+                                        index,
                                         header.status,
                                         header.flags,
                                         header.meta_data_length as usize,
@@ -182,6 +217,7 @@ pub async fn parse_response(
                             Ok(_) => {}
                             Err(e) => {
                                 debug!("Error cleaning up response: {}", e);
+                                break;
                             }
                         }
                     }

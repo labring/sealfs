@@ -4,4 +4,3 @@
 
 pub mod heart;
 pub mod manager_service;
-pub mod uid;

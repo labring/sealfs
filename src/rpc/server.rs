@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use log::{debug, error, info, warn};
 use tokio::net::{tcp::OwnedReadHalf, TcpListener};
 
-use super::connection::ServerConnection;
+use super::{connection::ServerConnection, protocol::RequestHeader};
 
 #[async_trait]
 pub trait Handler {
@@ -22,26 +22,23 @@ pub trait Handler {
     ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)>;
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static>(
     handler: Arc<H>,
     connection: Arc<ServerConnection>,
-    id: u32,
-    operation_type: u32,
-    flags: u32,
+    header: RequestHeader,
     path: Vec<u8>,
     data: Vec<u8>,
     metadata: Vec<u8>,
 ) {
-    debug!("handle, id: {}", id);
+    debug!("handle, id: {}", header.uid);
     let response = handler
-        .dispatch(operation_type, flags, path, data, metadata)
+        .dispatch(header.r#type, header.flags, path, data, metadata)
         .await;
     debug!("handle, response: {:?}", response);
     match response {
         Ok(response) => {
             let result = connection
-                .send_response(id, response.0, response.1, &response.2, &response.3)
+                .send_response(header.uid, header.index, response.0, response.1, &response.2, &response.3)
                 .await;
             match result {
                 Ok(_) => {
@@ -87,7 +84,7 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
                     break;
                 }
             };
-            debug!("{:?} parse_request, header: {}", id, header.id);
+            debug!("{:?} parse_request, header: {}", id, header.uid);
             let data_result = connection.receive_request(&mut read_stream, &header).await;
             let (path, data, metadata) = match data_result {
                 Ok(data) => data,
@@ -96,15 +93,13 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
                     break;
                 }
             };
-            debug!("{:?} parse_request, data: {}", id, header.id);
+            debug!("{:?} parse_request, data: {}", id, header.uid);
             let handler = handler.clone();
             let connection = connection.clone();
             tokio::spawn(handle(
                 handler,
                 connection,
-                header.id,
-                header.r#type,
-                header.flags,
+                header,
                 path,
                 data,
                 metadata,

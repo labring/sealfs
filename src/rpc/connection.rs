@@ -65,7 +65,8 @@ impl ClientConnectionAsync {
     // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 0~ | 0~ |
     pub async fn send_request(
         &self,
-        id: u32,
+        uid: u64,
+        index: u32,
         operation_type: u32,
         flags: u32,
         filename: &str,
@@ -77,11 +78,12 @@ impl ClientConnectionAsync {
         let data_length = data.len();
         let total_length = filename_length + meta_data_length + data_length;
         debug!(
-            "send_request id: {}, type: {}, flags: {}, total_length: {}, filname_length: {}, meta_data_length, {}, data_length: {}, filename: {:?}, meta_data: {:?}",
-            id, operation_type, flags, total_length, filename_length, meta_data_length, data_length, filename, meta_data
+            "send_request uid: {}, index: {}, type: {}, flags: {}, total_length: {}, filname_length: {}, meta_data_length, {}, data_length: {}, filename: {:?}, meta_data: {:?}",
+            uid, index, operation_type, flags, total_length, filename_length, meta_data_length, data_length, filename, meta_data
         );
         let mut request = Vec::with_capacity(total_length + REQUEST_HEADER_SIZE);
-        request.extend_from_slice(&id.to_le_bytes());
+        request.extend_from_slice(&uid.to_le_bytes());
+        request.extend_from_slice(&index.to_le_bytes());
         request.extend_from_slice(&operation_type.to_le_bytes());
         request.extend_from_slice(&flags.to_le_bytes());
         request.extend_from_slice(&(total_length as u32).to_le_bytes());
@@ -111,18 +113,20 @@ impl ClientConnectionAsync {
             RESPONSE_HEADER_SIZE
         );
         self.receive(read_stream, &mut header).await?;
-        let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-        let status = i32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        let flags = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-        let total_length = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-        let meta_data_length = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
-        let data_length = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
+        let uid = u64::from_le_bytes(header[0..8].try_into().unwrap());
+        let index = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let status = i32::from_le_bytes(header[12..16].try_into().unwrap());
+        let flags = u32::from_le_bytes(header[16..20].try_into().unwrap());
+        let total_length = u32::from_le_bytes(header[20..24].try_into().unwrap());
+        let meta_data_length = u32::from_le_bytes(header[24..28].try_into().unwrap());
+        let data_length = u32::from_le_bytes(header[28..32].try_into().unwrap());
         debug!(
-            "received response_header id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}",
-            id, status, flags, total_length, meta_data_length, data_length
+            "received response_header uid: {}, index: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}",
+            uid, index, status, flags, total_length, meta_data_length, data_length
         );
         Ok(ResponseHeader {
-            id,
+            uid,
+            index,
             status,
             flags,
             total_length,
@@ -207,7 +211,8 @@ impl ServerConnection {
     // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 0~ | 0~ |
     pub async fn send_response(
         &self,
-        id: u32,
+        uid: u64,
+        index: u32,
         status: i32,
         flags: u32,
         meta_data: &[u8],
@@ -218,10 +223,11 @@ impl ServerConnection {
             let meta_data_length = meta_data.len();
             let total_length = data_length + meta_data_length;
             debug!(
-                "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
-                self.name_id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
+                "{} response uid: {}, index: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
+                self.name_id, uid, index, status, flags, total_length, meta_data_length, data_length, meta_data);
             let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
-            response.extend_from_slice(&id.to_le_bytes());
+            response.extend_from_slice(&uid.to_le_bytes());
+            response.extend_from_slice(&index.to_le_bytes());
             response.extend_from_slice(&status.to_le_bytes());
             response.extend_from_slice(&flags.to_le_bytes());
             response.extend_from_slice(&(total_length as u32).to_le_bytes());
@@ -245,19 +251,21 @@ impl ServerConnection {
             self.name_id, REQUEST_HEADER_SIZE
         );
         self.receive(read_stream, &mut header).await?;
-        let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-        let operation_type = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        let flags: u32 = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-        let total_length = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-        let file_path_length = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
-        let meta_data_length = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
-        let data_length = u32::from_le_bytes([header[24], header[25], header[26], header[27]]);
+        let uid = u64::from_le_bytes(header[0..8].try_into().unwrap());
+        let index = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let operation_type = u32::from_le_bytes(header[12..16].try_into().unwrap());
+        let flags: u32 = u32::from_le_bytes(header[16..20].try_into().unwrap());
+        let total_length = u32::from_le_bytes(header[20..24].try_into().unwrap());
+        let file_path_length = u32::from_le_bytes(header[24..28].try_into().unwrap());
+        let meta_data_length = u32::from_le_bytes(header[28..32].try_into().unwrap());
+        let data_length = u32::from_le_bytes(header[32..36].try_into().unwrap());
         debug!(
-            "{} received request header: id: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
-            self.name_id, id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
+            "{} received request header: uid: {}, index: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
+            self.name_id, uid, index, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
         );
         Ok(RequestHeader {
-            id,
+            uid,
+            index,
             r#type: operation_type,
             flags,
             total_length,

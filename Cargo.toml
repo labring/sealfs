@@ -30,6 +30,8 @@ fuser = "0.11.1"
 libc = "0.2"
 wyhash = "0.5.0"
 kanal = "0.1.0-pre8"
+chrono = "0.4.23"
+uid = "0.1.7"
 
 
 [build-dependencies]
