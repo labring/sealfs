@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::common::cache::LRUCache;
 use crate::common::serialization::{FileAttrSimple, SubDirectory};
 use crate::server::distributed_engine::path_split;
 
@@ -30,12 +31,30 @@ pub struct DefaultEngine {
     pub dir_db: Database,
     pub file_attr_db: Database,
     pub root: String,
+    pub cache: LRUCache<FileDescriptor>,
 }
 
 pub struct Database {
     pub db: DB,
     pub db_opts: Options,
     pub path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileDescriptor {
+    fd: i32,
+}
+
+impl FileDescriptor {
+    pub(crate) fn new(fd: i32) -> Self {
+        Self { fd }
+    }
+}
+
+impl Drop for FileDescriptor {
+    fn drop(&mut self) {
+        unistd::close(self.fd).unwrap();
+    }
 }
 
 impl StorageEngine for DefaultEngine {
@@ -84,6 +103,7 @@ impl StorageEngine for DefaultEngine {
             dir_db,
             file_attr_db,
             root: root.to_string(),
+            cache: LRUCache::new(512),
         }
     }
 
@@ -180,21 +200,28 @@ impl StorageEngine for DefaultEngine {
         }
 
         let local_file_name = generate_local_file_name(&self.root, &path);
-        let oflag = OFlag::O_RDONLY;
+        let oflag = OFlag::O_RDWR;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
             | Mode::S_IWGRP
             | Mode::S_IROTH
             | Mode::S_IWOTH;
-        let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+        let fd = match self.cache.get(local_file_name.as_bytes()) {
+            Some(value) => value.fd,
+            None => {
+                let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+                self.cache
+                    .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
+                fd
+            }
+        };
         let mut data = vec![0; size as usize];
         let real_size = pread(fd, data.as_mut_slice(), offset)?;
         debug!(
             "read_file path: {}, size: {}, offset: {}, data: {:?}",
             path, real_size, offset, data
         );
-        nix::unistd::close(fd)?;
 
         // this is a temporary solution, which results in an extra memory copy.
         // TODO: optimize it by return the hole data vector and the real size both.
@@ -223,14 +250,22 @@ impl StorageEngine for DefaultEngine {
             }
         };
         let local_file_name = generate_local_file_name(&self.root, &path);
-        let oflags = OFlag::O_WRONLY;
+        let oflags = OFlag::O_RDWR;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
             | Mode::S_IWGRP
             | Mode::S_IROTH
             | Mode::S_IWOTH;
-        let fd = fcntl::open(local_file_name.as_str(), oflags, mode)?;
+        let fd = match self.cache.get(local_file_name.as_bytes()) {
+            Some(value) => value.fd,
+            None => {
+                let fd = fcntl::open(local_file_name.as_str(), oflags, mode)?;
+                self.cache
+                    .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
+                fd
+            }
+        };
         let write_size = pwrite(fd, data, offset)?;
         debug!(
             "write_file path: {}, write_size: {}, data_len: {}",
@@ -238,7 +273,6 @@ impl StorageEngine for DefaultEngine {
             write_size,
             data.len()
         );
-        nix::unistd::close(fd)?;
         file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
         let file_attr_bytes = bincode::serialize(&file_attr).unwrap();
         self.file_attr_db.db.put(path.as_bytes(), file_attr_bytes)?;
@@ -302,9 +336,15 @@ impl StorageEngine for DefaultEngine {
 
     fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
-        let oflag = OFlag::O_CREAT | OFlag::O_EXCL;
-        let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
-        nix::unistd::close(fd)?;
+        let oflag = OFlag::O_CREAT | OFlag::O_RDWR;
+        match self.cache.get(local_file_name.as_bytes()) {
+            Some(_) => {}
+            None => {
+                let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+                self.cache
+                    .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
+            }
+        };
         self.file_db.db.put(&local_file_name, &path)?;
         let attr = FileAttrSimple::new(fuser::FileType::RegularFile);
         self.add_file_attr(&path, attr)
@@ -312,6 +352,7 @@ impl StorageEngine for DefaultEngine {
 
     fn delete_file(&self, path: String) -> Result<(), EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
+        self.cache.remove(local_file_name.as_bytes());
         unistd::unlink(local_file_name.as_str())?;
         self.delete_file_attr(&path)?;
         self.file_db.db.delete(local_file_name)?;
