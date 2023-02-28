@@ -175,7 +175,7 @@ impl ClientConnectionAsync {
         &self,
         read_stream: &mut OwnedReadHalf,
         total_length: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>{
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = vec![0u8; total_length as usize];
         self.receive(read_stream, &mut buffer).await?;
         Ok(())

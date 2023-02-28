@@ -161,25 +161,25 @@ pub async fn parse_response(
         match (data_result, meta_data_result) {
             (Ok(data), Ok(meta_data)) => {
                 match connection
-                .receive_response(&mut read_stream, meta_data, data)
-                .await {
-                    Ok(_) => {
-                        ()
-                    }
+                    .receive_response(&mut read_stream, meta_data, data)
+                    .await
+                {
+                    Ok(_) => (),
                     Err(e) => {
                         error!("Error receiving response: {}", e);
                         break;
                     }
                 };
                 match pool
-                .response(
-                    id,
-                    header.status,
-                    header.flags,
-                    header.meta_data_length as usize,
-                    header.data_length as usize,
-                )
-                .await{
+                    .response(
+                        id,
+                        header.status,
+                        header.flags,
+                        header.meta_data_length as usize,
+                        header.data_length as usize,
+                    )
+                    .await
+                {
                     Ok(_) => {
                         debug!("Response success");
                     }
