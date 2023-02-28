@@ -92,7 +92,7 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
             let (path, data, metadata) = match data_result {
                 Ok(data) => data,
                 Err(e) => {
-                    debug!("{:?} parse_request, data error: {}", id, e);
+                    error!("{:?} parse_request, data error: {}", id, e);
                     break;
                 }
             };
