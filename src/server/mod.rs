@@ -14,8 +14,9 @@ use storage_engine::StorageEngine;
 
 use crate::{
     common::{
-        distribute_hash_table::build_hash_ring, serialization::OperationType,
-        serialization::ReadFileMetaData,
+        distribute_hash_table::build_hash_ring,
+        serialization::{DirectoryEntrySendMetaData, OperationType},
+        serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
     rpc::server::{Handler, Server},
 };
@@ -217,7 +218,7 @@ where
             }
             OperationType::ReadFile => {
                 debug!("Read File");
-                let md: ReadFileMetaData = bincode::deserialize(&metadata).unwrap();
+                let md: ReadFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let (data, status) =
                     match self.engine.read_file(file_path, md.size, md.offset).await {
                         Ok(value) => (value, 0),
@@ -227,10 +228,10 @@ where
             }
             OperationType::WriteFile => {
                 debug!("Write File, data len: {}", data.len());
-                let offset = i64::from_le_bytes(metadata[..8].try_into().unwrap());
+                let md: WriteFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let (status, size) = match self
                     .engine
-                    .write_file(file_path, data.as_slice(), offset)
+                    .write_file(file_path, data.as_slice(), md.offset)
                     .await
                 {
                     Ok(size) => (0, size as u32),
@@ -254,18 +255,28 @@ where
                 };
                 Ok((status, 0, Vec::new(), Vec::new()))
             }
-            OperationType::DirectoryAddEntry => Ok((
-                self.engine.directory_add_entry(file_path).await,
-                0,
-                vec![],
-                vec![],
-            )),
-            OperationType::DirectoryDeleteEntry => Ok((
-                self.engine.directory_delete_entry(file_path).await,
-                0,
-                vec![],
-                vec![],
-            )),
+            OperationType::DirectoryAddEntry => {
+                let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
+                Ok((
+                    self.engine
+                        .directory_add_entry(file_path, md.file_type)
+                        .await,
+                    0,
+                    vec![],
+                    vec![],
+                ))
+            }
+            OperationType::DirectoryDeleteEntry => {
+                let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
+                Ok((
+                    self.engine
+                        .directory_delete_entry(file_path, md.file_type)
+                        .await,
+                    0,
+                    vec![],
+                    vec![],
+                ))
+            }
             _ => todo!(),
         }
     }

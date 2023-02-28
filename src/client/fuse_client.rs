@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::distribute_hash_table::{hash, index_selector};
-use crate::common::serialization::{FileAttrSimple, OperationType, ReadFileMetaData, SubDirectory};
+use crate::common::serialization::{
+    FileAttrSimple, OperationType, ReadFileSendMetaData, SubDirectory, WriteFileSendMetaData,
+};
 use crate::rpc;
 use dashmap::DashMap;
 use fuser::{
@@ -399,7 +401,7 @@ impl Client {
         };
         let server_address = self.get_connection_address(&path).unwrap();
 
-        let meta_data = bincode::serialize(&ReadFileMetaData {
+        let meta_data = bincode::serialize(&ReadFileSendMetaData {
             offset: offset as i64,
             size: size as u32,
         })
@@ -457,6 +459,7 @@ impl Client {
             }
         };
         let server_address = self.get_connection_address(&path).unwrap();
+        let send_meta_data = bincode::serialize(&WriteFileSendMetaData { offset }).unwrap();
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -470,7 +473,7 @@ impl Client {
             OperationType::WriteFile.into(),
             0,
             &path,
-            &offset.to_le_bytes(),
+            &send_meta_data,
             data,
             &mut status,
             &mut rsp_flags,

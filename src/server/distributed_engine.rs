@@ -2,7 +2,7 @@ use super::storage_engine::StorageEngine;
 use super::EngineError;
 use crate::common::{
     distribute_hash_table::{hash, index_selector},
-    serialization::OperationType,
+    serialization::{DirectoryEntrySendMetaData, OperationType},
 };
 
 use crate::rpc::client::Client;
@@ -78,9 +78,16 @@ where
                 "local create dir, path: {}, parent_dir: {}, file_name: {}",
                 path, parent_dir, file_name
             );
-            self.local_storage
-                .directory_add_entry(parent_dir, file_name)?;
+            self.local_storage.directory_add_entry(
+                parent_dir,
+                file_name,
+                fuser::FileType::Directory as u8,
+            )?;
         } else {
+            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
+                file_type: fuser::FileType::Directory as u8,
+            })
+            .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
                 (0, 0, 0, 0);
             let mut recv_meta_data = vec![];
@@ -92,7 +99,7 @@ where
                     OperationType::DirectoryAddEntry as u32,
                     0,
                     &path,
-                    &[],
+                    &send_meta_data,
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -127,9 +134,16 @@ where
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
-            self.local_storage
-                .directory_delete_entry(parent_dir.clone(), file_name.clone())?;
+            self.local_storage.directory_delete_entry(
+                parent_dir.clone(),
+                file_name.clone(),
+                fuser::FileType::Directory as u8,
+            )?;
         } else {
+            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
+                file_type: fuser::FileType::Directory as u8,
+            })
+            .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
                 (0, 0, 0, 0);
             let mut recv_meta_data = vec![];
@@ -141,7 +155,7 @@ where
                     OperationType::DirectoryDeleteEntry as u32,
                     0,
                     &path,
-                    &[],
+                    &send_meta_data,
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -180,10 +194,16 @@ where
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             debug!("create file local: {}", path);
-            self.local_storage
-                .directory_add_entry(parent_dir, file_name)?;
+            self.local_storage.directory_add_entry(
+                parent_dir,
+                file_name,
+                fuser::FileType::RegularFile as u8,
+            )?;
         } else {
-            debug!("create file remote: {}", path);
+            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
+                file_type: fuser::FileType::RegularFile as u8,
+            })
+            .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
                 (0, 0, 0, 0);
             let mut recv_meta_data = vec![];
@@ -195,7 +215,7 @@ where
                     OperationType::DirectoryAddEntry as u32,
                     0,
                     &path,
-                    &[],
+                    &send_meta_data,
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -230,9 +250,16 @@ where
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
-            self.local_storage
-                .directory_delete_entry(parent_dir, file_name)?;
+            self.local_storage.directory_delete_entry(
+                parent_dir,
+                file_name,
+                fuser::FileType::RegularFile as u8,
+            )?;
         } else {
+            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
+                file_type: fuser::FileType::RegularFile as u8,
+            })
+            .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
                 (0, 0, 0, 0);
             let mut recv_meta_data = vec![];
@@ -244,7 +271,7 @@ where
                     OperationType::DirectoryDeleteEntry as u32,
                     0,
                     &path,
-                    &[],
+                    &send_meta_data,
                     &[],
                     &mut status,
                     &mut rsp_flags,
@@ -297,10 +324,13 @@ where
         self.local_storage.open_file(path, mode)
     }
 
-    pub async fn directory_add_entry(&self, path: String) -> i32 {
+    pub async fn directory_add_entry(&self, path: String, file_type: u8) -> i32 {
         let status = match path_split(path) {
             Ok((parentdir, filename)) => {
-                match self.local_storage.directory_add_entry(parentdir, filename) {
+                match self
+                    .local_storage
+                    .directory_add_entry(parentdir, filename, file_type)
+                {
                     Ok(()) => 0,
                     Err(value) => value.into(),
                 }
@@ -310,12 +340,12 @@ where
         status as i32
     }
 
-    pub async fn directory_delete_entry(&self, path: String) -> i32 {
+    pub async fn directory_delete_entry(&self, path: String, file_type: u8) -> i32 {
         let status = match path_split(path) {
             Ok((parentdir, filename)) => {
                 match self
                     .local_storage
-                    .directory_delete_entry(parentdir, filename)
+                    .directory_delete_entry(parentdir, filename, file_type)
                 {
                     Ok(()) => 0,
                     Err(value) => value.into(),
