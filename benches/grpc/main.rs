@@ -1,3 +1,6 @@
+//! run the benchmark with:
+//!     cargo bench --bench grpc
+
 mod client;
 mod server;
 

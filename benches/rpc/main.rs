@@ -1,3 +1,6 @@
+//! run the benchmark with:
+//!     cargo bench --bench rpc
+
 mod client;
 mod server;
 use client::cli;
