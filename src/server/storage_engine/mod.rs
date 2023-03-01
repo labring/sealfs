@@ -27,13 +27,18 @@ pub trait StorageEngine {
 
     fn is_exist(&self, path: String) -> Result<bool, EngineError>;
 
-    fn directory_add_entry(&self, parent_dir: String, file_name: String)
-        -> Result<(), EngineError>;
+    fn directory_add_entry(
+        &self,
+        parent_dir: String,
+        file_name: String,
+        file_type: u8,
+    ) -> Result<(), EngineError>;
 
     fn directory_delete_entry(
         &self,
         parent_dir: String,
         file_name: String,
+        file_type: u8,
     ) -> Result<(), EngineError>;
 
     fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError>;

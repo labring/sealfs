@@ -298,11 +298,16 @@ impl StorageEngine for DefaultEngine {
         &self,
         parent_dir: String,
         file_name: String,
+        file_type: u8,
     ) -> Result<(), EngineError> {
         match self.dir_db.db.get(parent_dir.as_bytes()) {
             Ok(Some(value)) => {
                 let mut sub_dirs: SubDirectory = bincode::deserialize(&value[..]).unwrap();
-                sub_dirs.add_dir(file_name);
+                match file_type {
+                    3 => sub_dirs.add_dir(file_name),
+                    _ => sub_dirs.add_file(file_name),
+                }
+                // sub_dirs.add_dir(file_name);
                 self.dir_db.db.put(
                     parent_dir.as_bytes(),
                     bincode::serialize(&sub_dirs).unwrap(),
@@ -322,10 +327,14 @@ impl StorageEngine for DefaultEngine {
         &self,
         parent_dir: String,
         file_name: String,
+        file_type: u8,
     ) -> Result<(), EngineError> {
         if let Some(value) = self.dir_db.db.get(parent_dir.as_bytes())? {
             let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
-            sub_dirs.delete_dir(file_name);
+            match file_type {
+                3 => sub_dirs.delete_dir(file_name),
+                _ => sub_dirs.delete_file(file_name),
+            }
             self.dir_db.db.put(
                 parent_dir.as_bytes(),
                 bincode::serialize(&sub_dirs).unwrap(),
@@ -545,7 +554,7 @@ mod tests {
             let engine = DefaultEngine::new(db_path, root);
             engine.init();
             engine
-                .directory_add_entry("/".to_string(), "a".to_string())
+                .directory_add_entry("/".to_string(), "a".to_string(), 3)
                 .unwrap();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -563,7 +572,7 @@ mod tests {
             sub_dir.add_dir("a".to_string());
             assert_eq!(dirs, sub_dir);
             engine
-                .directory_delete_entry("/".to_string(), "a".to_string())
+                .directory_delete_entry("/".to_string(), "a".to_string(), 3)
                 .unwrap();
             engine.delete_directory("/a".to_string()).unwrap();
             assert_eq!(None, engine.dir_db.db.get("/a").unwrap());
@@ -577,7 +586,7 @@ mod tests {
             let engine = DefaultEngine::new(db_path, root);
             engine.init();
             engine
-                .directory_add_entry("/".to_string(), "a1".to_string())
+                .directory_add_entry("/".to_string(), "a1".to_string(), 3)
                 .unwrap();
             let mode = Mode::S_IRUSR
                 | Mode::S_IWUSR
@@ -592,7 +601,7 @@ mod tests {
             assert_eq!(dirs, sub_dir);
 
             engine
-                .directory_add_entry("/a1".to_string(), "a2".to_string())
+                .directory_add_entry("/a1".to_string(), "a2".to_string(), 3)
                 .unwrap();
             engine.create_directory("/a1/a2".to_string(), mode).unwrap();
             let v = engine.dir_db.db.get("/a1").unwrap().unwrap();
@@ -606,7 +615,7 @@ mod tests {
             assert_eq!(None, engine.dir_db.db.get("/a1").unwrap());
 
             engine
-                .directory_add_entry("/".to_string(), "a3".to_string())
+                .directory_add_entry("/".to_string(), "a3".to_string(), 3)
                 .unwrap();
             engine.create_directory("/a3".to_string(), mode).unwrap();
             let v = engine.dir_db.db.get("/a3").unwrap().unwrap();
@@ -614,7 +623,7 @@ mod tests {
             let sub_dir = SubDirectory::new();
             assert_eq!(dirs, sub_dir);
             engine
-                .directory_delete_entry("/".to_string(), "a3".to_string())
+                .directory_delete_entry("/".to_string(), "a3".to_string(), 3)
                 .unwrap();
             engine.delete_directory("/a3".to_string()).unwrap();
             assert_eq!(None, engine.dir_db.db.get("/a3").unwrap());

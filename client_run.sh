@@ -1,8 +1,8 @@
 #!/bin/bash
 
 function finish() {
-    umount ~/fs
-    rmdir ~/fs
+    sudo umount ~/fs
+    sudo rm -rf ~/fs
     trap 'kill $(jobs -p)' EXIT
     exit $1
 }

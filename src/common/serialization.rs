@@ -218,7 +218,17 @@ impl SubDirectory {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct ReadFileMetaData {
+pub struct ReadFileSendMetaData {
     pub offset: i64,
     pub size: u32,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct WriteFileSendMetaData {
+    pub offset: i64,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct DirectoryEntrySendMetaData {
+    pub file_type: u8,
 }
