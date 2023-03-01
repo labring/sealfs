@@ -157,49 +157,33 @@ pub async fn parse_response(
                 Err(_) => Err("data_result error"),
             }
         };
-
-        match (data_result, meta_data_result) {
-            (Ok(data), Ok(meta_data)) => {
-                match connection
-                    .receive_response(&mut read_stream, meta_data, data)
-                    .await
-                {
-                    Ok(_) => (),
-                    Err(e) => {
-                        error!("Error receiving response: {}", e);
-                        break;
-                    }
-                };
-                match pool
-                    .response(
-                        id,
-                        header.status,
-                        header.flags,
-                        header.meta_data_length as usize,
-                        header.data_length as usize,
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        debug!("Response success");
-                    }
-                    Err(e) => {
-                        error!("Error writing response back: {}", e);
-                        break;
-                    }
-                };
-            }
-            _ => {
-                let result = connection
-                    .clean_response(&mut read_stream, total_length)
-                    .await;
-                match result {
-                    Ok(_) => {}
-                    Err(e) => {
-                        error!("Error cleaning up response: {}", e);
-                    }
-                }
-            }
+        if let (Ok(data), Ok(meta_data)) = (data_result, meta_data_result) {
+            if let Err(e) = connection
+                .receive_response(&mut read_stream, meta_data, data)
+                .await
+            {
+                error!("Error receiving response: {}", e);
+                break;
+            };
+            if let Err(e) = pool
+                .response(
+                    id,
+                    header.status,
+                    header.flags,
+                    header.meta_data_length as usize,
+                    header.data_length as usize,
+                )
+                .await
+            {
+                error!("Error writing response back: {}", e);
+                break;
+            };
+        } else if let Err(e) = connection
+            .clean_response(&mut read_stream, total_length)
+            .await
+        {
+            error!("Error cleaning up response: {}", e);
+            break;
         }
     }
 }

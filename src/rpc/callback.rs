@@ -144,6 +144,7 @@ impl CallbackPool {
             callback.data_length = data_lenght;
         }
         self.channels[id as usize].0.clone().send(()).await?;
+        debug!("Response success");
         Ok(())
     }
 

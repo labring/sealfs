@@ -178,6 +178,7 @@ impl ClientConnectionAsync {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = vec![0u8; total_length as usize];
         self.receive(read_stream, &mut buffer).await?;
+        debug!("cleaned response, total_length: {}", total_length);
         Ok(())
     }
 }
