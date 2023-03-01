@@ -104,7 +104,7 @@ impl ClientConnectionAsync {
     pub async fn receive_response_header(
         &self,
         read_stream: &mut OwnedReadHalf,
-    ) -> Result<ResponseHeader> {
+    ) -> Result<ResponseHeader, Box<dyn std::error::Error>> {
         let mut header = [0; RESPONSE_HEADER_SIZE];
         debug!(
             "waiting for response_header, length: {}",
@@ -136,7 +136,7 @@ impl ClientConnectionAsync {
         read_stream: &mut OwnedReadHalf,
         meta_data: &mut [u8],
         data: &mut [u8],
-    ) -> Result<()> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let meta_data_length = meta_data.len();
         let data_length = data.len();
         debug!(
@@ -153,10 +153,20 @@ impl ClientConnectionAsync {
         Ok(())
     }
 
-    pub async fn receive(&self, read_stream: &mut OwnedReadHalf, data: &mut [u8]) -> Result<()> {
+    pub async fn receive(
+        &self,
+        read_stream: &mut OwnedReadHalf,
+        data: &mut [u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let result = read_stream.read_exact(data).await;
-        if result.is_err() {
-            return Err(anyhow::anyhow!("failed to receive response"));
+        if let Err(e) = result {
+            if e.to_string() != "early eof" {
+                error!(
+                    "failed to read data from server {:?}, error: {}",
+                    self.server_address, e
+                );
+            }
+            return Err(e.into());
         }
         Ok(())
     }
@@ -165,9 +175,10 @@ impl ClientConnectionAsync {
         &self,
         read_stream: &mut OwnedReadHalf,
         total_length: u32,
-    ) -> Result<()> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut buffer = vec![0u8; total_length as usize];
         self.receive(read_stream, &mut buffer).await?;
+        debug!("cleaned response, total_length: {}", total_length);
         Ok(())
     }
 }

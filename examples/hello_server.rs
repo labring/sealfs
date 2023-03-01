@@ -1,9 +1,19 @@
-use sealfs::rpc::server::{Handler, Server};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+//! hello_client and hello_server demos show how rpc process the message sent by client
+//! and the usage of 'call_remote' and 'dispatch' APIs.
+//!
+//! You can try this example by running:
+//!
+//!     cargo run --example hello_server
+//!
+//! And then start client in another terminal by running:
+//!
+//!     cargo run --example hello_client
 
 use async_trait::async_trait;
 use log::debug;
+use sealfs::rpc::server::{Handler, Server};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 pub struct HelloHandler {}
 
 impl HelloHandler {

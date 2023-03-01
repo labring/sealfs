@@ -4,7 +4,7 @@
 
 use super::{callback::CallbackPool, connection::ClientConnectionAsync};
 use dashmap::DashMap;
-use log::debug;
+use log::{debug, error, warn};
 use std::sync::Arc;
 use tokio::net::tcp::OwnedReadHalf;
 
@@ -126,70 +126,64 @@ pub async fn parse_response(
             break;
         }
         debug!("parse_response: {:?}", connection.server_address);
-        let result = connection.receive_response_header(&mut read_stream).await;
-        match result {
-            Ok(header) => {
-                let id = header.id;
-                let total_length = header.total_length;
-                let meta_data_result = {
-                    match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
-                        Ok(meta_data_result) => Ok(meta_data_result),
-                        Err(_) => Err("meta_data_result error"),
-                    }
-                };
-                let data_result = {
-                    match pool.get_data_ref(id, header.data_length as usize) {
-                        Ok(data_result) => Ok(data_result),
-                        Err(_) => Err("data_result error"),
-                    }
-                };
-
-                match (data_result, meta_data_result) {
-                    (Ok(data), Ok(meta_data)) => {
-                        let response = connection
-                            .receive_response(&mut read_stream, meta_data, data)
-                            .await;
-                        match response {
-                            Ok(_) => {
-                                let result = pool
-                                    .response(
-                                        id,
-                                        header.status,
-                                        header.flags,
-                                        header.meta_data_length as usize,
-                                        header.data_length as usize,
-                                    )
-                                    .await;
-                                match result {
-                                    Ok(_) => {
-                                        debug!("Response success");
-                                    }
-                                    Err(e) => {
-                                        debug!("Error writing response back: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                debug!("Error receiving response: {}", e);
-                            }
-                        }
-                    }
-                    _ => {
-                        let result = connection
-                            .clean_response(&mut read_stream, total_length)
-                            .await;
-                        match result {
-                            Ok(_) => {}
-                            Err(e) => {
-                                debug!("Error cleaning up response: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
+        let header = match connection.receive_response_header(&mut read_stream).await {
+            Ok(header) => header,
             Err(e) => {
-                debug!("Error parsing header: {}", e);
+                if e.to_string() == "early eof" {
+                    warn!(
+                        "connection to {:?} is closed abnormally.",
+                        connection.server_address
+                    );
+                } else {
+                    error!(
+                        "parse_response header from {:?} error: {}",
+                        connection.server_address, e
+                    );
+                }
+                break;
             }
+        };
+        let id = header.id;
+        let total_length = header.total_length;
+        let meta_data_result = {
+            match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
+                Ok(meta_data_result) => Ok(meta_data_result),
+                Err(_) => Err("meta_data_result error"),
+            }
+        };
+        let data_result = {
+            match pool.get_data_ref(id, header.data_length as usize) {
+                Ok(data_result) => Ok(data_result),
+                Err(_) => Err("data_result error"),
+            }
+        };
+        if let (Ok(data), Ok(meta_data)) = (data_result, meta_data_result) {
+            if let Err(e) = connection
+                .receive_response(&mut read_stream, meta_data, data)
+                .await
+            {
+                error!("Error receiving response: {}", e);
+                break;
+            };
+            if let Err(e) = pool
+                .response(
+                    id,
+                    header.status,
+                    header.flags,
+                    header.meta_data_length as usize,
+                    header.data_length as usize,
+                )
+                .await
+            {
+                error!("Error writing response back: {}", e);
+                break;
+            };
+        } else if let Err(e) = connection
+            .clean_response(&mut read_stream, total_length)
+            .await
+        {
+            error!("Error cleaning up response: {}", e);
+            break;
         }
     }
 }

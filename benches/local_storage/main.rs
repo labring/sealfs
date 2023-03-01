@@ -1,3 +1,6 @@
+//! run the benchmark with:
+//!     cargo bench --bench local_storage
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use nix::sys::stat::Mode;
 use rand::prelude::*;
