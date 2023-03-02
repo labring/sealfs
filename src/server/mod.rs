@@ -15,7 +15,7 @@ use storage_engine::StorageEngine;
 use crate::{
     common::{
         distribute_hash_table::build_hash_ring,
-        serialization::{DirectoryEntrySendMetaData, OperationType},
+        serialization::{DirectoryEntrySendMetaData, OperationType, TruncateFileSendMetaData},
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
     rpc::server::{Handler, Server},
@@ -126,7 +126,6 @@ macro_rules! EngineErr2Status {
         }
     };
 }
-
 pub struct FileRequestHandler<S: StorageEngine + std::marker::Send + std::marker::Sync + 'static> {
     engine: Arc<DistributedEngine<S>>,
 }
@@ -161,6 +160,8 @@ where
     ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
         let r#type = OperationType::try_from(operation_type).unwrap();
         let file_path = String::from_utf8(path).unwrap();
+
+        // todo: get mode from metadata
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
@@ -201,7 +202,7 @@ where
                 Ok((status, 0, meta_data, Vec::new()))
             }
             OperationType::OpenFile => {
-                debug!("Open File");
+                debug!("Open File {}", file_path);
                 let status = match self.engine.open_file(file_path, mode).await {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e) as i32,
@@ -276,6 +277,15 @@ where
                     vec![],
                     vec![],
                 ))
+            }
+            OperationType::TruncateFile => {
+                debug!("Truncate File");
+                let md: TruncateFileSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let status = match self.engine.truncate_file(file_path, md.length).await {
+                    Ok(()) => 0,
+                    Err(e) => EngineErr2Status!(e) as i32,
+                };
+                Ok((status, 0, Vec::new(), Vec::new()))
             }
             _ => todo!(),
         }

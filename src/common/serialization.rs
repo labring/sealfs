@@ -1,6 +1,12 @@
-use std::{collections::HashMap, time::SystemTime};
+use std::{
+    collections::HashMap,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use fuser::FileType;
+use libc::{
+    stat, statx, statx_timestamp, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
+};
 use serde::{Deserialize, Serialize};
 
 pub enum OperationType {
@@ -19,6 +25,7 @@ pub enum OperationType {
     DirectoryDeleteEntry = 12,
     SendHeart = 13,
     GetMetadata = 14,
+    TruncateFile = 15,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -41,6 +48,7 @@ impl TryFrom<u32> for OperationType {
             12 => Ok(OperationType::DirectoryDeleteEntry),
             13 => Ok(OperationType::SendHeart),
             14 => Ok(OperationType::GetMetadata),
+            15 => Ok(OperationType::TruncateFile),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -64,6 +72,7 @@ impl From<OperationType> for u32 {
             OperationType::DirectoryDeleteEntry => 12,
             OperationType::SendHeart => 13,
             OperationType::GetMetadata => 14,
+            OperationType::TruncateFile => 15,
         }
     }
 }
@@ -86,6 +95,7 @@ impl OperationType {
             OperationType::DirectoryDeleteEntry => 12u32.to_le_bytes(),
             OperationType::SendHeart => 13u32.to_le_bytes(),
             OperationType::GetMetadata => 14u32.to_le_bytes(),
+            OperationType::TruncateFile => 15u32.to_le_bytes(),
         }
     }
 }
@@ -144,6 +154,87 @@ impl FileAttrSimple {
             rdev: 0,
             flags: 0,
             blksize: 0,
+        }
+    }
+
+    pub fn tostat(&self, statbuf: &mut [u8]) {
+        let kind = match self.kind {
+            0 => S_IFIFO,
+            1 => S_IFCHR,
+            2 => S_IFBLK,
+            3 => S_IFDIR,
+            4 => S_IFREG,
+            5 => S_IFLNK,
+            6 => S_IFSOCK,
+            _ => S_IFREG,
+        };
+        unsafe {
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_dev = 0;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_ino = 0;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_mode = kind | self.perm as u32;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_nlink = self.nlink as u64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_uid = self.uid;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_gid = self.gid;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_rdev = self.rdev as u64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_size = self.size as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_blksize = self.blksize as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_blocks = self.blocks as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_atime =
+                self.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_atime_nsec =
+                self.atime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_mtime =
+                self.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_mtime_nsec =
+                self.mtime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_ctime =
+                self.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+            (*(statbuf.as_mut_ptr() as *mut stat)).st_ctime_nsec =
+                self.ctime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
+        }
+    }
+    pub fn tostatx(&self, statxbuf: &mut [u8]) {
+        let kind = match self.kind {
+            0 => S_IFIFO,
+            1 => S_IFCHR,
+            2 => S_IFBLK,
+            3 => S_IFDIR,
+            4 => S_IFREG,
+            5 => S_IFLNK,
+            6 => S_IFSOCK,
+            _ => S_IFREG,
+        } as u16;
+
+        unsafe {
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mask = 0;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ino = 0;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mode = kind | self.perm as u16;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_nlink = self.nlink as u32;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_uid = self.uid;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_gid = self.gid;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_size = self.size as u64;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blksize = self.blksize as u32;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blocks = self.blocks as u64;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_atime = statx_timestamp {
+                tv_sec: self.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+                tv_nsec: 0,
+                __statx_timestamp_pad1: [0i32; 1],
+            };
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_btime = statx_timestamp {
+                tv_sec: 0,
+                tv_nsec: 0,
+                __statx_timestamp_pad1: [0i32; 1],
+            };
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mtime = statx_timestamp {
+                tv_sec: self.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+                tv_nsec: 0,
+                __statx_timestamp_pad1: [0i32; 1],
+            };
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ctime = statx_timestamp {
+                tv_sec: self.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+                tv_nsec: 0,
+                __statx_timestamp_pad1: [0i32; 1],
+            };
         }
     }
 }
@@ -223,6 +314,14 @@ pub struct ReadFileSendMetaData {
     pub size: u32,
 }
 
+#[repr(C)]
+pub struct LinuxDirent {
+    pub d_ino: u64,
+    pub d_off: i64,
+    pub d_reclen: u16,
+    pub d_name: [u8; 256],
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct WriteFileSendMetaData {
     pub offset: i64,
@@ -231,4 +330,9 @@ pub struct WriteFileSendMetaData {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct DirectoryEntrySendMetaData {
     pub file_type: u8,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct TruncateFileSendMetaData {
+    pub length: i64,
 }

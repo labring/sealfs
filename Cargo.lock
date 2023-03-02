@@ -326,6 +326,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cmake"
+version = "0.1.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db34956e100b30725f2eb215f90d4871051239535632f84fea3bc92722c66b7c"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "core_affinity"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -700,10 +709,15 @@ dependencies = [
 name = "intercept"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "cmake",
  "crossbeam-channel",
  "dashmap",
+ "env_logger",
  "lazy_static",
  "libc",
+ "log",
+ "nix",
  "sealfs",
  "tokio",
 ]
