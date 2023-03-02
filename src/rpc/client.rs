@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{callback::CallbackPool, connection::ClientConnectionAsync};
+use super::{callback::CallbackPool, connection::ClientConnection};
 use dashmap::DashMap;
 use log::{debug, error, warn};
 use std::sync::Arc;
 use tokio::net::tcp::OwnedReadHalf;
 
 pub struct Client {
-    connections: DashMap<String, Arc<ClientConnectionAsync>>,
+    connections: DashMap<String, Arc<ClientConnection>>,
     pool: Arc<CallbackPool>,
 }
 
@@ -40,7 +40,7 @@ impl Client {
             Ok(stream) => {
                 debug!("connect {:?} success", server_address);
                 let (read_stream, write_stream) = stream.into_split();
-                let connection = Arc::new(ClientConnectionAsync::new(
+                let connection = Arc::new(ClientConnection::new(
                     server_address,
                     Some(tokio::sync::Mutex::new(write_stream)),
                 ));
@@ -114,7 +114,7 @@ impl Client {
 // try to get response from sequence of connections and write to callbacks
 pub async fn parse_response(
     mut read_stream: OwnedReadHalf,
-    connection: Arc<ClientConnectionAsync>,
+    connection: Arc<ClientConnection>,
     pool: Arc<CallbackPool>,
 ) {
     loop {

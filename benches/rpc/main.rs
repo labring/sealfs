@@ -1,9 +1,9 @@
 //! run the benchmark with:
-//!     cargo bench --bench rpc
+//!     cargo bench --bench rpc --features disk-db
 
 mod client;
 mod server;
-use client::{cli, cli_1024, cli_2048, cli_4096, cli_512, cli_8192};
+use client::{cli, cli_size};
 use criterion::{criterion_group, criterion_main, Criterion};
 use server::server;
 
@@ -25,21 +25,24 @@ fn rpc_benchmark(c: &mut Criterion) {
     // c.bench_function("rpc_bench1000", |b| b.iter(|| cli(1000)));
     // c.bench_function("rpc_bench10000", |b| b.iter(|| cli(10000)));
     c.bench_function("rpc_bench100000_without_data", |b| b.iter(|| cli(100000)));
-    c.bench_function("rpc_bench100000_data_size_512", |b| {
-        b.iter(|| cli_512(100000))
-    });
     c.bench_function("rpc_bench100000_data_size_1024", |b| {
-        b.iter(|| cli_1024(100000))
+        b.iter(|| cli_size(100000, 1024))
     });
-    c.bench_function("rpc_bench100000_data_size_2048", |b| {
-        b.iter(|| cli_2048(100000))
+    c.bench_function("rpc_bench100000_data_size_1024_4", |b| {
+        b.iter(|| cli_size(100000, 1024 * 4))
     });
-    c.bench_function("rpc_bench100000_data_size_4096", |b| {
-        b.iter(|| cli_4096(100000))
+    c.bench_function("rpc_bench100000_data_size_1024_16", |b| {
+        b.iter(|| cli_size(100000, 1024 * 16))
     });
-    c.bench_function("rpc_bench100000_data_size_8192", |b| {
-        b.iter(|| cli_8192(100000))
-    });
+    // c.bench_function("rpc_bench100000_data_size_1024_64", |b| {
+    //     b.iter(|| cli_size(100000,1024*64))
+    // });
+    // c.bench_function("rpc_bench100000_data_size_1024_256", |b| {
+    //     b.iter(|| cli_size(100000,1024*256))
+    // });
+    // c.bench_function("rpc_bench100000_data_size_1024_1024", |b| {
+    //     b.iter(|| cli_size(100000,1024*1024))
+    // });
 }
 
 criterion_group!(
