@@ -32,6 +32,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: make install_deps 
       - run: make build
+      - run: make build features=mem-db 
 
   check:
     name: Check
@@ -45,7 +46,8 @@ jobs:
           override: true
       - uses: Swatinem/rust-cache@v2
       - run: make install_deps
-      - run: cargo check
+      - run: cargo check --features=disk-db
+      - run: cargo check --features=mem-db
 
   test:
     name: Test Suite
@@ -60,6 +62,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: make install_deps
       - run: make test
+      - run: make test features=mem-db
 
   fmt:
     name: Rustfmt
@@ -88,4 +91,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: make install_deps
       - run: rustup component add clippy
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy --features=disk-db -- -D warnings
+      - run: cargo clippy --features=mem-db -- -D warnings

@@ -19,6 +19,9 @@ use nix::{
     },
     unistd::{self, mkdir},
 };
+#[cfg(feature = "mem-db")]
+use pegasusdb::DB;
+#[cfg(feature = "disk-db")]
 use rocksdb::{IteratorMode, Options, DB};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -34,10 +37,16 @@ pub struct DefaultEngine {
     pub cache: LRUCache<FileDescriptor>,
 }
 
+#[cfg(feature = "disk-db")]
 pub struct Database {
     pub db: DB,
     pub db_opts: Options,
     pub path: String,
+}
+
+#[cfg(feature = "mem-db")]
+pub struct Database {
+    pub db: DB,
 }
 
 #[derive(Debug, Clone)]
@@ -59,37 +68,53 @@ impl Drop for FileDescriptor {
 
 impl StorageEngine for DefaultEngine {
     fn new(db_path: &str, root: &str) -> Self {
-        let file_db = {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            let path = format!("{}_file", db_path);
-            let db = match DB::open(&db_opts, path.as_str()) {
-                Ok(db) => db,
-                Err(_) => panic!("Failed to create db"),
+        #[cfg(feature = "disk-db")]
+        let (file_db, dir_db, file_attr_db) = {
+            let file_db = {
+                let mut db_opts = Options::default();
+                db_opts.create_if_missing(true);
+                let path = format!("{}_file", db_path);
+                let db = match DB::open(&db_opts, path.as_str()) {
+                    Ok(db) => db,
+                    Err(_) => panic!("Failed to create db"),
+                };
+                Database { db, db_opts, path }
             };
-            Database { db, db_opts, path }
+
+            let dir_db = {
+                let mut db_opts = Options::default();
+                db_opts.create_if_missing(true);
+                let path = format!("{}_dir", db_path);
+                let db = match DB::open(&db_opts, path.as_str()) {
+                    Ok(db) => db,
+                    Err(_) => panic!("Failed to create db"),
+                };
+                Database { db, db_opts, path }
+            };
+
+            let file_attr_db = {
+                let mut db_opts = Options::default();
+                db_opts.create_if_missing(true);
+                let path = format!("{}_file_attr", db_path);
+                let db = match DB::open(&db_opts, path.as_str()) {
+                    Ok(db) => db,
+                    Err(_) => panic!("Failed to create db"),
+                };
+                Database { db, db_opts, path }
+            };
+            (file_db, dir_db, file_attr_db)
         };
 
-        let dir_db = {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            let path = format!("{}_dir", db_path);
-            let db = match DB::open(&db_opts, path.as_str()) {
-                Ok(db) => db,
-                Err(_) => panic!("Failed to create db"),
-            };
-            Database { db, db_opts, path }
-        };
-
-        let file_attr_db = {
-            let mut db_opts = Options::default();
-            db_opts.create_if_missing(true);
-            let path = format!("{}_file_attr", db_path);
-            let db = match DB::open(&db_opts, path.as_str()) {
-                Ok(db) => db,
-                Err(_) => panic!("Failed to create db"),
-            };
-            Database { db, db_opts, path }
+        #[cfg(feature = "mem-db")]
+        let (file_db, dir_db, file_attr_db) = {
+            let file_db = DB::open(format!("{db_path}_file"));
+            let dir_db = DB::open(format!("{db_path}_dir"));
+            let file_attr_db = DB::open(format!("{db_path}_file_attr"));
+            (
+                Database { db: file_db },
+                Database { db: dir_db },
+                Database { db: file_attr_db },
+            )
         };
 
         if !Path::new(root).exists() {
@@ -417,6 +442,7 @@ impl DefaultEngine {
             let _ = std::fs::remove_file(entry.path());
         }
 
+        #[cfg(feature = "disk-db")]
         for item in self.dir_db.db.iterator(IteratorMode::End) {
             let (key, _value) = item.unwrap();
             if !self.file_attr_db.db.key_may_exist(&key) {

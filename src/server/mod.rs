@@ -54,7 +54,11 @@ pub enum EngineError {
 
     #[error(transparent)]
     Rocksdb(#[from] rocksdb::Error),
+
+    #[error(transparent)]
+    Pegasusdb(#[from] pegasusdb::Error),
 }
+
 impl From<u32> for EngineError {
     fn from(status: u32) -> Self {
         match status {
