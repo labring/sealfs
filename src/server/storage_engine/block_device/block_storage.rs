@@ -5,9 +5,16 @@
 use libc::ioctl;
 use nix::fcntl::{open, OFlag};
 
+use crate::server::storage_engine::block_device::allocator::Allocator;
 use crate::server::EngineError;
 
+use super::allocator::SkipListAllocator;
+
+//#define BLKGETSIZE _IO(0x12,96)	/* return device size /512 (long *arg) */
 const _BLOCKGETSIZE: u64 = 0x1260;
+
+const _CHUNK: u64 = 512 * 8;
+const _SECTOR: u64 = 512;
 
 pub trait BlockStorage {
     /**
@@ -25,12 +32,15 @@ pub trait BlockStorage {
     fn delete_file(&self, file_name: String);
 }
 struct _BlockDevice {
+    #[allow(unused)]
     block_num: u64,
 }
 
 impl _BlockDevice {
     fn _new(path: String) -> Result<_BlockDevice, EngineError> {
         let block_num = Self::_get_block_info(path)?;
+        let chunk_num = block_num / (_CHUNK / _SECTOR);
+        SkipListAllocator::new(chunk_num);
         Ok(_BlockDevice { block_num })
     }
 
@@ -56,11 +66,11 @@ impl _BlockDevice {
 
 #[cfg(test)]
 mod tests {
-    // use super::BlockDevice;
+    // use super::_BlockDevice;
 
     // #[test]
     // fn block_info_test() {
-    //     let block_num = BlockDevice::get_block_info("/dev/sda1".to_string());
-    //     println!("{:?}",block_num.unwrap());
+    //     let block_num = _BlockDevice::_get_block_info("/dev/sda1".to_string());
+    //     println!("{:?}", block_num.unwrap());
     // }
 }
