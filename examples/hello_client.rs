@@ -1,7 +1,17 @@
-use std::sync::Arc;
+//! hello_client and hello_server demos show how rpc process the message sent by client
+//! and the usage of 'call_remote' and 'dispatch' APIs.
+//!
+//! After starting server:
+//!
+//!     cargo run --example hello_server
+//!
+//! You can try this example by running:
+//!
+//!     cargo run --example hello_client
 
 use log::debug;
 use sealfs::rpc::client::Client;
+use std::sync::Arc;
 
 #[tokio::main]
 pub async fn main() {
@@ -14,7 +24,7 @@ pub async fn main() {
     let client = Arc::new(Client::new());
     let server_address = "127.0.0.1:50051";
     client.add_connection(server_address).await;
-    for i in 0..50 {
+    for i in 0..3 {
         let new_client = client.clone();
         tokio::spawn(async move {
             let mut status = 0;
@@ -57,5 +67,6 @@ pub async fn main() {
         });
     }
     std::thread::sleep(std::time::Duration::from_secs(60));
+    client.close();
     println!("Done")
 }

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use log::{info, warn};
+use log::info;
 use sealfs::common::serialization::OperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::Client;
@@ -11,6 +11,7 @@ use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs;
+use std::str::FromStr;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
@@ -33,6 +34,8 @@ struct Args {
     storage_path: Option<String>,
     #[arg(long)]
     heartbeat: Option<bool>,
+    #[arg(long)]
+    log_level: Option<String>,
     /// The path of the configuration file
     #[arg(long)]
     config_file: Option<String>,
@@ -50,16 +53,11 @@ struct Properties {
     database_path: String,
     storage_path: String,
     heartbeat: bool,
+    log_level: String,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
-    let mut builder = env_logger::Builder::from_default_env();
-    builder
-        .format_timestamp(None)
-        .filter(None, log::LevelFilter::Debug);
-    builder.init();
-
     // read from default configuration.
     let default_yaml_str = include_str!("../../examples/server.yaml");
     let default_properties: Properties =
@@ -80,7 +78,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
                     result
                 }
                 _ => {
-                    warn!(
+                    println!(
                         "No custom configuration provided, fallback to the default configuration."
                     );
                     default_properties
@@ -104,13 +102,21 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or(default_properties.database_path),
             storage_path: args.storage_path.unwrap_or(default_properties.storage_path),
             heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
+            log_level: args.log_level.unwrap_or(default_properties.log_level),
         },
     };
 
-    let manager_address = properties.manager_address;
-    let _server_address = properties.server_address.clone();
-    //connect to manager
+    let mut builder = env_logger::Builder::from_default_env();
+    builder.format_timestamp(None).filter(
+        None,
+        log::LevelFilter::from_str(&properties.log_level).unwrap(),
+    );
+    builder.init();
 
+    let manager_address = properties.manager_address;
+    let server_address = properties.server_address.clone();
+    //connect to manager
+    info!("server_address: {}", server_address.clone());
     if properties.heartbeat {
         info!("Connect To Manager.");
         let client = Client::new();
@@ -120,7 +126,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(begin_heartbeat_report(
             client,
             manager_address,
-            properties.server_address.clone(),
+            server_address.clone(),
             properties.lifetime.clone(),
         ));
     }
@@ -134,9 +140,9 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //     .await;
     info!("Start Server");
     server::run(
-        properties.database_path.clone(),
-        properties.storage_path.clone(),
-        properties.server_address.clone(),
+        properties.database_path,
+        properties.storage_path,
+        server_address,
         properties.all_servers_address.clone(),
     )
     .await?;
@@ -145,7 +151,6 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //     .add_service(service::new_fs_service(fs_service))
     //     .serve(properties.server_address.parse().unwrap())
     //     .await?;
-
     Ok(())
 }
 

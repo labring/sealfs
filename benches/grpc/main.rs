@@ -1,3 +1,6 @@
+//! run the benchmark with:
+//!     cargo bench --bench grpc
+
 mod client;
 mod server;
 
@@ -24,8 +27,12 @@ fn grpc_benchmark(c: &mut Criterion) {
     // c.bench_function("grpc_bench100", |b| b.iter(|| gcli(100)));
     // c.bench_function("grpc_bench1000", |b| b.iter(|| gcli(1000)));
     // c.bench_function("grpc_bench10000", |b| b.iter(|| gcli(10000)));
-    c.bench_function("grpc_bench50000", |b| b.iter(|| gcli(50000)));
+    c.bench_function("grpc_bench100000", |b| b.iter(|| gcli(100000)));
 }
 
-criterion_group!(benches, grpc_benchmark);
+criterion_group!(
+    name=benches;
+    config=Criterion::default().significance_level(0.1).sample_size(10);
+    targets = grpc_benchmark
+);
 criterion_main!(benches);

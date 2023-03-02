@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use fasthash::Murmur3Hasher;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::sync::Arc;
+use wyhash::WyHash;
 
 //todo configurable
 const VIRTUAL_NODE_SIZE: i32 = 10;
@@ -18,8 +18,8 @@ lazy_static! {
 }
 
 pub fn hash(path: &str) -> u64 {
-    let mut hasher: Murmur3Hasher = Default::default();
-    path.hash(&mut hasher);
+    let mut hasher = WyHash::with_seed(3);
+    hasher.write(path.as_bytes());
     hasher.finish()
 }
 
@@ -65,8 +65,15 @@ fn binary_search(hash_vec: Vec<&u64>, file_hash: u64) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::distribute_hash_table::{binary_search, index_selector};
+    use super::hash;
+    use crate::common::distribute_hash_table::binary_search;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn test_hash() {
+        let h = hash("12345");
+        assert_eq!(9966476625583905839, h);
+    }
 
     #[test]
     fn index_selector_test() {
@@ -78,7 +85,7 @@ mod tests {
             let entry_vec = Vec::from_iter(map.iter());
             let vec = Vec::from_iter(map.keys());
             let index = binary_search(vec, 5);
-            println!("index:{:?}", index);
+            println!("index{:?}", index);
             let (_, value) = entry_vec[index as usize];
             println!("result:{:?}", value);
             return;
@@ -94,6 +101,6 @@ mod tests {
         map.insert(10, "b");
         map.insert(8, "c");
         let vec = Vec::from_iter(map.keys());
-        println!("result:{}", (binary_search(vec, 2)));
+        assert_eq!(0, (binary_search(vec, 2)));
     }
 }

@@ -11,10 +11,11 @@ use fuser::{
 };
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
+use std::{ffi::OsStr, str::FromStr};
 
 use crate::{
-    common::serialization::OperationType, manager::manager_service::MetadataRequest,
+    common::{distribute_hash_table::build_hash_ring, serialization::OperationType},
+    manager::manager_service::MetadataRequest,
     rpc::client::Client,
 };
 
@@ -23,7 +24,9 @@ const CLIENT_FLAG: u32 = 2;
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     manager_address: String,
+    all_servers_address: Vec<String>,
     heartbeat: bool,
+    log_level: String,
 }
 
 struct SealFS;
@@ -112,7 +115,6 @@ impl Filesystem for SealFS {
     }
 
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
-        println!("open, ino = {}, flags = {}", ino, flags);
         CLIENT.open_remote(ino, flags, reply);
     }
 
@@ -133,18 +135,13 @@ impl Filesystem for SealFS {
     }
 }
 
-pub async fn test() -> Result<(), Box<dyn std::error::Error>> {
-    CLIENT.temp_init("127.0.0.1:8085").await
+pub async fn test(all_servers_address: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    CLIENT.temp_init(all_servers_address).await
 }
 
 pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let mut builder = env_logger::Builder::from_default_env();
-    builder
-        .format_timestamp(None)
-        .filter(None, log::LevelFilter::Debug);
-    builder.init();
-    info!("starting up");
+    println!("starting up");
     let mountpoint = cli.mount_point.unwrap();
     let mut options = vec![MountOption::RW, MountOption::FSName("seal".to_string())];
     if cli.auto_unmount {
@@ -159,6 +156,18 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     let manager_address = config.manager_address;
     let _http_manager_address = format!("http://{}", manager_address);
 
+    build_hash_ring(config.all_servers_address.clone());
+
+    let log_level = match cli.log_level {
+        Some(level) => level,
+        None => config.log_level,
+    };
+    let mut builder = env_logger::Builder::from_default_env();
+    builder
+        .format_timestamp(None)
+        .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
+    builder.init();
+
     info!("spawn client");
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -167,9 +176,7 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap();
 
     if config.heartbeat {
-        info!("connect manager");
-
-        runtime.spawn(async move {
+        tokio::spawn(async move {
             let client = Client::new();
             client.add_connection(&_http_manager_address).await;
             let request = MetadataRequest { flags: CLIENT_FLAG };
@@ -202,8 +209,7 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("init client");
 
-    // let result = runtime.block_on(CLIENT.temp_init("127.0.0.1:8085"));
-    let result = runtime.block_on(test());
+    let result = runtime.block_on(test(config.all_servers_address));
     match result {
         Ok(_) => info!("init manager success"),
         Err(e) => panic!("init manager failed, error = {}", e),
@@ -235,4 +241,8 @@ struct Cli {
     /// Allow root user to access filesystem
     #[arg(long = "allow-root", name = "allow-root")]
     allow_root: bool,
+
+    /// Log level
+    #[arg(long = "log-level", name = "log-level")]
+    log_level: Option<String>,
 }

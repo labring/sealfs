@@ -2,16 +2,15 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::connection::{clean_up, CircularQueue, ClientConnectionAsync};
+use super::{callback::CallbackPool, connection::ClientConnectionAsync};
 use dashmap::DashMap;
-use log::debug;
+use log::{debug, error, warn};
 use std::sync::Arc;
-use tokio::{net::tcp::OwnedReadHalf, task::JoinHandle};
+use tokio::net::tcp::OwnedReadHalf;
 
 pub struct Client {
     connections: DashMap<String, Arc<ClientConnectionAsync>>,
-    queue: Arc<CircularQueue>,
-    job_handle: JoinHandle<()>,
+    pool: Arc<CallbackPool>,
 }
 
 impl Default for Client {
@@ -20,109 +19,26 @@ impl Default for Client {
     }
 }
 
-// parse_response
-// try to get response from sequence of connections and write to callbacks
-pub async fn parse_response(
-    mut read_stream: OwnedReadHalf,
-    connection: Arc<ClientConnectionAsync>,
-    queue: Arc<CircularQueue>,
-) {
-    loop {
-        if !connection.is_connected() {
-            debug!("parse_response: connection closed");
-            break;
-        }
-        debug!("parse_response: {:?}", connection.server_address);
-        let result = connection.receive_response_header(&mut read_stream).await;
-        match result {
-            Ok(header) => {
-                let id = header.id;
-                let total_length = header.total_length;
-                let meta_data_result = {
-                    match queue.get_meta_data_ref(id, header.meta_data_length as usize) {
-                        Ok(meta_data_result) => Ok(meta_data_result),
-                        Err(_) => Err("meta_data_result error"),
-                    }
-                };
-                let data_result = {
-                    match queue.get_data_ref(id, header.data_length as usize) {
-                        Ok(data_result) => Ok(data_result),
-                        Err(_) => Err("data_result error"),
-                    }
-                };
-
-                match (data_result, meta_data_result) {
-                    (Ok(data), Ok(meta_data)) => {
-                        let response = connection
-                            .receive_response(&mut read_stream, meta_data, data)
-                            .await;
-                        match response {
-                            Ok(_) => {
-                                let result = queue.response(
-                                    id,
-                                    header.status,
-                                    header.flags,
-                                    header.meta_data_length as usize,
-                                    header.data_length as usize,
-                                );
-                                match result {
-                                    Ok(_) => {
-                                        debug!("Response success");
-                                    }
-                                    Err(e) => {
-                                        debug!("Error writing response back: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                debug!("Error receiving response: {}", e);
-                            }
-                        }
-                    }
-                    _ => {
-                        let result = connection
-                            .clean_response(&mut read_stream, total_length)
-                            .await;
-                        match result {
-                            Ok(_) => {}
-                            Err(e) => {
-                                debug!("Error cleaning up response: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                debug!("Error parsing header: {}", e);
-            }
-        }
-    }
-}
-
 impl Client {
     pub fn new() -> Self {
-        let mut queue = CircularQueue::new();
-        queue.init();
-        let queue = Arc::new(queue);
-        let q1 = queue.clone();
-        let job = tokio::spawn(clean_up(q1));
-
+        let mut pool = CallbackPool::new();
+        pool.init();
+        let pool = Arc::new(pool);
         Self {
             connections: DashMap::new(),
-            queue,
-            job_handle: job,
+            pool,
         }
     }
 
-    pub async fn close(&self) {
-        self.job_handle.abort()
+    pub fn close(&self) {
+        self.pool.free();
     }
 
-    pub async fn add_connection(&self, server_address: &str) {
+    pub async fn add_connection(&self, server_address: &str) -> bool {
         let result = tokio::net::TcpStream::connect(server_address).await;
         let connection = match result {
             Ok(stream) => {
-                debug!("connect success");
+                debug!("connect {:?} success", server_address);
                 let (read_stream, write_stream) = stream.into_split();
                 let connection = Arc::new(ClientConnectionAsync::new(
                     server_address,
@@ -131,17 +47,18 @@ impl Client {
                 tokio::spawn(parse_response(
                     read_stream,
                     connection.clone(),
-                    self.queue.clone(),
+                    self.pool.clone(),
                 ));
                 connection
             }
             Err(e) => {
                 debug!("connect error: {}", e);
-                Arc::new(ClientConnectionAsync::new(server_address, None))
+                return false;
             }
         };
         self.connections
             .insert(server_address.to_string(), connection);
+        true
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -164,70 +81,109 @@ impl Client {
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("call_remote on connection: {}", server_address);
         let connection = self.connections.get(server_address).unwrap();
+        let id = self
+            .pool
+            .register_callback(recv_meta_data, recv_data)
+            .await?;
+        debug!("call_remote on {:?}, id: {}", server_address, id);
+        connection
+            .send_request(
+                id,
+                operation_type,
+                req_flags,
+                path,
+                send_meta_data,
+                send_data,
+            )
+            .await?;
+        let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
         debug!(
-            "call_remote on connection: {:?}",
-            connection.value().server_address
+            "call_remote success, id: {}, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
+            id, s, f, meta_data_length, data_length
         );
-        let result = {
-            match self.queue.register_callback(recv_meta_data, recv_data) {
-                Ok(result) => Ok(result),
-                Err(_) => Err("register_callback error"),
+        *status = s;
+        *rsp_flags = f;
+        *recv_meta_data_length = meta_data_length;
+        *recv_data_length = data_length;
+        Ok(())
+    }
+}
+
+// parse_response
+// try to get response from sequence of connections and write to callbacks
+pub async fn parse_response(
+    mut read_stream: OwnedReadHalf,
+    connection: Arc<ClientConnectionAsync>,
+    pool: Arc<CallbackPool>,
+) {
+    loop {
+        if !connection.is_connected().await {
+            debug!(
+                "parse_response: connection to {:?} closed",
+                connection.server_address
+            );
+            break;
+        }
+        debug!("parse_response: {:?}", connection.server_address);
+        let header = match connection.receive_response_header(&mut read_stream).await {
+            Ok(header) => header,
+            Err(e) => {
+                if e.to_string() == "early eof" {
+                    warn!(
+                        "connection to {:?} is closed abnormally.",
+                        connection.server_address
+                    );
+                } else {
+                    error!(
+                        "parse_response header from {:?} error: {}",
+                        connection.server_address, e
+                    );
+                }
+                break;
             }
         };
-
-        debug!("call_remote on connection: {:?}", result);
-        match result {
-            Ok(id) => {
-                let send_result = connection
-                    .send_request(
-                        id,
-                        operation_type,
-                        req_flags,
-                        path,
-                        send_meta_data,
-                        send_data,
-                    )
-                    .await;
-                match send_result {
-                    Ok(_) => {
-                        // todo: wait_for_callback will use async instead
-                        let result =
-                            tokio::task::block_in_place(move || self.queue.wait_for_callback(id));
-                        match result {
-                            Ok((s, f, meta_data_length, data_length)) => {
-                                debug!("call_remote success, status: {}, flags: {}, meta_data_length: {}, data_length: {}", s, f, meta_data_length, data_length);
-                                *status = s;
-                                *rsp_flags = f;
-                                *recv_meta_data_length = meta_data_length;
-                                *recv_data_length = data_length;
-                                Ok(())
-                            }
-                            Err(_) => {
-                                self.queue.error(id)?;
-                                Err(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    "Error waiting for callback",
-                                )
-                                .into())
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        self.queue.error(id)?;
-                        Err(
-                            std::io::Error::new(std::io::ErrorKind::Other, "Error sending request")
-                                .into(),
-                        )
-                    }
-                }
+        let id = header.id;
+        let total_length = header.total_length;
+        let meta_data_result = {
+            match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
+                Ok(meta_data_result) => Ok(meta_data_result),
+                Err(_) => Err("meta_data_result error"),
             }
-            Err(_) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Error registering callback",
-            )
-            .into()),
+        };
+        let data_result = {
+            match pool.get_data_ref(id, header.data_length as usize) {
+                Ok(data_result) => Ok(data_result),
+                Err(_) => Err("data_result error"),
+            }
+        };
+        if let (Ok(data), Ok(meta_data)) = (data_result, meta_data_result) {
+            if let Err(e) = connection
+                .receive_response(&mut read_stream, meta_data, data)
+                .await
+            {
+                error!("Error receiving response: {}", e);
+                break;
+            };
+            if let Err(e) = pool
+                .response(
+                    id,
+                    header.status,
+                    header.flags,
+                    header.meta_data_length as usize,
+                    header.data_length as usize,
+                )
+                .await
+            {
+                error!("Error writing response back: {}", e);
+                break;
+            };
+        } else if let Err(e) = connection
+            .clean_response(&mut read_stream, total_length)
+            .await
+        {
+            error!("Error cleaning up response: {}", e);
+            break;
         }
     }
 }
