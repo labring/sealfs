@@ -64,11 +64,8 @@ where
                 "local create dir, path: {}, parent_dir: {}, file_name: {}",
                 path, parent_dir, file_name
             );
-            self.meta_engine.directory_add_entry(
-                parent_dir.as_str(),
-                file_name.as_str(),
-                fuser::FileType::Directory as u8,
-            )?;
+            self.meta_engine
+                .directory_add_entry(parent_dir.as_str(), file_name.as_str())?;
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::Directory as u8,
@@ -120,11 +117,8 @@ where
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
-            self.meta_engine.directory_delete_entry(
-                &parent_dir,
-                &file_name,
-                fuser::FileType::Directory as u8,
-            )?;
+            self.meta_engine
+                .directory_delete_entry(&parent_dir, &file_name)?;
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::Directory as u8,
@@ -173,7 +167,7 @@ where
         path: String,
         size: u32,
         offset: i64,
-    ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
+    ) -> Result<Vec<u8>, EngineError> {
         self.meta_engine.read_directory(&path, size, offset)
     }
 
@@ -186,11 +180,8 @@ where
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             debug!("create file local: {}", path);
-            self.meta_engine.directory_add_entry(
-                &parent_dir,
-                &file_name,
-                fuser::FileType::RegularFile as u8,
-            )?;
+            self.meta_engine
+                .directory_add_entry(&parent_dir, &file_name)?;
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::RegularFile as u8,
@@ -242,11 +233,8 @@ where
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
-            self.meta_engine.directory_delete_entry(
-                &parent_dir,
-                &file_name,
-                fuser::FileType::RegularFile as u8,
-            )?;
+            self.meta_engine
+                .directory_delete_entry(&parent_dir, &file_name)?;
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::RegularFile as u8,
@@ -321,13 +309,10 @@ where
         self.storage_engine.open_file(path, mode)
     }
 
-    pub async fn directory_add_entry(&self, path: String, file_type: u8) -> i32 {
+    pub async fn directory_add_entry(&self, path: String, _file_type: u8) -> i32 {
         let status = match path_split(path) {
             Ok((parentdir, filename)) => {
-                match self
-                    .meta_engine
-                    .directory_add_entry(&parentdir, &filename, file_type)
-                {
+                match self.meta_engine.directory_add_entry(&parentdir, &filename) {
                     Ok(()) => 0,
                     Err(value) => value.into(),
                 }
@@ -337,12 +322,12 @@ where
         status as i32
     }
 
-    pub async fn directory_delete_entry(&self, path: String, file_type: u8) -> i32 {
+    pub async fn directory_delete_entry(&self, path: String, _file_type: u8) -> i32 {
         let status = match path_split(path) {
             Ok((parentdir, filename)) => {
                 match self
                     .meta_engine
-                    .directory_delete_entry(&parentdir, &filename, file_type)
+                    .directory_delete_entry(&parentdir, &filename)
                 {
                     Ok(()) => 0,
                     Err(value) => value.into(),

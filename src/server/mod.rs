@@ -225,11 +225,11 @@ where
             OperationType::ReadDir => {
                 debug!("Read Dir");
                 let md: ReadDirSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let (metadata, data, status) =
-                    match self.engine.read_dir(file_path, md.size, md.offset).await {
-                        Ok(value) => (value.0, value.1, 0),
-                        Err(e) => (Vec::new(), Vec::new(), EngineErr2Status!(e) as i32),
-                    };
+                let (data, status) = match self.engine.read_dir(file_path, md.size, md.offset).await
+                {
+                    Ok(value) => (value, 0),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                };
                 Ok((status, 0, metadata, data))
             }
             OperationType::ReadFile => {
