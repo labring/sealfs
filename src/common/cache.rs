@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{marker::PhantomData, mem, ptr::NonNull};
 
@@ -267,6 +267,7 @@ where
     map: DashMap<Vec<u8>, NodePointer<LRUEntry<T>>>,
     list: LinkedList<LRUEntry<T>>,
     capacity: usize,
+    lock: RwLock<()>,
 }
 
 impl<T> LRUCache<T>
@@ -278,10 +279,12 @@ where
             map: DashMap::new(),
             list: LinkedList::new(),
             capacity,
+            lock: RwLock::new(()),
         }
     }
 
     pub fn insert(&self, key: &[u8], value: T) -> Option<T> {
+        let _l = self.lock.write();
         let new_node = LRUEntry::new(key, value);
         let new_node = Box::new(Node::new(new_node));
         let new_node = NonNull::new(Box::into_raw(new_node)).unwrap();
@@ -310,6 +313,7 @@ where
     }
 
     pub fn get(&self, key: &[u8]) -> Option<&T> {
+        let _l = self.lock.read();
         match self.map.get(key) {
             Some(node) => unsafe {
                 let node = node.0.unwrap();
@@ -322,6 +326,7 @@ where
     }
 
     pub fn remove(&self, key: &[u8]) {
+        let _l = self.lock.write();
         if let Some(node) = self.map.get(key) {
             self.list.remove(node.0.unwrap());
         }
@@ -346,6 +351,8 @@ mod test {
     }
 
     mod test_lru_cache {
+        use std::sync::Arc;
+
         use super::super::LRUCache;
         use rand::prelude::*;
 
@@ -389,6 +396,27 @@ mod test {
                 let n: usize = rng.gen::<usize>() % 100;
                 print!("{n},");
                 lru.insert(&n.to_le_bytes(), n);
+            }
+        }
+
+        #[test]
+        fn test_multithread() {
+            let lru: Arc<LRUCache<usize>> = Arc::new(LRUCache::new(10));
+            let mut thread_arr = Vec::new();
+            for _i in 0..10usize {
+                let lru_arc = Arc::clone(&lru);
+                let handler = std::thread::spawn(move || {
+                    for _i in 0..10000_usize {
+                        let mut rng = rand::thread_rng();
+                        let n = rng.gen::<usize>() % 100;
+                        // println!("thread: {:?} {n}", std::thread::current().id());
+                        lru_arc.insert(&n.to_le_bytes(), n);
+                    }
+                });
+                thread_arr.push(handler);
+            }
+            for thread in thread_arr {
+                thread.join().unwrap();
             }
         }
     }
