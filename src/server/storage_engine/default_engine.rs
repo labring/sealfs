@@ -158,19 +158,15 @@ impl StorageEngine for DefaultEngine {
     // This should be done in the upper layer (client for now).
 
     fn get_file_attributes(&self, path: String) -> Result<Vec<u8>, EngineError> {
-        debug!("get_file_attributes path: {}", path);
         match self.file_attr_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                debug!("path: {}, value: {:?}", path, value);
-                Ok(value)
-            }
+            Some(value) => Ok(value),
             None => Err(EngineError::NoEntry),
         }
     }
 
     fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError> {
         if let Some(value) = self.file_attr_db.db.get(path.as_bytes())? {
-            debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
+            // debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
             match bincode::deserialize::<FileAttrSimple>(&value) {
                 Ok(file_attr) => {
                     // fuser::FileType::Directory
@@ -185,7 +181,7 @@ impl StorageEngine for DefaultEngine {
         }
         match self.dir_db.db.get(path.as_bytes())? {
             Some(value) => {
-                debug!("read_dir path: {}, value: {:?}", path, value);
+                // debug!("read_dir path: {}, value: {:?}", path, value);
                 Ok(value)
             }
             None => Err(EngineError::NoEntry),
@@ -393,6 +389,12 @@ impl StorageEngine for DefaultEngine {
         Ok(())
     }
 
+    fn truncate_file(&self, path: String, length: i64) -> Result<(), EngineError> {
+        let local_file_name = generate_local_file_name(&self.root, &path);
+        unistd::truncate(local_file_name.as_str(), length)?;
+        Ok(())
+    }
+
     fn create_directory(&self, path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
         let sub_dirs = SubDirectory::new();
         self.dir_db
@@ -453,9 +455,7 @@ impl DefaultEngine {
     }
 
     fn delete_from_parent(&self, path: String) -> Result<(), EngineError> {
-        println!("delete_from_parent: {}", path);
         let (parent, name) = path_split(path).unwrap();
-        println!("parent_dir: {}", parent);
         if let Some(value) = self.dir_db.db.get(parent.as_bytes())? {
             let mut sub_dirs = bincode::deserialize::<SubDirectory>(&value[..]).unwrap();
             sub_dirs.delete_dir(name);

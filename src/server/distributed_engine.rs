@@ -178,6 +178,7 @@ where
                 }
             };
         }
+        debug!("delete_directory: {}", path);
         self.local_storage.delete_directory(path.clone())
     }
 
@@ -296,6 +297,11 @@ where
         }
 
         self.local_storage.delete_file(path)
+    }
+
+    pub async fn truncate_file(&self, path: String, length: i64) -> Result<(), EngineError> {
+        // a temporary implementation
+        self.local_storage.truncate_file(path, length)
     }
 
     pub async fn read_file(

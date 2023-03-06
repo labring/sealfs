@@ -13,7 +13,17 @@ tokio = {version = "1.22.0", features = ["full"]}
 dashmap = "5.4.0"
 lazy_static = "1.4.0"
 crossbeam-channel = "0.5"
+log = "0.4.17"
+env_logger = "0.9.1"
+bincode = "1.3.3"
+nix = "0.26.1"
 sealfs = { path = "../" }
+
+[build-dependencies]
+cmake = "0.1"
+
+[dev-dependencies]
+libc = "0.2"
 
 [lib]
 crate-type = ["cdylib"]

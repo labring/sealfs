@@ -45,6 +45,8 @@ pub trait StorageEngine {
 
     fn delete_file(&self, path: String) -> Result<(), EngineError>;
 
+    fn truncate_file(&self, path: String, length: i64) -> Result<(), EngineError>;
+
     fn create_directory(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError>;
 
     fn delete_directory(&self, path: String) -> Result<(), EngineError>;
