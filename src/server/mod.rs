@@ -43,6 +43,9 @@ pub enum EngineError {
     #[error("EPATH")]
     Path,
 
+    #[error("EBLOCK")]
+    BlockInfo,
+
     #[error("ENOTEMPTY")]
     NotEmpty,
 
