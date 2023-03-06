@@ -106,6 +106,10 @@ impl StorageEngine for BlockEngine {
         todo!()
     }
 
+    fn truncate_file(&self, _path: String, _length: i64) -> Result<(), EngineError> {
+        todo!()
+    }
+
     fn create_directory(&self, _path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
         todo!()
     }
