@@ -1,5 +1,5 @@
 use dashmap::DashMap;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{marker::PhantomData, mem, ptr::NonNull};
 
@@ -267,7 +267,7 @@ where
     map: DashMap<Vec<u8>, NodePointer<LRUEntry<T>>>,
     list: LinkedList<LRUEntry<T>>,
     capacity: usize,
-    lock: RwLock<()>,
+    lock: Mutex<()>,
 }
 
 impl<T> LRUCache<T>
@@ -279,12 +279,12 @@ where
             map: DashMap::new(),
             list: LinkedList::new(),
             capacity,
-            lock: RwLock::new(()),
+            lock: Mutex::new(()),
         }
     }
 
     pub fn insert(&self, key: &[u8], value: T) -> Option<T> {
-        let _l = self.lock.write();
+        let _l = self.lock.lock();
         let new_node = LRUEntry::new(key, value);
         let new_node = Box::new(Node::new(new_node));
         let new_node = NonNull::new(Box::into_raw(new_node)).unwrap();
@@ -313,7 +313,7 @@ where
     }
 
     pub fn get(&self, key: &[u8]) -> Option<&T> {
-        let _l = self.lock.read();
+        let _l = self.lock.lock();
         match self.map.get(key) {
             Some(node) => unsafe {
                 let node = node.0.unwrap();
@@ -326,7 +326,7 @@ where
     }
 
     pub fn remove(&self, key: &[u8]) {
-        let _l = self.lock.write();
+        let _l = self.lock.lock();
         if let Some(node) = self.map.get(key) {
             self.list.remove(node.0.unwrap());
         }
