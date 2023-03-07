@@ -15,7 +15,12 @@ pub trait StorageEngine {
 
     fn get_file_attributes(&self, path: String) -> Result<Vec<u8>, EngineError>;
 
-    fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError>;
+    fn read_directory(
+        &self,
+        path: String,
+        size: u32,
+        offset: i64,
+    ) -> Result<(Vec<u8>, Vec<u8>), EngineError>;
 
     fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError>;
 

@@ -4,7 +4,8 @@
 
 use crate::common::distribute_hash_table::{hash, index_selector};
 use crate::common::serialization::{
-    FileAttrSimple, OperationType, ReadFileSendMetaData, SubDirectory, WriteFileSendMetaData,
+    FileAttrSimple, OperationType, ReadDirRecvMetaData, ReadDirSendMetaData, ReadFileSendMetaData,
+    WriteFileSendMetaData,
 };
 use crate::rpc;
 use dashmap::DashMap;
@@ -13,8 +14,9 @@ use fuser::{
     ReplyWrite,
 };
 use lazy_static::lazy_static;
+use libc::{dirent64, DT_DIR, DT_LNK, DT_REG};
 use log::debug;
-use std::ffi::OsStr;
+use std::ffi::{CStr, OsStr};
 use std::ops::Deref;
 use std::time::Duration;
 const TTL: Duration = Duration::from_secs(1); // 1 second
@@ -316,11 +318,6 @@ impl Client {
 
     pub fn readdir_remote(&self, ino: u64, offset: i64, mut reply: ReplyDirectory) {
         log::info!("readdir_remote");
-        if offset > 0 {
-            // I'm not sure how to tell the user that there are no more entries. This is a temporary solution.
-            reply.ok();
-            return;
-        }
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
             None => {
@@ -329,27 +326,36 @@ impl Client {
                 return;
             }
         };
+        let size = 1024;
+
         let server_address = self.get_connection_address(&path).unwrap();
+        let md = ReadDirSendMetaData {
+            offset: offset as i64,
+            size: size as u32,
+        };
+        let send_meta_data = bincode::serialize(&md).unwrap();
+
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_data = vec![0u8; 1024];
+        let mut recv_meta_data = vec![0u8; std::mem::size_of::<ReadDirRecvMetaData>()];
+        let mut recv_data = vec![0u8; size];
 
         let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::ReadDir.into(),
             0,
             &path,
-            &[],
+            &send_meta_data,
             &[],
             &mut status,
             &mut rsp_flags,
             &mut recv_meta_data_length,
             &mut recv_data_length,
-            &mut [],
+            &mut recv_meta_data,
             &mut recv_data,
         ));
         match result {
@@ -362,22 +368,27 @@ impl Client {
                     "readdir_remote recv_data: {:?}",
                     &recv_data[..recv_data_length]
                 );
-                let entries: SubDirectory =
-                    bincode::deserialize(&recv_data[..recv_data_length]).unwrap();
-                for entry in entries.sub_dir {
-                    let kind = {
-                        match entry.1.as_bytes()[0] {
-                            b'f' => fuser::FileType::RegularFile,
-                            b'd' => fuser::FileType::Directory,
-                            b's' => fuser::FileType::Symlink,
-                            _ => fuser::FileType::RegularFile,
-                        }
+                let md = bincode::deserialize::<ReadDirRecvMetaData>(&recv_meta_data).unwrap();
+                let mut dirp_ptr = recv_data.as_ptr();
+                let mut total = 0;
+                let mut offset = offset;
+                while total < md.size {
+                    let dirp = unsafe { *(dirp_ptr as *const dirent64) };
+                    let kind = match dirp.d_type {
+                        DT_REG => fuser::FileType::RegularFile,
+                        DT_DIR => fuser::FileType::Directory,
+                        DT_LNK => fuser::FileType::Symlink,
+                        _ => fuser::FileType::RegularFile,
                     };
-                    debug!("readdir_remote entry: {:?}", entry);
-                    let r = reply.add(1, 2, kind, entry.0);
+                    let name = unsafe { CStr::from_ptr(dirp.d_name.as_ptr()).to_str().unwrap() };
+                    offset += 1;
+                    let r = reply.add(dirp.d_ino, offset, kind, name);
                     if r {
                         break;
                     }
+
+                    total += dirp.d_reclen as u32;
+                    dirp_ptr = unsafe { dirp_ptr.add(dirp.d_reclen as usize) };
                 }
 
                 reply.ok();

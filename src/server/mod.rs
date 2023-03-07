@@ -15,7 +15,10 @@ use storage_engine::StorageEngine;
 use crate::{
     common::{
         distribute_hash_table::build_hash_ring,
-        serialization::{DirectoryEntrySendMetaData, OperationType, TruncateFileSendMetaData},
+        serialization::{
+            DirectoryEntrySendMetaData, OperationType, ReadDirSendMetaData,
+            TruncateFileSendMetaData,
+        },
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
     rpc::server::{Handler, Server},
@@ -215,11 +218,13 @@ where
             }
             OperationType::ReadDir => {
                 debug!("Read Dir");
-                let (data, status) = match self.engine.read_dir(file_path).await {
-                    Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
-                };
-                Ok((status, 0, Vec::new(), data))
+                let md: ReadDirSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let (metadata, data, status) =
+                    match self.engine.read_dir(file_path, md.size, md.offset).await {
+                        Ok(value) => (value.0, value.1, 0),
+                        Err(e) => (Vec::new(), Vec::new(), EngineErr2Status!(e) as i32),
+                    };
+                Ok((status, 0, metadata, data))
             }
             OperationType::ReadFile => {
                 debug!("Read File");

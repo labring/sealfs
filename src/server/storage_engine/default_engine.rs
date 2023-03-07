@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::cache::LRUCache;
-use crate::common::serialization::{FileAttrSimple, SubDirectory};
+use crate::common::serialization::{FileAttrSimple, ReadDirRecvMetaData, SubDirectory};
+use crate::offset_of;
 use crate::server::distributed_engine::path_split;
 
 use super::EngineError;
 
 use super::StorageEngine;
+use libc::{dirent64, DT_DIR, DT_LNK, DT_REG};
 use log::debug;
 use log::error;
 use nix::{
@@ -164,7 +166,12 @@ impl StorageEngine for DefaultEngine {
         }
     }
 
-    fn read_directory(&self, path: String) -> Result<Vec<u8>, EngineError> {
+    fn read_directory(
+        &self,
+        path: String,
+        size: u32,
+        offset: i64,
+    ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
         if let Some(value) = self.file_attr_db.db.get(path.as_bytes())? {
             // debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
             match bincode::deserialize::<FileAttrSimple>(&value) {
@@ -180,10 +187,57 @@ impl StorageEngine for DefaultEngine {
             }
         }
         match self.dir_db.db.get(path.as_bytes())? {
-            Some(value) => {
-                // debug!("read_dir path: {}, value: {:?}", path, value);
-                Ok(value)
-            }
+            Some(value) => match bincode::deserialize::<SubDirectory>(&value) {
+                Ok(sub_dir) => {
+                    let iter = sub_dir.sub_dir.iter().skip(offset as usize);
+                    let result = vec![0u8; size as usize];
+                    let mut dirp_ptr = result.as_slice().as_ptr();
+                    let mut total = 0;
+                    let mut offset = 0;
+                    for value in iter {
+                        let reclen = offset_of!(dirent64, d_name) as u16 + value.0.len() as u16 + 1;
+                        if total + reclen as u32 > size {
+                            break;
+                        }
+                        unsafe {
+                            (*(dirp_ptr as *mut dirent64)).d_ino = 1;
+                            (*(dirp_ptr as *mut dirent64)).d_off = 2;
+                            (*(dirp_ptr as *mut dirent64)).d_reclen = reclen;
+                            (*(dirp_ptr as *mut dirent64)).d_type = match value.1.as_bytes()[0] {
+                                b'f' => DT_REG,
+                                b'd' => DT_DIR,
+                                b's' => DT_LNK,
+                                _ => DT_REG,
+                            };
+                            std::ptr::copy(
+                                value.0.as_bytes().to_vec().as_ptr(),
+                                (*(dirp_ptr as *mut dirent64)).d_name.as_mut_ptr() as *mut u8,
+                                value.0.len(),
+                            );
+                            let name_after = (*(dirp_ptr as *mut dirent64))
+                                .d_name
+                                .as_mut_ptr()
+                                .add(value.0.len())
+                                as *mut u8;
+                            *name_after = b'\0';
+                            dirp_ptr = dirp_ptr.add(reclen as usize);
+                        }
+                        offset += 1;
+                        total += reclen as u32;
+                    }
+
+                    let md = bincode::serialize(&ReadDirRecvMetaData {
+                        size: total,
+                        offset,
+                    })
+                    .unwrap();
+                    Ok((md, result))
+                }
+                Err(e) => {
+                    error!("deserialize error: {:?}", e);
+                    Err(EngineError::IO)
+                }
+            },
             None => Err(EngineError::NoEntry),
         }
     }

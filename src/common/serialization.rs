@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -8,6 +8,15 @@ use libc::{
     stat, statx, statx_timestamp, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
 };
 use serde::{Deserialize, Serialize};
+
+#[macro_export]
+macro_rules! offset_of {
+    ($ty:ty, $field:ident) => {
+        //  Undefined Behavior: dereferences a null pointer.
+        //  Undefined Behavior: accesses field outside of valid memory area.
+        unsafe { &(*(1 as *const $ty)).$field as *const _ as usize - 1 }
+    };
+}
 
 pub enum OperationType {
     Unkown = 0,
@@ -273,7 +282,7 @@ impl From<FileAttrSimple> for fuser::FileAttr {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct SubDirectory {
-    pub sub_dir: HashMap<String, String>,
+    pub sub_dir: BTreeMap<String, String>,
 }
 
 impl Default for SubDirectory {
@@ -284,7 +293,7 @@ impl Default for SubDirectory {
 
 impl SubDirectory {
     pub fn new() -> Self {
-        let sub_dir = HashMap::from([
+        let sub_dir = BTreeMap::from([
             (".".to_string(), "d".to_string()),
             ("..".to_string(), "d".to_string()),
         ]);
@@ -319,7 +328,7 @@ pub struct LinuxDirent {
     pub d_ino: u64,
     pub d_off: i64,
     pub d_reclen: u16,
-    pub d_name: [u8; 256],
+    pub d_name: [i8; 256],
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
@@ -335,4 +344,16 @@ pub struct DirectoryEntrySendMetaData {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct TruncateFileSendMetaData {
     pub length: i64,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct ReadDirSendMetaData {
+    pub offset: i64,
+    pub size: u32,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct ReadDirRecvMetaData {
+    pub offset: i64,
+    pub size: u32,
 }

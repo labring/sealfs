@@ -8,12 +8,12 @@ use client::CLIENT;
 use file_desc::{FdAttr, FdType};
 use lazy_static::lazy_static;
 use libc::{
-    c_char, iovec, stat, statx, SYS_close, SYS_creat, SYS_fstat, SYS_ftruncate, SYS_getdents,
-    SYS_getdents64, SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mkdirat, SYS_open, SYS_openat,
-    SYS_pread64, SYS_preadv, SYS_pwrite64, SYS_pwritev, SYS_read, SYS_readlink, SYS_readv,
-    SYS_rename, SYS_renameat, SYS_rmdir, SYS_stat, SYS_statx, SYS_truncate, SYS_unlink, SYS_write,
-    SYS_writev, AT_FDCWD, O_CREAT, O_DIRECTORY, O_TRUNC, O_WRONLY, SEEK_CUR, SEEK_END, SEEK_SET,
-    S_IFLNK,
+    c_char, iovec, stat, statx, SYS_close, SYS_creat, SYS_fstat, SYS_fsync, SYS_ftruncate,
+    SYS_getdents, SYS_getdents64, SYS_lseek, SYS_lstat, SYS_mkdir, SYS_mkdirat, SYS_open,
+    SYS_openat, SYS_pread64, SYS_preadv, SYS_pwrite64, SYS_pwritev, SYS_read, SYS_readlink,
+    SYS_readv, SYS_rename, SYS_renameat, SYS_rmdir, SYS_stat, SYS_statx, SYS_truncate, SYS_unlink,
+    SYS_write, SYS_writev, AT_FDCWD, O_CREAT, O_DIRECTORY, O_TRUNC, O_WRONLY, SEEK_CUR, SEEK_END,
+    SEEK_SET, S_IFLNK,
 };
 use log::debug;
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
@@ -451,13 +451,13 @@ extern "C" fn dispatch(
 
             match CLIENT.getdents_remote(&remote_pathname, dirp, offset) {
                 Ok(value) => {
-                    if value == 0 {
+                    if value.0 == 0 {
                         unsafe {
                             *(arg1 as *mut u8) = 0;
                         }
                     }
-                    *result = value;
-                    file_desc::set_offset(arg0 as i32, offset + *result as i64);
+                    *result = value.0;
+                    file_desc::set_offset(arg0 as i32, offset + value.1);
                 }
                 Err(e) => {
                     *result = -e as isize;
@@ -484,13 +484,13 @@ extern "C" fn dispatch(
 
             match CLIENT.getdents64_remote(&remote_pathname, dirp, offset) {
                 Ok(value) => {
-                    if value == 0 {
+                    if value.0 == 0 {
                         unsafe {
                             *(arg1 as *mut u8) = 0;
                         }
                     }
-                    *result = value;
-                    file_desc::set_offset(arg0 as i32, offset + *result as i64);
+                    *result = value.0;
+                    file_desc::set_offset(arg0 as i32, offset + value.1 as i64);
                 }
                 Err(e) => {
                     *result = -e as isize;
@@ -946,6 +946,14 @@ extern "C" fn dispatch(
                     *result = -e as isize;
                 }
             }
+            InterceptResult::Hook
+        }
+        // int fsync(int fd);
+        SYS_fsync => {
+            if file_desc::get_attr(arg0 as i32).is_none() {
+                return InterceptResult::Forward;
+            }
+            *result = 0;
             InterceptResult::Hook
         }
         _ => InterceptResult::Forward,
