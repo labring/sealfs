@@ -45,15 +45,3 @@ impl Storage {
         Ok(data[..length].to_vec())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // #[test]
-    // fn write_and_read_test() {
-    //     let storage = Storage::new("/dev/sda14");
-    //     let writre_result = storage.write(&b"some bytes"[..], 0).unwrap();
-    //     assert_eq!(writre_result, 10);
-    //     let read_result = storage.read(10, 0).unwrap();
-    //     assert_eq!(read_result, &b"some bytes"[..]);
-    // }
-}

@@ -118,21 +118,3 @@ impl StorageEngine for BlockEngine {
         todo!()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // use crate::server::storage_engine::StorageEngine;
-
-    // use super::BlockEngine;
-
-    // #[test]
-    // fn write_and_read_test() {
-    //     let engine = BlockEngine::new("", "/dev/sda14");
-    //          let write_size = engine
-    //         .write_file("test".to_string(), &b"some bytes"[..], 0)
-    //         .unwrap();
-    //     assert_eq!(write_size, 10);
-    //     let read = engine.read_file("test".to_string(), 10, 0).unwrap();
-    //     assert_eq!(read, &b"some bytes"[..]);
-    // }
-}

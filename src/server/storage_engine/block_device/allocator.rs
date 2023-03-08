@@ -80,21 +80,3 @@ impl BlockDevice {
         Ok(block_num)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    // use super::{Allocator, BitmapAllocator, BlockDevice};
-
-    // #[test]
-    // fn block_info_test() {
-    //     let block_num = BlockDevice::get_block_info("/dev/sda14");
-    //     println!("{:?}", block_num.unwrap());
-    // }
-
-    // #[test]
-    // fn allocator_test() {
-    //     let allocator = BitmapAllocator::new("/dev/sda14");
-    //     let length = allocator.allocator_space(512 * 8 * 8);
-    //     assert_eq!(length + 8, 8);
-    // }
-}
