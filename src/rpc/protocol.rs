@@ -5,7 +5,7 @@
 use std::time;
 
 pub const MAX_FILENAME_LENGTH: usize = 4096;
-pub const MAX_DATA_LENGTH: usize = 65535;
+pub const MAX_DATA_LENGTH: usize = 65536;
 pub const MAX_METADATA_LENGTH: usize = 4096;
 
 // request
