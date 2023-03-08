@@ -25,7 +25,7 @@ enum ConnectionStatus {
 
 pub struct ClientConnection {
     pub server_address: String,
-    write_stream: Option<tokio::sync::Mutex<OwnedWriteHalf>>,
+    write_stream: Option<Mutex<OwnedWriteHalf>>,
     status: RwLock<ConnectionStatus>,
     // lock for send_request
     // we need this lock because we will send multiple requests in parallel
@@ -192,7 +192,7 @@ impl ClientConnection {
 
 pub struct ServerConnection {
     name_id: String,
-    write_stream: tokio::sync::Mutex<OwnedWriteHalf>,
+    write_stream: Mutex<OwnedWriteHalf>,
     status: ConnectionStatus,
 }
 
@@ -200,7 +200,7 @@ impl ServerConnection {
     pub fn new(write_stream: OwnedWriteHalf, name_id: String) -> Self {
         ServerConnection {
             name_id,
-            write_stream: tokio::sync::Mutex::new(write_stream),
+            write_stream: Mutex::new(write_stream),
             status: ConnectionStatus::Connected,
         }
     }
@@ -231,25 +231,29 @@ impl ServerConnection {
         meta_data: &[u8],
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let response = {
-            let data_length = data.len();
-            let meta_data_length = meta_data.len();
-            let total_length = data_length + meta_data_length;
-            debug!(
-                "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
-                self.name_id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
-            let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
-            response.extend_from_slice(&id.to_le_bytes());
-            response.extend_from_slice(&status.to_le_bytes());
-            response.extend_from_slice(&flags.to_le_bytes());
-            response.extend_from_slice(&(total_length as u32).to_le_bytes());
-            response.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
-            response.extend_from_slice(&(data_length as u32).to_le_bytes());
+        let data_length = data.len();
+        let meta_data_length = meta_data.len();
+        let total_length = data_length + meta_data_length;
+        debug!(
+            "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
+            self.name_id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
+        let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
+        response.extend_from_slice(&id.to_le_bytes());
+        response.extend_from_slice(&status.to_le_bytes());
+        response.extend_from_slice(&flags.to_le_bytes());
+        response.extend_from_slice(&(total_length as u32).to_le_bytes());
+        response.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
+        response.extend_from_slice(&(data_length as u32).to_le_bytes());
+        if total_length < MAX_COPY_LENGTH {
             response.extend_from_slice(meta_data);
             response.extend_from_slice(data);
-            response
-        };
-        self.write_stream.lock().await.write_all(&response).await?;
+            self.write_stream.lock().await.write_all(&response).await?;
+        } else {
+            let mut g = self.write_stream.lock().await;
+            g.write_all(&response).await?;
+            g.write_all(meta_data).await?;
+            g.write_all(data).await?;
+        }
         Ok(())
     }
 
