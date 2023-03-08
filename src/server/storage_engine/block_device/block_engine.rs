@@ -36,7 +36,12 @@ impl StorageEngine for BlockEngine {
         todo!()
     }
 
-    fn read_directory(&self, _path: String) -> Result<Vec<u8>, EngineError> {
+    fn read_directory(
+        &self,
+        _path: String,
+        _size: u32,
+        _offset: i64,
+    ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
         todo!()
     }
 
