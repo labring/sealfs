@@ -123,3 +123,41 @@ impl StorageEngine for BlockEngine {
         todo!()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::server::storage_engine::StorageEngine;
+
+    use super::BlockEngine;
+    use std::process::Command;
+    #[test]
+    fn write_and_read_test() {
+        Command::new("bash")
+            .arg("-c")
+            .arg("dd if=/dev/zero of=node1 bs=4M count=1")
+            .output()
+            .unwrap();
+        Command::new("bash")
+            .arg("-c")
+            .arg("losetup /dev/loop8 node1")
+            .output()
+            .unwrap();
+        let engine = BlockEngine::new("", "/dev/loop8");
+        let write_size = engine
+            .write_file("test".to_string(), &b"some bytes"[..], 0)
+            .unwrap();
+        assert_eq!(write_size, 10);
+        let read = engine.read_file("test".to_string(), 10, 0).unwrap();
+        assert_eq!(read, &b"some bytes"[..]);
+        Command::new("bash")
+            .arg("-c")
+            .arg("losetup -d /dev/loop8")
+            .output()
+            .unwrap();
+        Command::new("bash")
+            .arg("-c")
+            .arg("rm node1")
+            .output()
+            .unwrap();
+    }
+}
