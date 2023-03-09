@@ -17,15 +17,28 @@ use libc::{
 };
 use log::debug;
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
+use sealfs::common::distribute_hash_table::build_hash_ring;
+use serde::{Deserialize, Serialize};
 use std::env;
 use std::ffi::CStr;
+use std::io::Read;
 use syscall_intercept::*;
 
 const STAT_SIZE: usize = std::mem::size_of::<stat>();
 const STATX_SIZE: usize = std::mem::size_of::<statx>();
 
-pub async fn init_client_wrap(server_address: String) {
-    CLIENT.add_connection(&server_address).await;
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    manager_address: String,
+    all_servers_address: Vec<String>,
+    heartbeat: bool,
+    log_level: String,
+}
+
+pub async fn init_client_wrap(all_servers_address: Vec<String>) {
+    for server_address in all_servers_address {
+        CLIENT.add_connection(&server_address).await;
+    }
 }
 
 extern "C" fn initialize() {
@@ -37,10 +50,14 @@ extern "C" fn initialize() {
         // builder.init();
         // debug!("intercept init!");
         set_hook_fn(dispatch);
-        let server_address =
-            env::var("SEALFS_SERVER_ADDRESS").unwrap_or_else(|_| "127.0.0.1:8085".to_string());
-
-        RUNTIME.block_on(init_client_wrap(server_address));
+        let config_path =
+            env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "/home/client.yaml".to_string());
+        let mut config_file = std::fs::File::open(config_path).unwrap();
+        let mut config_str = String::new();
+        config_file.read_to_string(&mut config_str).unwrap();
+        let config: Config = serde_yaml::from_str(&config_str).expect("client.yaml read failed!");
+        build_hash_ring(config.all_servers_address.clone());
+        RUNTIME.block_on(init_client_wrap(config.all_servers_address));
     }
 }
 

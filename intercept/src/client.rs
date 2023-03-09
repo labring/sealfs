@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use lazy_static::lazy_static;
 use libc::{dirent64, iovec, O_CREAT, O_DIRECTORY};
 use log::debug;
+use sealfs::common::distribute_hash_table::{hash, index_selector};
 use sealfs::common::serialization::{
     FileAttrSimple, LinuxDirent, OperationType, ReadDirRecvMetaData, ReadDirSendMetaData,
     ReadFileSendMetaData, TruncateFileSendMetaData,
@@ -37,19 +38,20 @@ impl Client {
     }
 
     pub async fn add_connection(&self, server_address: &str) {
-        self.client.add_connection(server_address).await;
+        loop {
+            if self.client.add_connection(server_address).await {
+                break;
+            }
+        }
     }
 
     pub fn remove_connection(&self, server_address: &str) {
         self.client.remove_connection(server_address);
     }
 
-    pub fn get_connection_address(
-        &self,
-        _path: &str,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn get_connection_address(&self, path: &str) -> Option<String> {
         // mock
-        Ok("127.0.0.1:8085".to_string())
+        Some(index_selector(hash(path)))
     }
 
     pub fn open_remote(&self, pathname: &str, flag: i32, mode: u32) -> Result<(), i32> {
@@ -443,10 +445,9 @@ impl Client {
         let mut inbuf = buf;
         self.handle.block_on(async {
             let mut result = 0;
-            while chunk_left < offset + inbuf.len() as i64 {
-                let server_address = self
-                    .get_connection_address(&format!("{}_{}", pathname, idx))
-                    .unwrap();
+            while chunk_left < end_idx {
+                // let file_path = format!("{}_{}", pathname, idx);
+                let server_address = self.get_connection_address(&pathname).unwrap();
                 let mut status = 0i32;
                 let mut rsp_flags = 0u32;
 
@@ -465,7 +466,7 @@ impl Client {
                         &server_address,
                         OperationType::ReadFile.into(),
                         0,
-                        pathname,
+                        &pathname,
                         &send_meta_data,
                         &[],
                         &mut status,
@@ -508,10 +509,10 @@ impl Client {
         let mut outbuf = buf;
         self.handle.block_on(async {
             let mut result = 0;
-            while chunk_left < offset + buf.len() as i64 {
-                let server_address = self
-                    .get_connection_address(&format!("{}_{}", pathname, idx))
-                    .unwrap();
+            while chunk_left < end_idx {
+                // let file_path = format!("{}_{}", pathname, idx);
+                let server_address = self.get_connection_address(&pathname).unwrap();
+                // println!("write: {} {}", file_path, server_address);
                 let mut status = 0i32;
                 let mut rsp_flags = 0u32;
                 let (chunk_buf, next_buf) = outbuf.split_at((chunk_right - chunk_left) as usize);
@@ -526,7 +527,7 @@ impl Client {
                         &server_address,
                         OperationType::WriteFile.into(),
                         0,
-                        pathname,
+                        &pathname,
                         &chunk_left.to_le_bytes(),
                         chunk_buf,
                         &mut status,
