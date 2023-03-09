@@ -19,9 +19,9 @@ use log::debug;
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
 use sealfs::common::distribute_hash_table::build_hash_ring;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::ffi::CStr;
 use std::io::Read;
+use std::str::FromStr;
 use syscall_intercept::*;
 
 const STAT_SIZE: usize = std::mem::size_of::<stat>();
@@ -43,19 +43,21 @@ pub async fn init_client_wrap(all_servers_address: Vec<String>) {
 
 extern "C" fn initialize() {
     unsafe {
-        // let mut builder = env_logger::Builder::from_default_env();
-        // builder
-        //     .format_timestamp(None)
-        //     .filter(None, log::LevelFilter::Debug);
-        // builder.init();
-        // debug!("intercept init!");
         set_hook_fn(dispatch);
-        let config_path =
-            env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "/home/client.yaml".to_string());
-        let mut config_file = std::fs::File::open(config_path).unwrap();
+        let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+        let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "client.yaml"))
+            .expect("client.yaml open failed!");
         let mut config_str = String::new();
-        config_file.read_to_string(&mut config_str).unwrap();
-        let config: Config = serde_yaml::from_str(&config_str).expect("client.yaml read failed!");
+        config_file
+            .read_to_string(&mut config_str)
+            .expect("client.yaml read failed!");
+        let config: Config =
+            serde_yaml::from_str(&config_str).expect("client.yaml serializa failed!");
+        let mut builder = env_logger::Builder::from_default_env();
+        builder
+            .format_timestamp(None)
+            .filter(None, log::LevelFilter::from_str(&config.log_level).unwrap());
+        builder.init();
         build_hash_ring(config.all_servers_address.clone());
         RUNTIME.block_on(init_client_wrap(config.all_servers_address));
     }

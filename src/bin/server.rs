@@ -11,6 +11,7 @@ use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::fs;
+use std::io::Read;
 use std::str::FromStr;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
@@ -59,10 +60,15 @@ struct Properties {
 #[tokio::main]
 async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     // read from default configuration.
-    let default_yaml_str = include_str!("../../examples/server.yaml");
+    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+    let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "server.yaml"))
+        .expect("server.yaml open failed!");
+    let mut config_str = String::new();
+    config_file
+        .read_to_string(&mut config_str)
+        .expect("server.yaml read failed!");
     let default_properties: Properties =
-        serde_yaml::from_str(default_yaml_str).expect("server.yaml read failed!");
-
+        serde_yaml::from_str(&config_str).expect("server.yaml serializa failed!");
     // read from command line.
     let args: Args = Args::parse();
     // if the user provides the config file, parse it and use the arguments from the config file.

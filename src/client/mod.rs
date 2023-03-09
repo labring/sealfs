@@ -11,7 +11,7 @@ use fuser::{
 };
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsStr, str::FromStr};
+use std::{ffi::OsStr, io::Read, str::FromStr};
 
 use crate::{
     common::{distribute_hash_table::build_hash_ring, serialization::OperationType},
@@ -150,9 +150,14 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     if cli.allow_root {
         options.push(MountOption::AllowRoot);
     }
-
-    let attr = include_str!("../../examples/client.yaml");
-    let config: Config = serde_yaml::from_str(attr).expect("client.yaml read failed!");
+    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+    let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "client.yaml"))
+        .expect("client.yaml open failed!");
+    let mut config_str = String::new();
+    config_file
+        .read_to_string(&mut config_str)
+        .expect("client.yaml read failed!");
+    let config: Config = serde_yaml::from_str(&config_str).expect("client.yaml serializa failed!");
     let manager_address = config.manager_address;
     let _http_manager_address = format!("http://{}", manager_address);
 
