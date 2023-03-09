@@ -731,6 +731,8 @@ dependencies = [
  "log",
  "nix",
  "sealfs",
+ "serde",
+ "serde_yaml",
  "tokio",
 ]
 
