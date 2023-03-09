@@ -32,9 +32,7 @@ impl Handler for HelloHandler {
         // debug!("dispatch, data: {:?}", data);
         match operation_type {
             0 => {
-                // let mut count = HELLO_COUNT.lock().await;
-                // let buf = format!("Hello, {}!", count).into_bytes();
-                // *count += 1;
+                // let success = String::from("Success").into_bytes();
                 Ok((0, 0, vec![], vec![]))
             }
             _ => {
