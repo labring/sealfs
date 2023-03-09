@@ -3,15 +3,6 @@
 use sealfs::rpc::client::Client;
 use std::sync::Arc;
 
-const SIZE_1024: usize = 1024;
-const SIZE_1024_4: usize = 1024 * 4;
-const SIZE_1024_16: usize = 1024 * 16;
-const SIZE_1024_64: usize = 1024 * 64;
-const SIZE_1024_256: usize = 1024 * 256;
-const SIZE_1024_1024: usize = 1024 * 1024;
-const SIZE_1024_1024_4: usize = 1024 * 1024 * 4;
-const SIZE_1024_1024_16: usize = 1024 * 1024 * 16;
-
 pub fn cli(total: u32) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -36,9 +27,10 @@ pub async fn run_cli_without_data(total: u32) {
     let client = Arc::new(Client::new());
     client.add_connection(server_address).await;
 
-    let mut data = [0u8; 50];
+    let mut data = vec![0u8; 50];
     for i in 0..total {
         let new_client = client.clone();
+        let data = data.clone();
         handles.push(rt.spawn(async move {
             let mut status = 0;
             let mut rsp_flags = 0;
@@ -91,19 +83,10 @@ async fn run_cli_with_data_size(total: u32, size: usize) {
     let server_address = "127.0.0.1:50052";
     let client = Arc::new(Client::new());
     client.add_connection(server_address).await;
-    let data: &[u8] = match size {
-        SIZE_1024 => &[0u8; SIZE_1024],
-        SIZE_1024_4 => &[0u8; SIZE_1024_4],
-        SIZE_1024_16 => &[0u8; SIZE_1024_16],
-        SIZE_1024_64 => &[0u8; SIZE_1024_64],
-        SIZE_1024_256 => &[0u8; SIZE_1024_256],
-        SIZE_1024_1024 => &[0u8; SIZE_1024_1024],
-        SIZE_1024_1024_4 => &[0u8; SIZE_1024_1024_4],
-        SIZE_1024_1024_16 => &[0u8; SIZE_1024_1024_16],
-        _ => &[0u8; 1024],
-    };
+    let data = vec![0u8; size];
     for i in 0..total {
         let new_client = client.clone();
+        let data = data.clone();
         handles.push(rt.spawn(async move {
             let mut status = 0;
             let mut rsp_flags = 0;
