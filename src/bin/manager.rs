@@ -7,6 +7,7 @@ use log::warn;
 use sealfs::{manager::manager_service::ManagerService, rpc::server::Server};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::{fmt::Debug, sync::Arc};
 
 #[derive(Parser, Debug)]
@@ -38,9 +39,15 @@ async fn main() -> anyhow::Result<()> {
     builder.init();
 
     // read from default configuration.
-    let default_yaml_str = include_str!("../../examples/manager.yaml");
+    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+    let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "manager.yaml"))
+        .expect("manager.yaml open failed!");
+    let mut config_str = String::new();
+    config_file
+        .read_to_string(&mut config_str)
+        .expect("manager.yaml read failed!");
     let default_properties: Properties =
-        serde_yaml::from_str(default_yaml_str).expect("manager.yaml read failed!");
+        serde_yaml::from_str(&config_str).expect("manager.yaml serializa failed!");
 
     // read from command line.
     let args: Args = Args::parse();
