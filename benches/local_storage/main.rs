@@ -1,15 +1,17 @@
 //! run the benchmark with:
 //!     cargo bench --bench local_storage
 
+use std::sync::Arc;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use nix::sys::stat::Mode;
 use rand::prelude::*;
 use sealfs::server::storage_engine::{
-    default_engine::{self, DefaultEngine},
-    StorageEngine,
+    file_engine::{self, FileEngine},
+    meta_engine, StorageEngine,
 };
 
-fn create_file(engine: &DefaultEngine, n: isize) {
+fn create_file(engine: &FileEngine, n: isize) {
     let mode = Mode::S_IRUSR
         | Mode::S_IWUSR
         | Mode::S_IRGRP
@@ -21,13 +23,13 @@ fn create_file(engine: &DefaultEngine, n: isize) {
     })
 }
 
-fn delete_file(engine: &DefaultEngine, n: isize) {
+fn delete_file(engine: &FileEngine, n: isize) {
     (0..n).for_each(|i| {
         engine.delete_file(i.to_string()).unwrap();
     })
 }
 
-fn write_file(engine: &DefaultEngine, n: isize) {
+fn write_file(engine: &FileEngine, n: isize) {
     (0..n).for_each(|_| {
         let mut rng = rand::thread_rng();
         let i: usize = rng.gen::<usize>() % n as usize;
@@ -38,7 +40,7 @@ fn write_file(engine: &DefaultEngine, n: isize) {
     })
 }
 
-fn read_file(engine: &DefaultEngine, n: isize) {
+fn read_file(engine: &FileEngine, n: isize) {
     (0..n * 10).for_each(|_| {
         let mut rng = rand::thread_rng();
         let i: usize = rng.gen::<usize>() % n as usize;
@@ -47,7 +49,8 @@ fn read_file(engine: &DefaultEngine, n: isize) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let engine = default_engine::DefaultEngine::new("/tmp/bench/db", "/tmp/bench/root");
+    let meta_engine = Arc::new(meta_engine::MetaEngine::new("/tmp/bench/db"));
+    let engine = file_engine::FileEngine::new("/tmp/bench/root", meta_engine);
 
     c.bench_function("default engine file 512", |b| {
         b.iter(|| {

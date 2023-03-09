@@ -1,8 +1,10 @@
 //! run the benchmark with:
 //!     cargo bench --bench block_device --features=disk-db
 
+use std::sync::Arc;
+
 use criterion::{criterion_group, criterion_main, Criterion};
-use sealfs::server::storage_engine::{block_device::block_engine::BlockEngine, StorageEngine};
+use sealfs::server::storage_engine::{block_engine::BlockEngine, meta_engine, StorageEngine};
 use std::process::Command;
 
 fn write_file(engine: &BlockEngine, n: isize) {
@@ -31,7 +33,8 @@ fn criterion_benchmark(c: &mut Criterion) {
         .arg("losetup /dev/loop8 node1")
         .output()
         .unwrap();
-    let engine = BlockEngine::new("", "/dev/loop8");
+    let meta_engine = Arc::new(meta_engine::MetaEngine::new("/tmp/bench/db"));
+    let engine = BlockEngine::new("/dev/loop8", meta_engine);
 
     c.bench_function("block device test", |b| {
         b.iter(|| {
