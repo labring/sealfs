@@ -22,9 +22,10 @@ use crate::{
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
     rpc::server::{Handler, Server},
+    server::storage_engine::meta_engine::MetaEngine,
 };
 use distributed_engine::DistributedEngine;
-use storage_engine::default_engine::DefaultEngine;
+use storage_engine::file_engine::FileEngine;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -91,13 +92,15 @@ pub async fn run(
     all_servers_address: Vec<String>,
 ) -> anyhow::Result<()> {
     debug!("run server");
-    let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
-    local_storage.init();
+    let meta_engine = Arc::new(MetaEngine::new(&database_path));
+    let storage_engine = Arc::new(FileEngine::new(&storage_path, Arc::clone(&meta_engine)));
+    storage_engine.init();
     build_hash_ring(all_servers_address.clone());
 
     let engine = Arc::new(DistributedEngine::new(
         server_address.clone(),
-        local_storage.clone(),
+        storage_engine,
+        meta_engine,
     ));
     for value in all_servers_address.iter() {
         if &server_address == value {
@@ -301,5 +304,26 @@ where
             }
             _ => todo!(),
         }
+    }
+}
+
+//  path_split: the path should not be empty, and it does not end with a slash unless it is the root directory.
+pub fn path_split(path: String) -> Result<(String, String), EngineError> {
+    if path.is_empty() {
+        return Err(EngineError::Path);
+    }
+    if path == "/" {
+        return Err(EngineError::Path);
+    }
+    if path.ends_with('/') {
+        return Err(EngineError::Path);
+    }
+    let index = match path.rfind('/') {
+        Some(value) => value,
+        None => return Err(EngineError::Path),
+    };
+    match index {
+        0 => Ok(("/".into(), path[1..].into())),
+        _ => Ok((path[..index].into(), path[(index + 1)..].into())),
     }
 }

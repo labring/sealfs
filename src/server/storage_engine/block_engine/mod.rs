@@ -2,14 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+pub mod allocator;
+/**
+*block device is use to bypass filesystem aimed to attain higher performance.
+*/
+pub mod index;
+pub mod io;
+
+use std::sync::Arc;
+
 use crate::server::storage_engine::StorageEngine;
 use crate::server::EngineError;
 use nix::sys::stat::Mode;
 
-use super::allocator::{Allocator, BitmapAllocator, CHUNK};
-//use super::allocator::SkipListAllocator;
-use super::index::FileIndex;
-use super::io::Storage;
+use allocator::{Allocator, BitmapAllocator, CHUNK};
+use index::FileIndex;
+use io::Storage;
+
+use super::meta_engine::MetaEngine;
 
 #[allow(unused)]
 pub struct BlockEngine {
@@ -19,7 +29,7 @@ pub struct BlockEngine {
 }
 
 impl StorageEngine for BlockEngine {
-    fn new(_db_path: &str, root: &str) -> Self {
+    fn new(root: &str, _meta: Arc<MetaEngine>) -> Self {
         let index = FileIndex::new();
         let storage = Storage::new(root);
         let allocator = BitmapAllocator::new(root);
@@ -31,19 +41,6 @@ impl StorageEngine for BlockEngine {
     }
 
     fn init(&self) {}
-
-    fn get_file_attributes(&self, _path: String) -> Result<Vec<u8>, EngineError> {
-        todo!()
-    }
-
-    fn read_directory(
-        &self,
-        _path: String,
-        _size: u32,
-        _offset: i64,
-    ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
-        todo!()
-    }
 
     fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
         let index_vec = self.index.search(path.as_str());
@@ -77,32 +74,6 @@ impl StorageEngine for BlockEngine {
         }
     }
 
-    fn delete_directory_recursive(&self, _path: String) -> Result<(), EngineError> {
-        todo!()
-    }
-
-    fn is_exist(&self, _path: String) -> Result<bool, EngineError> {
-        todo!()
-    }
-
-    fn directory_add_entry(
-        &self,
-        _parent_dir: String,
-        _file_name: String,
-        _file_type: u8,
-    ) -> Result<(), EngineError> {
-        todo!()
-    }
-
-    fn directory_delete_entry(
-        &self,
-        _parent_dir: String,
-        _file_name: String,
-        _file_type: u8,
-    ) -> Result<(), EngineError> {
-        todo!()
-    }
-
     fn create_file(&self, _path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
         todo!()
     }
@@ -112,14 +83,6 @@ impl StorageEngine for BlockEngine {
     }
 
     fn truncate_file(&self, _path: String, _length: i64) -> Result<(), EngineError> {
-        todo!()
-    }
-
-    fn create_directory(&self, _path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
-        todo!()
-    }
-
-    fn delete_directory(&self, _path: String) -> Result<(), EngineError> {
         todo!()
     }
 }

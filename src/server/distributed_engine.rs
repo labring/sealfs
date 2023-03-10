@@ -1,5 +1,6 @@
-use super::storage_engine::StorageEngine;
+use super::storage_engine::meta_engine::MetaEngine;
 use super::EngineError;
+use super::{path_split, storage_engine::StorageEngine};
 use crate::common::{
     distribute_hash_table::{hash, index_selector},
     serialization::{DirectoryEntrySendMetaData, OperationType},
@@ -12,29 +13,9 @@ use std::{sync::Arc, vec};
 use tokio::time::Duration;
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
-    pub local_storage: Arc<Storage>,
+    pub storage_engine: Arc<Storage>,
+    pub meta_engine: Arc<MetaEngine>,
     pub client: Client,
-}
-
-//  path_split: the path should not be empty, and it does not end with a slash unless it is the root directory.
-pub fn path_split(path: String) -> Result<(String, String), EngineError> {
-    if path.is_empty() {
-        return Err(EngineError::Path);
-    }
-    if path == "/" {
-        return Err(EngineError::Path);
-    }
-    if path.ends_with('/') {
-        return Err(EngineError::Path);
-    }
-    let index = match path.rfind('/') {
-        Some(value) => value,
-        None => return Err(EngineError::Path),
-    };
-    match index {
-        0 => Ok(("/".into(), path[1..].into())),
-        _ => Ok((path[..index].into(), path[(index + 1)..].into())),
-    }
 }
 
 pub fn get_connection_address(path: &str) -> Option<String> {
@@ -45,10 +26,15 @@ impl<Storage> DistributedEngine<Storage>
 where
     Storage: StorageEngine,
 {
-    pub fn new(address: String, local_storage: Arc<Storage>) -> Self {
+    pub fn new(
+        address: String,
+        storage_engine: Arc<Storage>,
+        meta_engine: Arc<MetaEngine>,
+    ) -> Self {
         Self {
             address,
-            local_storage,
+            storage_engine,
+            meta_engine,
             client: Client::new(),
         }
     }
@@ -67,7 +53,7 @@ where
     }
 
     pub async fn create_dir(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
-        if self.local_storage.is_exist(path.clone())? {
+        if self.meta_engine.is_exist(path.as_str())? {
             return Err(EngineError::Exist);
         }
 
@@ -78,9 +64,9 @@ where
                 "local create dir, path: {}, parent_dir: {}, file_name: {}",
                 path, parent_dir, file_name
             );
-            self.local_storage.directory_add_entry(
-                parent_dir,
-                file_name,
+            self.meta_engine.directory_add_entry(
+                parent_dir.as_str(),
+                file_name.as_str(),
                 fuser::FileType::Directory as u8,
             )?;
         } else {
@@ -124,19 +110,19 @@ where
             };
         }
 
-        self.local_storage.create_directory(path, mode)
+        self.meta_engine.create_directory(&path, mode)
     }
 
     pub async fn delete_dir(&self, path: String) -> Result<(), EngineError> {
-        if !self.local_storage.is_exist(path.clone())? {
+        if !self.meta_engine.is_exist(&path)? {
             return Ok(());
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
-            self.local_storage.directory_delete_entry(
-                parent_dir.clone(),
-                file_name.clone(),
+            self.meta_engine.directory_delete_entry(
+                &parent_dir,
+                &file_name,
                 fuser::FileType::Directory as u8,
             )?;
         } else {
@@ -179,7 +165,7 @@ where
             };
         }
         debug!("delete_directory: {}", path);
-        self.local_storage.delete_directory(path.clone())
+        self.meta_engine.delete_directory(&path)
     }
 
     pub async fn read_dir(
@@ -188,21 +174,21 @@ where
         size: u32,
         offset: i64,
     ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
-        self.local_storage.read_directory(path, size, offset)
+        self.meta_engine.read_directory(&path, size, offset)
     }
 
     pub async fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
         debug!("create file: {}", path);
-        if self.local_storage.is_exist(path.clone())? {
+        if self.meta_engine.is_exist(&path)? {
             return Err(EngineError::Exist);
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
             debug!("create file local: {}", path);
-            self.local_storage.directory_add_entry(
-                parent_dir,
-                file_name,
+            self.meta_engine.directory_add_entry(
+                &parent_dir,
+                &file_name,
                 fuser::FileType::RegularFile as u8,
             )?;
         } else {
@@ -245,20 +231,20 @@ where
             };
         }
 
-        self.local_storage.create_file(path, mode)
+        self.storage_engine.create_file(path, mode)
     }
 
     pub async fn delete_file(&self, path: String) -> Result<(), EngineError> {
-        if !self.local_storage.is_exist(path.clone())? {
+        if !self.meta_engine.is_exist(&path)? {
             return Ok(());
         }
 
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
         if self.address == address {
-            self.local_storage.directory_delete_entry(
-                parent_dir,
-                file_name,
+            self.meta_engine.directory_delete_entry(
+                &parent_dir,
+                &file_name,
                 fuser::FileType::RegularFile as u8,
             )?;
         } else {
@@ -301,12 +287,12 @@ where
             };
         }
 
-        self.local_storage.delete_file(path)
+        self.storage_engine.delete_file(path)
     }
 
     pub async fn truncate_file(&self, path: String, length: i64) -> Result<(), EngineError> {
         // a temporary implementation
-        self.local_storage.truncate_file(path, length)
+        self.storage_engine.truncate_file(path, length)
     }
 
     pub async fn read_file(
@@ -315,7 +301,7 @@ where
         size: u32,
         offset: i64,
     ) -> Result<Vec<u8>, EngineError> {
-        self.local_storage.read_file(path, size, offset)
+        self.storage_engine.read_file(path, size, offset)
     }
 
     pub async fn write_file(
@@ -324,23 +310,23 @@ where
         data: &[u8],
         offset: i64,
     ) -> Result<usize, EngineError> {
-        self.local_storage.write_file(path, data, offset)
+        self.storage_engine.write_file(path, data, offset)
     }
 
     pub async fn get_file_attr(&self, path: String) -> Result<Vec<u8>, EngineError> {
-        self.local_storage.get_file_attributes(path)
+        self.meta_engine.get_file_attr_raw(&path)
     }
 
     pub async fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError> {
-        self.local_storage.open_file(path, mode)
+        self.storage_engine.open_file(path, mode)
     }
 
     pub async fn directory_add_entry(&self, path: String, file_type: u8) -> i32 {
         let status = match path_split(path) {
             Ok((parentdir, filename)) => {
                 match self
-                    .local_storage
-                    .directory_add_entry(parentdir, filename, file_type)
+                    .meta_engine
+                    .directory_add_entry(&parentdir, &filename, file_type)
                 {
                     Ok(()) => 0,
                     Err(value) => value.into(),
@@ -355,8 +341,8 @@ where
         let status = match path_split(path) {
             Ok((parentdir, filename)) => {
                 match self
-                    .local_storage
-                    .directory_delete_entry(parentdir, filename, file_type)
+                    .meta_engine
+                    .directory_delete_entry(&parentdir, &filename, file_type)
                 {
                     Ok(()) => 0,
                     Err(value) => value.into(),
@@ -373,7 +359,8 @@ mod tests {
     // use super::{enginerpc::enginerpc_client::EnginerpcClient, RPCService};
     use crate::common::distribute_hash_table::build_hash_ring;
     use crate::rpc::server::Server;
-    use crate::server::storage_engine::{default_engine::DefaultEngine, StorageEngine};
+    use crate::server::storage_engine::meta_engine::MetaEngine;
+    use crate::server::storage_engine::{file_engine::FileEngine, StorageEngine};
     use crate::server::{DistributedEngine, EngineError, FileRequestHandler};
     use nix::sys::stat::Mode;
     use std::sync::Arc;
@@ -383,13 +370,15 @@ mod tests {
         database_path: String,
         storage_path: String,
         server_address: String,
-    ) -> Arc<DistributedEngine<DefaultEngine>> {
-        let local_storage = Arc::new(DefaultEngine::new(&database_path, &storage_path));
+    ) -> Arc<DistributedEngine<FileEngine>> {
+        let meta_engine = Arc::new(MetaEngine::new(&database_path));
+        let local_storage = Arc::new(FileEngine::new(&storage_path, Arc::clone(&meta_engine)));
         local_storage.init();
 
         let engine = Arc::new(DistributedEngine::new(
             server_address.clone(),
             local_storage,
+            meta_engine,
         ));
         let handler = Arc::new(FileRequestHandler::new(engine.clone()));
         let server = Server::new(handler, &server_address);
@@ -400,7 +389,7 @@ mod tests {
         engine
     }
 
-    async fn test_file(engine0: Arc<DistributedEngine<DefaultEngine>>) {
+    async fn test_file(engine0: Arc<DistributedEngine<FileEngine>>) {
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
@@ -429,8 +418,8 @@ mod tests {
     }
 
     async fn test_dir(
-        engine0: Arc<DistributedEngine<DefaultEngine>>,
-        engine1: Arc<DistributedEngine<DefaultEngine>>,
+        engine0: Arc<DistributedEngine<FileEngine>>,
+        engine1: Arc<DistributedEngine<FileEngine>>,
     ) {
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
