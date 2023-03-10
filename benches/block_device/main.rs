@@ -3,6 +3,7 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use sealfs::server::storage_engine::{block_device::block_engine::BlockEngine, StorageEngine};
+use std::process::Command;
 
 fn write_file(engine: &BlockEngine, n: isize) {
     (0..n).for_each(|_| {
@@ -20,8 +21,17 @@ fn read_file(engine: &BlockEngine, n: isize) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    // You should replace with your raw device.
-    let engine = BlockEngine::new("", "/dev/sda14");
+    Command::new("bash")
+        .arg("-c")
+        .arg("dd if=/dev/zero of=node1 bs=4M count=1")
+        .output()
+        .unwrap();
+    Command::new("bash")
+        .arg("-c")
+        .arg("losetup /dev/loop8 node1")
+        .output()
+        .unwrap();
+    let engine = BlockEngine::new("", "/dev/loop8");
 
     c.bench_function("block device test", |b| {
         b.iter(|| {
@@ -29,6 +39,16 @@ fn criterion_benchmark(c: &mut Criterion) {
             read_file(&engine, 512);
         })
     });
+    Command::new("bash")
+        .arg("-c")
+        .arg("losetup -d /dev/loop8")
+        .output()
+        .unwrap();
+    Command::new("bash")
+        .arg("-c")
+        .arg("rm node1")
+        .output()
+        .unwrap();
 }
 
 criterion_group!(benches, criterion_benchmark);

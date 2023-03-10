@@ -45,3 +45,39 @@ impl Storage {
         Ok(data[..length].to_vec())
     }
 }
+
+#[cfg(feature = "block_test")]
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use crate::server::storage_engine::block_device::io::Storage;
+    #[test]
+    fn write_and_read_test() {
+        Command::new("bash")
+            .arg("-c")
+            .arg("dd if=/dev/zero of=node1 bs=4M count=1")
+            .output()
+            .unwrap();
+        Command::new("bash")
+            .arg("-c")
+            .arg("losetup /dev/loop8 node1")
+            .output()
+            .unwrap();
+        let storage = Storage::new("/dev/loop8");
+        let writre_result = storage.write(&b"some bytes"[..], 0).unwrap();
+        assert_eq!(writre_result, 10);
+        let read_result = storage.read(10, 0).unwrap();
+        assert_eq!(read_result, &b"some bytes"[..]);
+        Command::new("bash")
+            .arg("-c")
+            .arg("losetup -d /dev/loop8")
+            .output()
+            .unwrap();
+        Command::new("bash")
+            .arg("-c")
+            .arg("rm node1")
+            .output()
+            .unwrap();
+    }
+}
