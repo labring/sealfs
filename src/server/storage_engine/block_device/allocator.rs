@@ -81,6 +81,7 @@ impl BlockDevice {
     }
 }
 
+#[cfg(feature = "block_test")]
 #[cfg(test)]
 mod tests {
     use std::process::Command;

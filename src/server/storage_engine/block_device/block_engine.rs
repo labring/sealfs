@@ -124,6 +124,7 @@ impl StorageEngine for BlockEngine {
     }
 }
 
+#[cfg(feature = "block_test")]
 #[cfg(test)]
 mod tests {
     use crate::server::storage_engine::StorageEngine;

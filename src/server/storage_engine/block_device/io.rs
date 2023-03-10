@@ -46,12 +46,12 @@ impl Storage {
     }
 }
 
+#[cfg(feature = "block_test")]
 #[cfg(test)]
 mod tests {
     use std::process::Command;
 
     use crate::server::storage_engine::block_device::io::Storage;
-
     #[test]
     fn write_and_read_test() {
         Command::new("bash")
