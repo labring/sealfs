@@ -132,70 +132,10 @@ impl BlockGroup {
             loop {
                 match chunk_size {
                     size if size < 10 => {
-                        match slice_space_vec[chunk_size as usize].clone().get(&0) {
-                            Some(begin) => {
-                                if borrow_size != 0 {
-                                    if chunk_size - borrow_size > 0 {
-                                        let alloc = AllocatorEntry {
-                                            begin: *begin,
-                                            length: borrow_size,
-                                        };
-                                        result_vec.push(alloc);
-                                        slice_space_vec[chunk_size as usize].insert(*begin);
-                                        let mut index = (chunk_size - borrow_size) as usize;
-                                        loop {
-                                            if slice_space_vec[index]
-                                                .contains(&(begin - index as u64))
-                                            {
-                                                slice_space_vec[index]
-                                                    .remove(&(begin - index as u64));
-                                                index *= 2;
-                                            } else {
-                                                slice_space_vec[index].insert(*begin);
-                                                break;
-                                            }
-                                        }
-                                    } else {
-                                        loop {
-                                            match slice_space_vec[chunk_size as usize]
-                                                .clone()
-                                                .get(&0)
-                                            {
-                                                Some(begin) => {
-                                                    let alloc = AllocatorEntry {
-                                                        begin: *begin,
-                                                        length: chunk_size,
-                                                    };
-                                                    result_vec.push(alloc);
-                                                    slice_space_vec[chunk_size as usize]
-                                                        .remove(begin);
-                                                    if borrow_size < chunk_size {
-                                                        break;
-                                                    }
-                                                    borrow_size -= chunk_size;
-                                                }
-                                                _ => {
-                                                    if chunk_size == 1 {
-                                                        return Vec::new();
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    let alloc = AllocatorEntry {
-                                        begin: *begin,
-                                        length: chunk_size,
-                                    };
-                                    result_vec.push(alloc);
-                                    slice_space_vec[chunk_size as usize].remove(begin);
-                                    break;
-                                }
-                            }
+                        if slice_space_vec[chunk_size as usize].is_empty() {
                             // There is no space of this chunk,
                             // need to borrow from bigger slice or smaller slice.
-                            None => match borrow_size {
+                            match borrow_size {
                                 0 => {
                                     borrow_size = chunk_size;
                                     chunk_size += 1;
@@ -207,42 +147,105 @@ impl BlockGroup {
                                         chunk_size += 1;
                                     }
                                 }
-                            },
-                        }
-                    }
-                    size if size == 10 => {
-                        match slice_space_vec[chunk_size as usize].clone().get(&0) {
-                            Some(begin) => {
-                                if borrow_size != 0 {
-                                    if size >= borrow_size {
-                                        self.release_space(borrow_size, *begin);
-                                        self.release_space(chunk_size - borrow_size, *begin);
-                                        let alloc = AllocatorEntry {
-                                            begin: *begin,
-                                            length: borrow_size,
-                                        };
-                                        result_vec.push(alloc);
-                                    }
-                                } else {
+                            }
+                        } else {
+                            let mut iter = slice_space_vec[chunk_size as usize].iter();
+                            let mut begin = 0;
+                            if let Some(slice) = iter.next(){
+                                begin = *slice;
+                            };
+                            if borrow_size != 0 {
+                                if chunk_size - borrow_size > 0 {
                                     let alloc = AllocatorEntry {
-                                        begin: *begin,
-                                        length: chunk_size,
+                                        begin,
+                                        length: borrow_size,
                                     };
                                     result_vec.push(alloc);
-                                    slice_space_vec[chunk_size as usize].remove(begin);
+                                    slice_space_vec[chunk_size as usize].insert(begin);
+                                    let mut index = (chunk_size - borrow_size) as usize;
+                                    loop {
+                                        if slice_space_vec[index].contains(&(begin - index as u64))
+                                        {
+                                            slice_space_vec[index].remove(&(begin - index as u64));
+                                            index *= 2;
+                                        } else {
+                                            slice_space_vec[index].insert(begin);
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    loop {
+                                        if slice_space_vec[chunk_size as usize].is_empty() {
+                                            if chunk_size == 1 {
+                                                return Vec::new();
+                                            }
+                                            break;
+                                        } else {
+                                            let mut iter = slice_space_vec[chunk_size as usize].iter();
+                                            let mut begin = 0;
+                                            if let Some(slice) = iter.next(){
+                                                begin = *slice;
+                                            };
+                                            let alloc = AllocatorEntry {
+                                                begin,
+                                                length: chunk_size,
+                                            };
+                                            result_vec.push(alloc);
+                                            slice_space_vec[chunk_size as usize].remove(&begin);
+                                            if borrow_size < chunk_size {
+                                                break;
+                                            }
+                                            borrow_size -= chunk_size;
+                                        }
+                                    }
                                 }
+                            } else {
+                                let alloc = AllocatorEntry {
+                                    begin,
+                                    length: chunk_size,
+                                };
+                                result_vec.push(alloc);
+                                slice_space_vec[chunk_size as usize].remove(&begin);
                                 break;
                             }
-                            None => {
-                                // Need to borrow from smaller slice.
-                                if borrow_size == 0 {
-                                    borrow_size = chunk_size;
-                                    chunk_size -= 1;
-                                } else {
-                                    chunk_size = borrow_size - 1;
-                                    if_need_borrow_from_smaller = true;
-                                }
+                        }
+                    }
+
+                    size if size == 10 => {
+                        if slice_space_vec[chunk_size as usize].is_empty() {
+                            // Need to borrow from smaller slice.
+                            if borrow_size == 0 {
+                                borrow_size = chunk_size;
+                                chunk_size -= 1;
+                            } else {
+                                chunk_size = borrow_size - 1;
+                                if_need_borrow_from_smaller = true;
                             }
+                        } else {
+                            let mut iter = slice_space_vec[chunk_size as usize].iter();
+                            let mut begin = 0;
+                            if let Some(slice) = iter.next(){
+                                begin = *slice;
+                            }
+                            if borrow_size != 0 {
+                                if size >= borrow_size {
+                                    self.release_space(borrow_size, begin);
+                                    self.release_space(chunk_size - borrow_size, begin);
+                                    let alloc = AllocatorEntry {
+                                        begin,
+                                        length: borrow_size,
+                                    };
+                                    result_vec.push(alloc);
+                                }
+                            } else {
+                                let alloc = AllocatorEntry {
+                                    begin,
+                                    length: chunk_size,
+                                };
+                                result_vec.push(alloc);
+                                slice_space_vec[chunk_size as usize].remove(&begin);
+                            }
+                            break;
                         }
                     }
                     _ => {
@@ -252,19 +255,21 @@ impl BlockGroup {
                             if size - allocator_size <= 10 {
                                 break;
                             }
-                            match slice_space_vec[allocator_size as usize].clone().get(&0) {
-                                Some(begin) => {
-                                    let alloc = AllocatorEntry {
-                                        begin: *begin,
-                                        length: allocator_size,
-                                    };
-                                    result_vec.push(alloc);
-                                    slice_space_vec[allocator_size as usize].remove(begin);
-                                    size -= allocator_size;
+                            if slice_space_vec[allocator_size as usize].is_empty() {
+                                allocator_size -= 1;
+                            } else {
+                                let mut iter = slice_space_vec[allocator_size as usize].iter();
+                                let mut begin = 0;
+                                if let Some(slice) = iter.next() {
+                                    begin = *slice;
                                 }
-                                None => {
-                                    allocator_size -= 1;
-                                }
+                                let alloc = AllocatorEntry {
+                                    begin,
+                                    length: allocator_size,
+                                };
+                                result_vec.push(alloc);
+                                slice_space_vec[allocator_size as usize].remove(&begin);
+                                size -= allocator_size;
                             }
                         }
                     }
