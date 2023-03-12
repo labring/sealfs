@@ -25,7 +25,7 @@ fn read_file(engine: &BlockEngine, n: isize) {
 fn criterion_benchmark(c: &mut Criterion) {
     Command::new("bash")
         .arg("-c")
-        .arg("dd if=/dev/zero of=node1 bs=40M count=1")
+        .arg("dd if=/dev/zero of=node1 bs=4M count=1")
         .output()
         .unwrap();
     Command::new("bash")
@@ -34,7 +34,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         .output()
         .unwrap();
     let meta_engine = Arc::new(meta_engine::MetaEngine::new("/tmp/bench/db"));
-    let engine = BlockEngine::new("/dev/sda14", meta_engine);
+    let engine = BlockEngine::new("/dev/loop8", meta_engine);
 
     c.bench_function("block device test", |b| {
         b.iter(|| {
