@@ -416,6 +416,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-queue"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-skiplist"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1348,6 +1358,7 @@ dependencies = [
  "clap 4.0.18",
  "core_affinity",
  "criterion",
+ "crossbeam-queue",
  "dashmap",
  "env_logger",
  "fuser",
@@ -1356,6 +1367,7 @@ dependencies = [
  "libc",
  "log",
  "nix",
+ "num_cpus",
  "parking_lot",
  "pegasusdb",
  "prost",

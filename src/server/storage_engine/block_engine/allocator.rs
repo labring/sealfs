@@ -2,15 +2,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
-
 use libc::ioctl;
 use nix::fcntl::{open, OFlag};
-use parking_lot::Mutex;
+use std::collections::HashSet;
 
+use crossbeam_queue::ArrayQueue;
+
+use super::AllocatorEntry;
 use crate::server::EngineError;
+extern crate num_cpus;
 
-//#define BLKGETSIZE _IO(0x12,96)	/* return device size /512 (long *arg) */
+//#define BLKGETSIZE _IO(0x12,96)   /* return device size /512 (long *arg) */
 const BLOCKGETSIZE: u64 = 0x1260;
 
 pub const CHUNK: u64 = 512 * 8;
@@ -18,38 +20,293 @@ const SECTOR: u64 = 512;
 
 pub(crate) trait Allocator {
     fn new(path: &str) -> Self;
-    fn allocator_space(&self, lenth: u64) -> u64;
+    fn allocator_space(&self, lenth: u64) -> Vec<AllocatorEntry>;
+    fn release_space(&self, lenth: u64, begin: u64) -> bool;
 }
 
 /*
- * This Allocator use for memory.
+ *This Allocator use for memory.
  */
 #[allow(unused)]
-pub(crate) struct BitmapAllocator {
-    block_space: Arc<Mutex<u64>>,
-    total_aspce: u64,
+pub(crate) struct BlockAllocator {
+    block_group_list: ArrayQueue<BlockGroup>,
 }
 
-impl Allocator for BitmapAllocator {
+struct BlockGroup {
+    block_space_point: u64,
+    block_space: u64,
+    slice_space_manager: Vec<HashSet<u64>>,
+    slice_space: u64,
+}
+
+impl Allocator for BlockAllocator {
     fn new(path: &str) -> Self {
-        let blockdevice = BlockDevice::new(path).unwrap();
-        Self {
-            block_space: Arc::new(Mutex::new(0)),
-            total_aspce: blockdevice.chunk_num,
+        let block_device = BlockDevice::new(path).unwrap();
+        let num_cpus = num_cpus::get();
+        let block_group_list = ArrayQueue::new(num_cpus);
+        for index in 1..num_cpus + 1 {
+            let block_allocator =
+                BlockGroup::new(block_device.chunk_num / num_cpus as u64, index as u64);
+            match block_group_list.push(block_allocator) {
+                Ok(_) => {}
+                Err(_) => {
+                    todo!()
+                }
+            };
+        }
+        Self { block_group_list }
+    }
+
+    fn allocator_space(&self, lenth: u64) -> Vec<AllocatorEntry> {
+        let mut block_group_count = 0;
+        loop {
+            let block_group = self.block_group_list.pop();
+            match block_group {
+                Some(mut block_group) => {
+                    let result_vec = block_group.allocator_space(lenth);
+                    match self.block_group_list.push(block_group) {
+                        Ok(_) => {}
+                        Err(_) => {
+                            todo!()
+                        }
+                    };
+                    if block_group_count >= num_cpus::get() {
+                        return Vec::new();
+                    }
+                    if result_vec.is_empty() {
+                        block_group_count += 1;
+                        continue;
+                    }
+                    return result_vec;
+                }
+                None => {
+                    continue;
+                }
+            }
         }
     }
 
-    fn allocator_space(&self, lenth: u64) -> u64 {
-        // todo reduce allocatorc size.
-        // todo exent space manager.
+    fn release_space(&self, _lenth: u64, _begin: u64) -> bool {
+        // todo
+        true
+    }
+}
+
+impl BlockGroup {
+    fn new(size: u64, block_group_index: u64) -> Self {
+        let mut slice_space_vec = Vec::new();
+        for _ in 0..11 {
+            slice_space_vec.push(HashSet::new());
+        }
+        Self {
+            block_space_point: (block_group_index - 1) * size,
+            block_space: size,
+            slice_space_manager: slice_space_vec,
+            slice_space: 0,
+        }
+    }
+
+    fn allocator_space(&mut self, lenth: u64) -> Vec<AllocatorEntry> {
         let mut chunk_size = lenth / CHUNK;
         if lenth - chunk_size * CHUNK > 0 {
             chunk_size += 1;
         }
-        let mut mutex = self.block_space.lock();
-        let begin_allocator_pos = *mutex;
-        *mutex += chunk_size;
-        begin_allocator_pos
+        let mut result_vec = Vec::new();
+
+        if lenth < (self.block_space - self.block_space_point) * CHUNK {
+            let begin_allocator_pos = self.block_space_point;
+            self.block_space_point += chunk_size;
+            let alloc = AllocatorEntry {
+                begin: begin_allocator_pos,
+                length: chunk_size,
+            };
+            result_vec.push(alloc);
+        } else {
+            // Block space is full.
+            if self.slice_space < chunk_size {
+                return Vec::new();
+            }
+            let slice_space_vec = &mut self.slice_space_manager;
+            let mut borrow_size = 0;
+            let mut if_need_borrow_from_smaller = false;
+            loop {
+                match chunk_size {
+                    size if size < 10 => {
+                        match slice_space_vec[chunk_size as usize].clone().get(&0) {
+                            Some(begin) => {
+                                if borrow_size != 0 {
+                                    if chunk_size - borrow_size > 0 {
+                                        let alloc = AllocatorEntry {
+                                            begin: *begin,
+                                            length: borrow_size,
+                                        };
+                                        result_vec.push(alloc);
+                                        slice_space_vec[chunk_size as usize].insert(*begin);
+                                        let mut index = (chunk_size - borrow_size) as usize;
+                                        loop {
+                                            if slice_space_vec[index]
+                                                .contains(&(begin - index as u64))
+                                            {
+                                                slice_space_vec[index]
+                                                    .remove(&(begin - index as u64));
+                                                index *= 2;
+                                            } else {
+                                                slice_space_vec[index].insert(*begin);
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        loop {
+                                            match slice_space_vec[chunk_size as usize]
+                                                .clone()
+                                                .get(&0)
+                                            {
+                                                Some(begin) => {
+                                                    let alloc = AllocatorEntry {
+                                                        begin: *begin,
+                                                        length: chunk_size,
+                                                    };
+                                                    result_vec.push(alloc);
+                                                    slice_space_vec[chunk_size as usize]
+                                                        .remove(begin);
+                                                    if borrow_size < chunk_size {
+                                                        break;
+                                                    }
+                                                    borrow_size -= chunk_size;
+                                                }
+                                                _ => {
+                                                    if chunk_size == 1 {
+                                                        return Vec::new();
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let alloc = AllocatorEntry {
+                                        begin: *begin,
+                                        length: chunk_size,
+                                    };
+                                    result_vec.push(alloc);
+                                    slice_space_vec[chunk_size as usize].remove(begin);
+                                    break;
+                                }
+                            }
+                            // There is no space of this chunk,
+                            // need to borrow from bigger slice or smaller slice.
+                            None => match borrow_size {
+                                0 => {
+                                    borrow_size = chunk_size;
+                                    chunk_size += 1;
+                                }
+                                _ => {
+                                    if if_need_borrow_from_smaller {
+                                        chunk_size -= 1;
+                                    } else {
+                                        chunk_size += 1;
+                                    }
+                                }
+                            },
+                        }
+                    }
+                    size if size == 10 => {
+                        match slice_space_vec[chunk_size as usize].clone().get(&0) {
+                            Some(begin) => {
+                                if borrow_size != 0 {
+                                    if size >= borrow_size {
+                                        self.release_space(borrow_size, *begin);
+                                        self.release_space(chunk_size - borrow_size, *begin);
+                                        let alloc = AllocatorEntry {
+                                            begin: *begin,
+                                            length: borrow_size,
+                                        };
+                                        result_vec.push(alloc);
+                                    }
+                                } else {
+                                    let alloc = AllocatorEntry {
+                                        begin: *begin,
+                                        length: chunk_size,
+                                    };
+                                    result_vec.push(alloc);
+                                    slice_space_vec[chunk_size as usize].remove(begin);
+                                }
+                                break;
+                            }
+                            None => {
+                                // Need to borrow from smaller slice.
+                                if borrow_size == 0 {
+                                    borrow_size = chunk_size;
+                                    chunk_size -= 1;
+                                } else {
+                                    chunk_size = borrow_size - 1;
+                                    if_need_borrow_from_smaller = true;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        let mut size = chunk_size;
+                        let mut allocator_size = 10;
+                        loop {
+                            if size - allocator_size <= 10 {
+                                break;
+                            }
+                            match slice_space_vec[allocator_size as usize].clone().get(&0) {
+                                Some(begin) => {
+                                    let alloc = AllocatorEntry {
+                                        begin: *begin,
+                                        length: allocator_size,
+                                    };
+                                    result_vec.push(alloc);
+                                    slice_space_vec[allocator_size as usize].remove(begin);
+                                    size -= allocator_size;
+                                }
+                                None => {
+                                    allocator_size -= 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result_vec
+    }
+
+    fn release_space(&mut self, lenth: u64, begin: u64) -> bool {
+        let mut chunk_size = lenth / CHUNK;
+        if lenth - chunk_size * CHUNK > 0 {
+            chunk_size += 1;
+        }
+
+        let slice_space_vec = &mut self.slice_space_manager;
+        loop {
+            match chunk_size {
+                size if size <= 10 => {
+                    if slice_space_vec[chunk_size as usize].contains(&(begin + chunk_size)) {
+                        //Merge space to reduce allocator.
+                        slice_space_vec[chunk_size as usize].remove(&(begin - chunk_size));
+                        chunk_size += chunk_size;
+                    } else {
+                        slice_space_vec[chunk_size as usize].insert(begin);
+                        self.slice_space += chunk_size;
+                        break;
+                    }
+                }
+                _ => {
+                    let num = chunk_size / 10;
+                    for index in 0..num {
+                        slice_space_vec[10].insert(begin * (index - 1));
+                        self.block_space += chunk_size;
+                    }
+                    if chunk_size - num * 10 == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+        true
     }
 }
 
@@ -86,8 +343,7 @@ impl BlockDevice {
 mod tests {
     use std::process::Command;
 
-    use super::{Allocator, BitmapAllocator, BlockDevice};
-
+    use super::{Allocator, BlockAllocator, BlockDevice};
     #[test]
     fn block_info_test() {
         Command::new("bash")
@@ -115,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn allocator_test() {
+    fn allocator_and_release_test() {
         Command::new("bash")
             .arg("-c")
             .arg("dd if=/dev/zero of=node1 bs=4M count=1")
@@ -126,9 +382,11 @@ mod tests {
             .arg("losetup /dev/loop8 node1")
             .output()
             .unwrap();
-        let allocator = BitmapAllocator::new("/dev/loop8");
-        let length = allocator.allocator_space(512 * 8 * 8);
-        assert_eq!(length + 8, 8);
+        let allocator = BlockAllocator::new("/dev/loop8");
+        let vec = allocator.allocator_space(512 * 8 * 8);
+        assert_eq!(1, vec.len());
+        let re = allocator.release_space(512 * 8 * 8, 0);
+        assert_eq!(re, true);
         Command::new("bash")
             .arg("-c")
             .arg("losetup -d /dev/loop8")

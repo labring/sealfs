@@ -3,9 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod allocator;
-/**
-*block device is use to bypass filesystem aimed to attain higher performance.
-*/
 pub mod index;
 pub mod io;
 
@@ -15,24 +12,33 @@ use crate::server::storage_engine::StorageEngine;
 use crate::server::EngineError;
 use nix::sys::stat::Mode;
 
-use allocator::{Allocator, BitmapAllocator, CHUNK};
+use allocator::{Allocator, BlockAllocator};
 use index::FileIndex;
 use io::Storage;
 
 use super::meta_engine::MetaEngine;
 
+/**
+*block device is use to bypass filesystem aimed to attain higher performance.
+*/
 #[allow(unused)]
 pub struct BlockEngine {
-    allocator: BitmapAllocator,
+    allocator: BlockAllocator,
     index: FileIndex,
     storage: Storage,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AllocatorEntry {
+    begin: u64,
+    length: u64,
 }
 
 impl StorageEngine for BlockEngine {
     fn new(root: &str, _meta: Arc<MetaEngine>) -> Self {
         let index = FileIndex::new();
         let storage = Storage::new(root);
-        let allocator = BitmapAllocator::new(root);
+        let allocator = BlockAllocator::new(root);
         Self {
             allocator,
             index,
@@ -44,12 +50,20 @@ impl StorageEngine for BlockEngine {
 
     fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
         let index_vec = self.index.search(path.as_str());
-        let real_offset_index = offset as u64 / CHUNK;
-        let real_offset = index_vec.get(real_offset_index as usize);
-        match real_offset {
-            Some(real_offset) => self.storage.read(size, *real_offset as i64),
-            None => Err(EngineError::IO),
+        if index_vec.is_empty() {
+            return Err(EngineError::IO);
         }
+        let iter = index_vec.iter();
+        let mut temp_offset = offset;
+        let mut real_offset = 0;
+        for index in iter {
+            temp_offset -= index.length as i64;
+            if temp_offset < 0 {
+                real_offset = (index.begin + index.length) as i64 + temp_offset;
+                break;
+            }
+        }
+        self.storage.read(size, real_offset)
     }
 
     fn open_file(&self, _path: String, _mode: Mode) -> Result<(), EngineError> {
@@ -57,21 +71,22 @@ impl StorageEngine for BlockEngine {
     }
 
     fn write_file(&self, path: String, data: &[u8], _offset: i64) -> Result<usize, EngineError> {
-        let pos = self.allocator.allocator_space(data.len() as u64);
-        let index_value_vec = self.index.search(path.as_str());
-        let mut vec = Vec::new();
-        let mut length = (data.len() as u64) / CHUNK;
-        if data.len() as u64 - length * CHUNK > 0 {
-            length += 1;
+        let allocator_vec = self.allocator.allocator_space(data.len() as u64);
+        if allocator_vec.is_empty() {
+            return Err(EngineError::Space);
         }
-        for n in 0..length {
-            vec.push(pos + n * CHUNK);
+        self.index
+            .update_index(path.as_str(), allocator_vec.clone());
+        let iter = allocator_vec.iter();
+        let mut result_size = 0;
+        for alloc in iter {
+            let size = self.storage.write(data, alloc.begin as i64);
+            match size {
+                Ok(size) => result_size += size,
+                Err(_) => return Err(EngineError::IO),
+            };
         }
-        self.index.update_index(path.as_str(), vec);
-        match index_value_vec.last() {
-            Some(last) => self.storage.write(data, (last + pos) as i64),
-            None => self.storage.write(data, pos as i64),
-        }
+        Ok(result_size)
     }
 
     fn create_file(&self, _path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
@@ -93,7 +108,8 @@ mod tests {
     use crate::server::storage_engine::StorageEngine;
 
     use super::BlockEngine;
-    use std::process::Command;
+    use super::MetaEngine;
+    use std::{process::Command, sync::Arc};
     #[test]
     fn write_and_read_test() {
         Command::new("bash")
@@ -106,7 +122,7 @@ mod tests {
             .arg("losetup /dev/loop8 node1")
             .output()
             .unwrap();
-        let engine = BlockEngine::new("", "/dev/loop8");
+        let engine = BlockEngine::new("/dev/loop8", Arc::new(MetaEngine::new("")));
         let write_size = engine
             .write_file("test".to_string(), &b"some bytes"[..], 0)
             .unwrap();

@@ -50,6 +50,9 @@ pub enum EngineError {
     #[error("EBLOCK")]
     BlockInfo,
 
+    #[error("ESPACE")]
+    Space,
+
     #[error("ENOTEMPTY")]
     NotEmpty,
 

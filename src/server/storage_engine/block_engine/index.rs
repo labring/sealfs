@@ -2,10 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::AllocatorEntry;
 use dashmap::DashMap;
 
 pub(crate) struct FileIndex {
-    index: DashMap<String, Vec<u64>>,
+    index: DashMap<String, Vec<AllocatorEntry>>,
 }
 
 impl FileIndex {
@@ -14,7 +15,7 @@ impl FileIndex {
         Self { index }
     }
 
-    pub(crate) fn search(&self, file_name: &str) -> Vec<u64> {
+    pub(crate) fn search(&self, file_name: &str) -> Vec<AllocatorEntry> {
         let value = self.index.get(file_name);
         match value {
             Some(entry) => entry.value().to_vec(),
@@ -22,23 +23,16 @@ impl FileIndex {
         }
     }
 
-    pub(crate) fn update_index(&self, path: &str, mut vec: Vec<u64>) {
+    pub(crate) fn update_index(&self, path: &str, mut vec: Vec<AllocatorEntry>) {
         let mut index_value_vec = self.search(path);
         index_value_vec.append(vec.as_mut());
         self.index.insert(path.to_string(), index_value_vec);
     }
 }
 
-#[derive(Clone, Copy)]
-#[allow(unused)]
-pub(crate) struct IndexEntry {
-    chunk: u64,
-    begin: u64,
-    length: u64,
-}
-
 #[cfg(test)]
 mod tests {
+    use super::AllocatorEntry;
     use super::FileIndex;
 
     #[test]
@@ -47,9 +41,15 @@ mod tests {
         let vec = index.search("test");
         assert_eq!(vec.is_empty(), true);
         let mut vec = Vec::new();
-        vec.push(1);
+        let alloc = AllocatorEntry {
+            begin: 0,
+            length: 1,
+        };
+        vec.push(alloc);
         index.update_index("test", vec);
         let mut vec = index.search("test");
-        assert_eq!(vec.pop(), Some(1));
+        let alloc = vec.pop().unwrap();
+        assert_eq!(alloc.begin, 0);
+        assert_eq!(alloc.length, 1);
     }
 }
