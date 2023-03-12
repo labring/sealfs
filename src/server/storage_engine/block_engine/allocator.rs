@@ -151,7 +151,7 @@ impl BlockGroup {
                         } else {
                             let mut iter = slice_space_vec[chunk_size as usize].iter();
                             let mut begin = 0;
-                            if let Some(slice) = iter.next(){
+                            if let Some(slice) = iter.next() {
                                 begin = *slice;
                             };
                             if borrow_size != 0 {
@@ -181,9 +181,10 @@ impl BlockGroup {
                                             }
                                             break;
                                         } else {
-                                            let mut iter = slice_space_vec[chunk_size as usize].iter();
+                                            let mut iter =
+                                                slice_space_vec[chunk_size as usize].iter();
                                             let mut begin = 0;
-                                            if let Some(slice) = iter.next(){
+                                            if let Some(slice) = iter.next() {
                                                 begin = *slice;
                                             };
                                             let alloc = AllocatorEntry {
@@ -224,7 +225,7 @@ impl BlockGroup {
                         } else {
                             let mut iter = slice_space_vec[chunk_size as usize].iter();
                             let mut begin = 0;
-                            if let Some(slice) = iter.next(){
+                            if let Some(slice) = iter.next() {
                                 begin = *slice;
                             }
                             if borrow_size != 0 {
