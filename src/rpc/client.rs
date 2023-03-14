@@ -82,13 +82,17 @@ impl Client {
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let connection = self.connections.get(server_address).unwrap();
-        let id = self
+        let (batch, id) = self
             .pool
             .register_callback(recv_meta_data, recv_data)
             .await?;
-        debug!("call_remote on {:?}, id: {}", server_address, id);
+        debug!(
+            "call_remote on {:?}, batch {}, id: {}",
+            server_address, batch, id
+        );
         connection
             .send_request(
+                batch,
                 id,
                 operation_type,
                 req_flags,
@@ -143,8 +147,40 @@ pub async fn parse_response(
                 break;
             }
         };
+        let batch = header.batch;
         let id = header.id;
         let total_length = header.total_length;
+
+        let result = {
+            match pool.lock_if_not_timeout(batch, id) {
+                Ok(_) => {
+                    debug!("parse_response: lock success");
+                    Ok(())
+                }
+                Err(_) => {
+                    debug!("parse_response: lock timeout");
+                    Err("lock timeout")
+                }
+            }
+        };
+        match result {
+            Ok(_) => {}
+            Err(e) => {
+                debug!("Error locking callback: {}", e);
+                let result = connection
+                    .clean_response(&mut read_stream, total_length)
+                    .await;
+                match result {
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("Error cleaning up response: {}", e);
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+
         let meta_data_result = {
             match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
                 Ok(meta_data_result) => Ok(meta_data_result),
