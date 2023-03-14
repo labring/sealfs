@@ -340,8 +340,11 @@ impl MetaEngine {
         self.file_attr_db
             .db
             .get(&path)
-            .map(|v| v.unwrap())
             .map_err(|_e| EngineError::IO)
+            .map(|v| match v {
+                Some(v) => Ok(v),
+                None => Err(EngineError::NoEntry),
+            })?
     }
 
     pub fn delete_file_attr(&self, path: &str) -> Result<(), EngineError> {
