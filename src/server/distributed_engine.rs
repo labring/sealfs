@@ -371,7 +371,11 @@ mod tests {
         storage_path: String,
         server_address: String,
     ) -> Arc<DistributedEngine<FileEngine>> {
-        let meta_engine = Arc::new(MetaEngine::new(&database_path));
+        let meta_engine = Arc::new(MetaEngine::new(
+            &database_path,
+            128 << 20,
+            128 * 1024 * 1024,
+        ));
         let local_storage = Arc::new(FileEngine::new(&storage_path, Arc::clone(&meta_engine)));
         local_storage.init();
 

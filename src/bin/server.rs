@@ -32,6 +32,10 @@ struct Args {
     #[arg(long)]
     database_path: Option<String>,
     #[arg(long)]
+    cache_capacity: Option<usize>,
+    #[arg(long)]
+    write_buffer_size: Option<usize>,
+    #[arg(long)]
     storage_path: Option<String>,
     #[arg(long)]
     heartbeat: Option<bool>,
@@ -52,6 +56,8 @@ struct Properties {
     all_servers_address: Vec<String>,
     lifetime: String,
     database_path: String,
+    cache_capacity: usize,
+    write_buffer_size: usize,
     storage_path: String,
     heartbeat: bool,
     log_level: String,
@@ -101,11 +107,16 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
             all_servers_address: args
                 .all_servers_address
                 .unwrap_or(default_properties.all_servers_address),
-
             lifetime: args.lifetime.unwrap_or(default_properties.lifetime),
             database_path: args
                 .database_path
                 .unwrap_or(default_properties.database_path),
+            cache_capacity: args
+                .cache_capacity
+                .unwrap_or(default_properties.cache_capacity),
+            write_buffer_size: args
+                .write_buffer_size
+                .unwrap_or(default_properties.write_buffer_size),
             storage_path: args.storage_path.unwrap_or(default_properties.storage_path),
             heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
             log_level: args.log_level.unwrap_or(default_properties.log_level),
@@ -150,6 +161,8 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         properties.storage_path,
         server_address,
         properties.all_servers_address.clone(),
+        properties.cache_capacity,
+        properties.write_buffer_size,
     )
     .await?;
     // Server::builder()

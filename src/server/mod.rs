@@ -90,9 +90,17 @@ pub async fn run(
     storage_path: String,
     server_address: String,
     all_servers_address: Vec<String>,
+    #[cfg(feature = "disk-db")] cache_capacity: usize,
+    #[cfg(feature = "disk-db")] write_buffer_size: usize,
 ) -> anyhow::Result<()> {
     debug!("run server");
-    let meta_engine = Arc::new(MetaEngine::new(&database_path));
+    let meta_engine = Arc::new(MetaEngine::new(
+        &database_path,
+        #[cfg(feature = "disk-db")]
+        cache_capacity,
+        #[cfg(feature = "disk-db")]
+        write_buffer_size,
+    ));
     let storage_engine = Arc::new(FileEngine::new(&storage_path, Arc::clone(&meta_engine)));
     storage_engine.init();
     build_hash_ring(all_servers_address.clone());

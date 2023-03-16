@@ -221,7 +221,7 @@ mod tests {
         let root = "/tmp/test_init";
         let db_path = "/tmp/test_db";
         {
-            let meta_engine = Arc::new(MetaEngine::new(db_path));
+            let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine);
             engine.init();
 
@@ -237,7 +237,7 @@ mod tests {
         }
 
         {
-            let meta_engine = Arc::new(MetaEngine::new(db_path));
+            let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine);
             engine.init();
             assert_eq!(
@@ -259,7 +259,7 @@ mod tests {
         let root = "/tmp/test_create_delete_file";
         let db_path = "/tmp/test_file_db";
         {
-            let meta_engine = Arc::new(MetaEngine::new(db_path));
+            let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
             let mode = Mode::S_IRUSR
@@ -278,7 +278,7 @@ mod tests {
         }
 
         {
-            let meta_engine = Arc::new(MetaEngine::new(db_path));
+            let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
             let mode = Mode::S_IRUSR
@@ -311,7 +311,7 @@ mod tests {
         let root = "/tmp/test_read_write_file";
         let db_path = "/tmp/test_rw_db";
         {
-            let meta_engine = Arc::new(MetaEngine::new(db_path));
+            let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
             let mode = Mode::S_IRUSR

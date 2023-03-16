@@ -4,8 +4,9 @@ use log::{debug, error};
 use nix::sys::stat::Mode;
 #[cfg(feature = "mem-db")]
 use pegasusdb::DB;
+use rocksdb::BlockBasedOptions;
 #[cfg(feature = "disk-db")]
-use rocksdb::{IteratorMode, Options, DB};
+use rocksdb::{Cache, IteratorMode, Options, DB};
 
 use crate::{
     common::serialization::FileAttrSimple,
@@ -31,38 +32,57 @@ pub struct MetaEngine {
 }
 
 impl MetaEngine {
-    pub fn new(db_path: &str) -> Self {
+    pub fn new(
+        db_path: &str,
+        #[cfg(feature = "disk-db")] cache_capacity: usize,
+        #[cfg(feature = "disk-db")] write_buffer_size: usize,
+    ) -> Self {
         #[cfg(feature = "disk-db")]
         let (file_db, dir_db, file_attr_db) = {
             let file_db = {
                 let mut db_opts = Options::default();
+                let mut block_opts = BlockBasedOptions::default();
+                let cache = Cache::new_lru_cache(cache_capacity).unwrap();
+                block_opts.set_block_cache(&cache);
+                db_opts.set_block_based_table_factory(&block_opts);
+                db_opts.set_write_buffer_size(write_buffer_size);
                 db_opts.create_if_missing(true);
                 let path = format!("{}_file", db_path);
                 let db = match DB::open(&db_opts, path.as_str()) {
                     Ok(db) => db,
-                    Err(_) => panic!("Failed to create db"),
+                    Err(e) => panic!("{}", e),
                 };
                 Database { db, db_opts, path }
             };
 
             let dir_db = {
                 let mut db_opts = Options::default();
+                let mut block_opts = BlockBasedOptions::default();
+                let cache = Cache::new_lru_cache(cache_capacity).unwrap();
+                block_opts.set_block_cache(&cache);
+                db_opts.set_block_based_table_factory(&block_opts);
+                db_opts.set_write_buffer_size(write_buffer_size);
                 db_opts.create_if_missing(true);
                 let path = format!("{}_dir", db_path);
                 let db = match DB::open(&db_opts, path.as_str()) {
                     Ok(db) => db,
-                    Err(_) => panic!("Failed to create db"),
+                    Err(e) => panic!("{}", e),
                 };
                 Database { db, db_opts, path }
             };
 
             let file_attr_db = {
                 let mut db_opts = Options::default();
+                let mut block_opts = BlockBasedOptions::default();
+                let cache = Cache::new_lru_cache(cache_capacity).unwrap();
+                block_opts.set_block_cache(&cache);
+                db_opts.set_block_based_table_factory(&block_opts);
+                db_opts.set_write_buffer_size(write_buffer_size);
                 db_opts.create_if_missing(true);
                 let path = format!("{}_file_attr", db_path);
                 let db = match DB::open(&db_opts, path.as_str()) {
                     Ok(db) => db,
-                    Err(_) => panic!("Failed to create db"),
+                    Err(e) => panic!("{}", e),
                 };
                 Database { db, db_opts, path }
             };
@@ -398,7 +418,7 @@ mod tests {
     fn test_create_delete_dir() {
         let db_path = "/tmp/test_dir_db";
         {
-            let engine = MetaEngine::new(db_path);
+            let engine = MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024);
             engine.init();
             engine.directory_add_entry("/", "a", 3).unwrap();
             let mode = Mode::S_IRUSR
@@ -423,7 +443,7 @@ mod tests {
         }
 
         {
-            let engine = MetaEngine::new(db_path);
+            let engine = MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024);
             engine.init();
             engine.directory_add_entry("/", "a1", 3).unwrap();
             let mode = Mode::S_IRUSR
