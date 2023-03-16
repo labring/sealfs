@@ -60,7 +60,8 @@ struct Properties {
 #[tokio::main]
 async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     // read from default configuration.
-    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+    let config_path =
+        std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "../../examples".to_string());
     let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "server.yaml"))
         .expect("server.yaml open failed!");
     let mut config_str = String::new();
