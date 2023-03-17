@@ -476,7 +476,7 @@ extern "C" fn dispatch(
                         }
                     }
                     *result = value.0;
-                    file_desc::set_offset(arg0 as i32, offset + value.1);
+                    file_desc::set_offset(arg0 as i32, value.1);
                 }
                 Err(e) => {
                     *result = -e as isize;
@@ -509,7 +509,7 @@ extern "C" fn dispatch(
                         }
                     }
                     *result = value.0;
-                    file_desc::set_offset(arg0 as i32, offset + value.1 as i64);
+                    file_desc::set_offset(arg0 as i32, value.1 as i64);
                 }
                 Err(e) => {
                     *result = -e as isize;
