@@ -4,7 +4,7 @@
 
 use libc::ioctl;
 use nix::fcntl::{open, OFlag};
-use std::{collections::HashSet};
+use std::collections::HashSet;
 
 use crossbeam_queue::ArrayQueue;
 
@@ -155,7 +155,7 @@ impl BlockGroup {
                             _ => {
                                 if if_need_borrow_from_smaller {
                                     chunk_size -= 1;
-                                    if chunk_size == 0{
+                                    if chunk_size == 0 {
                                         return Vec::new();
                                     }
                                 } else {
@@ -266,7 +266,7 @@ impl BlockGroup {
                     let mut allocator_size = 10;
                     loop {
                         if slice_space_vec[allocator_size as usize].is_empty() {
-                            if allocator_size == 0{
+                            if allocator_size == 0 {
                                 return Vec::new();
                             }
                             allocator_size -= 1;
@@ -448,19 +448,19 @@ mod tests {
             .arg("losetup /dev/loop8 node1")
             .output()
             .unwrap();
-        let mut allocator =BlockGroup::new(1024, 1);
+        let mut allocator = BlockGroup::new(1024, 1);
         let manager = &mut allocator.slice_space_manager;
         manager[10].insert(0);
         manager[10].insert(0);
         let vec = allocator.allocator_slice_space(6);
-        for alloc in vec  {
-            assert_eq!(alloc.length,6);
+        for alloc in vec {
+            assert_eq!(alloc.length, 6);
         }
         let vec = allocator.allocator_slice_space(11);
         let alloc = vec.get(0).unwrap();
-        assert_eq!(alloc.length,10);
+        assert_eq!(alloc.length, 10);
         let alloc = vec.get(1).unwrap();
-        assert_eq!(alloc.length,1);
+        assert_eq!(alloc.length, 1);
         Command::new("bash")
             .arg("-c")
             .arg("losetup -d /dev/loop8")
