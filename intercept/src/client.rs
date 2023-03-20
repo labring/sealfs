@@ -8,8 +8,8 @@ use libc::{dirent64, iovec, O_CREAT, O_DIRECTORY};
 use log::debug;
 use sealfs::common::distribute_hash_table::{hash, index_selector};
 use sealfs::common::serialization::{
-    FileAttrSimple, LinuxDirent, OperationType, ReadDirRecvMetaData, ReadDirSendMetaData,
-    ReadFileSendMetaData, TruncateFileSendMetaData,
+    FileAttrSimple, LinuxDirent, OperationType, ReadDirSendMetaData, ReadFileSendMetaData,
+    TruncateFileSendMetaData,
 };
 use sealfs::{offset_of, rpc};
 pub struct Client {
@@ -226,7 +226,6 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; std::mem::size_of::<ReadDirRecvMetaData>()];
         let mut recv_data = vec![0u8; dirp.len()];
 
         if let Err(_) = self.handle.block_on(self.client.call_remote(
@@ -240,7 +239,7 @@ impl Client {
             &mut rsp_flags,
             &mut recv_meta_data_length,
             &mut recv_data_length,
-            &mut recv_meta_data,
+            &mut [],
             &mut recv_data,
         )) {
             return Err(libc::EIO);
@@ -249,40 +248,46 @@ impl Client {
             return Err(status);
         }
 
-        let md = bincode::deserialize::<ReadDirRecvMetaData>(&recv_meta_data).unwrap();
-
+        let dirp_len = dirp.len();
         let mut dirp_ptr = dirp.as_ptr();
         let mut total = 0;
-        let mut recv_dirp_ptr = recv_data.as_ptr();
         let mut recv_total = 0;
-        let mut fd_offset = 0;
-        while recv_total < md.size && total < (dirp.len() as u32) {
+        let mut offset = dirp_offset;
+        while recv_total < recv_data_length {
             let dirp = unsafe { &mut (*(dirp_ptr as *mut LinuxDirent)) };
-            let recv_dirp = unsafe { *(recv_dirp_ptr as *const dirent64) };
-            let name_len = recv_dirp.d_reclen - offset_of!(dirent64, d_name) as u16;
+            let r#type =
+                u8::from_le_bytes(recv_data[recv_total..recv_total + 1].try_into().unwrap());
 
-            dirp.d_ino = recv_dirp.d_ino;
-            dirp.d_off = recv_dirp.d_off;
-            dirp.d_reclen = offset_of!(LinuxDirent, d_name) as u16 + name_len + 1;
+            let name_len = u16::from_le_bytes(
+                recv_data[recv_total + 1..recv_total + 3]
+                    .try_into()
+                    .unwrap(),
+            );
+            debug!("type: {} {}", r#type, name_len);
+            if total + offset_of!(LinuxDirent, d_name) + name_len as usize + 2 > dirp_len {
+                break;
+            }
+            dirp.d_ino = 1;
+            dirp.d_off = offset;
+            dirp.d_reclen = offset_of!(LinuxDirent, d_name) as u16 + name_len + 2;
             unsafe {
                 std::ptr::copy(
-                    recv_dirp.d_name.as_ptr(),
+                    recv_data[recv_total + 3..recv_total + 3 + name_len as usize].as_ptr()
+                        as *const i8,
                     dirp.d_name.as_mut_ptr(),
                     name_len as usize,
                 );
                 let name_after = dirp.d_name.as_mut_ptr().add(name_len as usize) as *mut u8;
-                *name_after = recv_dirp.d_type;
-
+                *name_after = b'\0';
+                *name_after.add(1) = r#type;
                 dirp_ptr = dirp_ptr.add(dirp.d_reclen as usize);
-                recv_dirp_ptr = recv_dirp_ptr.add(recv_dirp.d_reclen as usize);
             }
-            fd_offset += 1;
-
-            total += dirp.d_reclen as u32;
-            recv_total += recv_dirp.d_reclen as u32;
+            offset += 1;
+            total += dirp.d_reclen as usize;
+            recv_total += (name_len + 3) as usize;
         }
         debug!("getdents_remote {}", pathname);
-        Ok((total as isize, fd_offset))
+        Ok((total as isize, offset))
     }
 
     pub fn getdents64_remote(
@@ -305,8 +310,7 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        // todo: The entries needs to be stored one by one
-        let mut recv_meta_data = vec![0u8; std::mem::size_of::<ReadDirRecvMetaData>()];
+        let mut recv_data = vec![0u8; dirp.len()];
 
         if let Err(_) = self.handle.block_on(self.client.call_remote(
             &server_address,
@@ -319,17 +323,52 @@ impl Client {
             &mut rsp_flags,
             &mut recv_meta_data_length,
             &mut recv_data_length,
-            &mut recv_meta_data,
-            dirp,
+            &mut [],
+            &mut recv_data,
         )) {
             return Err(libc::EIO);
         }
         if status != 0 {
             return Err(status);
         }
-        let md = bincode::deserialize::<ReadDirRecvMetaData>(&recv_meta_data).unwrap();
 
-        Ok((md.size as isize, md.offset))
+        let dirp_len = dirp.len();
+        let mut dirp_ptr = dirp.as_ptr();
+        let mut total = 0;
+        let mut recv_total = 0;
+        let mut offset = dirp_offset;
+        while recv_total < recv_data_length {
+            let dirp = unsafe { &mut (*(dirp_ptr as *mut dirent64)) };
+            let r#type =
+                u8::from_le_bytes(recv_data[recv_total..recv_total + 1].try_into().unwrap());
+            let name_len = u16::from_le_bytes(
+                recv_data[recv_total + 1..recv_total + 3]
+                    .try_into()
+                    .unwrap(),
+            );
+            if total + offset_of!(dirent64, d_name) + name_len as usize + 1 > dirp_len {
+                break;
+            }
+            dirp.d_ino = 1;
+            dirp.d_off = offset;
+            dirp.d_reclen = offset_of!(dirent64, d_name) as u16 + name_len + 1;
+            dirp.d_type = r#type;
+            unsafe {
+                std::ptr::copy(
+                    recv_data[recv_total + 3..recv_total + 3 + name_len as usize].as_ptr()
+                        as *const i8,
+                    dirp.d_name.as_mut_ptr(),
+                    name_len as usize,
+                );
+                let name_after = dirp.d_name.as_mut_ptr().add(name_len as usize) as *mut u8;
+                *name_after = b'\0';
+                dirp_ptr = dirp_ptr.add(dirp.d_reclen as usize);
+            }
+            offset += 1;
+            total += dirp.d_reclen as usize;
+            recv_total += (name_len + 3) as usize;
+        }
+        Ok((total as isize, offset))
     }
 
     pub fn unlink_remote(&self, pathname: &str) -> Result<(), i32> {

@@ -351,9 +351,3 @@ pub struct ReadDirSendMetaData {
     pub offset: i64,
     pub size: u32,
 }
-
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct ReadDirRecvMetaData {
-    pub offset: i64,
-    pub size: u32,
-}
