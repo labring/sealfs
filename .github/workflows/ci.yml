@@ -21,7 +21,7 @@ env:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v3
         with:
@@ -31,69 +31,73 @@ jobs:
           profile: minimal
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
-      - uses: Swatinem/rust-cache@v2
-      - run: make install_deps 
-      - run: make build
-      - run: make build features=mem-db 
 
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-      - uses: actions-rs/toolchain@v1.0.6
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-      - uses: Swatinem/rust-cache@v2
-      - run: make install_deps
-      - run: cargo check --features=disk-db
-      - run: cargo check --features=mem-db
+      - name: Copy cache
+        run: |
+          mkdir -p /data/actions/_work/sealfs/sealfs/target
+          if [ -d /data/backup/debug ]; then
+            mv /data/backup/debug /data/actions/_work/sealfs/sealfs/target
+          fi
+         
+      - name: Install dependences
+        id: install_deps
+        run: make install_deps 
 
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1.0.6
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-      - uses: Swatinem/rust-cache@v2
-      - run: make install_deps
-      - run: make test
-      - run: make test features=mem-db
+      - name: Build
+        id: make-build
+        run:  |
+          make build
+          make build features=mem-db
+        continue-on-error: true
+      
+      - name: Check
+        id: cargo-check
+        run:  |
+          cargo check --features=disk-db
+          cargo check --features=mem-db
+        continue-on-error: true
+      
+      
+      - name: Test Suite
+        id: make-test
+        run:  |
+          make test
+          make test features=mem-db
+        continue-on-error: true
+      
+      - name: Clippy
+        id: cargo-clippy
+        run:  |
+          rustup component add clippy
+          cargo clippy --features=disk-db -- -D warnings
+          cargo clippy --features=mem-db -- -D warnings
+        continue-on-error: true
 
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1.0.6
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-      - uses: Swatinem/rust-cache@v2
-      - run: rustup component add rustfmt
-      - run: cargo fmt --all -- --check
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1.0.6
-        with:
-          profile: minimal
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          override: true
-      - uses: Swatinem/rust-cache@v2
-      - run: make install_deps
-      - run: rustup component add clippy
-      - run: cargo clippy --features=disk-db -- -D warnings
-      - run: cargo clippy --features=mem-db -- -D warnings
+      - name: Rustfmt
+        id: cargo-fmt
+        run:  |
+          rustup component add rustfmt
+          cargo fmt --all -- --check
+        continue-on-error: true
+
+      - name: Backup Temporary
+        run: |
+          if [ -d /data/actions/_work/sealfs/sealfs/target/debug ]; then
+            if [ -d /data/backup/debug ]; then
+              rm -rf /data/backup/debug
+            fi
+            mv /data/actions/_work/sealfs/sealfs/target/debug /data/backup
+          fi
+      
+      - if: ${{ steps.install_deps.outcome == 'success' }}
+        name: Summary
+        run: |
+          echo "Build: ${{ steps.make-build.outcome }}"
+          echo "Check: ${{ steps.cargo-check.outcome }}"
+          echo "Test: ${{ steps.make-test.outcome }}"
+          echo "Clippy: ${{ steps.cargo-clippy.outcome }}"
+          echo "Rustfmt: ${{ steps.cargo-fmt.outcome }}"
+          if [ "${{ steps.make-build.outcome }}" != "success" ] || [ "${{ steps.cargo-check.outcome }}" != "success" ] || [ "${{ steps.make-test.outcome }}" != "success" ] || [ "${{ steps.cargo-clippy.outcome }}" != "success" ] || [ "${{ steps.cargo-fmt.outcome }}" != "success" ]; then
+            exit 1
+          fi

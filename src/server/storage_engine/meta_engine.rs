@@ -1,4 +1,4 @@
-use libc::{dirent64, DT_DIR, DT_LNK, DT_REG};
+use libc::{DT_DIR, DT_LNK, DT_REG};
 use log::{debug, error};
 use nix::sys::stat::Mode;
 #[cfg(feature = "mem-db")]
@@ -7,8 +7,7 @@ use pegasusdb::DB;
 use rocksdb::{IteratorMode, Options, DB};
 
 use crate::{
-    common::serialization::{FileAttrSimple, ReadDirRecvMetaData, SubDirectory},
-    offset_of,
+    common::serialization::{FileAttrSimple, SubDirectory},
     server::{path_split, EngineError},
 };
 
@@ -123,7 +122,7 @@ impl MetaEngine {
         path: &str,
         size: u32,
         offset: i64,
-    ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
+    ) -> Result<Vec<u8>, EngineError> {
         if let Some(value) = self.file_attr_db.db.get(path.as_bytes())? {
             // debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
             match bincode::deserialize::<FileAttrSimple>(&value) {
@@ -142,48 +141,26 @@ impl MetaEngine {
             Some(value) => match bincode::deserialize::<SubDirectory>(&value) {
                 Ok(sub_dir) => {
                     let iter = sub_dir.sub_dir.iter().skip(offset as usize);
-                    let result = vec![0u8; size as usize];
-                    let mut dirp_ptr = result.as_slice().as_ptr();
+                    let mut result = Vec::with_capacity(size as usize);
                     let mut total = 0;
-                    let mut offset = 0;
                     for value in iter {
-                        let reclen = offset_of!(dirent64, d_name) as u16 + value.0.len() as u16 + 1;
-                        if total + reclen as u32 > size {
+                        let r#type = match value.1.as_bytes()[0] {
+                            b'f' => DT_REG,
+                            b'd' => DT_DIR,
+                            b's' => DT_LNK,
+                            _ => DT_REG,
+                        };
+                        let reclen = value.0.len() + 3;
+                        if total + reclen > size as usize {
                             break;
                         }
-                        unsafe {
-                            (*(dirp_ptr as *mut dirent64)).d_ino = 1;
-                            (*(dirp_ptr as *mut dirent64)).d_off = 2;
-                            (*(dirp_ptr as *mut dirent64)).d_reclen = reclen;
-                            (*(dirp_ptr as *mut dirent64)).d_type = match value.1.as_bytes()[0] {
-                                b'f' => DT_REG,
-                                b'd' => DT_DIR,
-                                b's' => DT_LNK,
-                                _ => DT_REG,
-                            };
-                            std::ptr::copy(
-                                value.0.as_bytes().to_vec().as_ptr(),
-                                (*(dirp_ptr as *mut dirent64)).d_name.as_mut_ptr() as *mut u8,
-                                value.0.len(),
-                            );
-                            let name_after = (*(dirp_ptr as *mut dirent64))
-                                .d_name
-                                .as_mut_ptr()
-                                .add(value.0.len())
-                                as *mut u8;
-                            *name_after = b'\0';
-                            dirp_ptr = dirp_ptr.add(reclen as usize);
-                        }
-                        offset += 1;
-                        total += reclen as u32;
+                        result.extend_from_slice(&r#type.to_le_bytes());
+                        result.extend_from_slice(&(value.0.len() as u16).to_le_bytes());
+                        result.extend_from_slice(value.0.as_bytes());
+                        total += reclen;
                     }
 
-                    let md = bincode::serialize(&ReadDirRecvMetaData {
-                        size: total,
-                        offset,
-                    })
-                    .unwrap();
-                    Ok((md, result))
+                    Ok(result)
                 }
                 Err(e) => {
                     error!("deserialize error: {:?}", e);
@@ -340,8 +317,11 @@ impl MetaEngine {
         self.file_attr_db
             .db
             .get(&path)
-            .map(|v| v.unwrap())
             .map_err(|_e| EngineError::IO)
+            .map(|v| match v {
+                Some(v) => Ok(v),
+                None => Err(EngineError::NoEntry),
+            })?
     }
 
     pub fn delete_file_attr(&self, path: &str) -> Result<(), EngineError> {

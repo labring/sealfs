@@ -173,7 +173,7 @@ where
         path: String,
         size: u32,
         offset: i64,
-    ) -> Result<(Vec<u8>, Vec<u8>), EngineError> {
+    ) -> Result<Vec<u8>, EngineError> {
         self.meta_engine.read_directory(&path, size, offset)
     }
 

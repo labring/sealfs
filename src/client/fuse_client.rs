@@ -4,8 +4,7 @@
 
 use crate::common::distribute_hash_table::{hash, index_selector};
 use crate::common::serialization::{
-    FileAttrSimple, OperationType, ReadDirRecvMetaData, ReadDirSendMetaData, ReadFileSendMetaData,
-    WriteFileSendMetaData,
+    FileAttrSimple, OperationType, ReadDirSendMetaData, ReadFileSendMetaData, WriteFileSendMetaData,
 };
 use crate::rpc;
 use dashmap::DashMap;
@@ -14,9 +13,9 @@ use fuser::{
     ReplyWrite,
 };
 use lazy_static::lazy_static;
-use libc::{dirent64, DT_DIR, DT_LNK, DT_REG};
+use libc::{DT_DIR, DT_LNK, DT_REG};
 use log::debug;
-use std::ffi::{CStr, OsStr};
+use std::ffi::OsStr;
 use std::ops::Deref;
 use std::time::Duration;
 const TTL: Duration = Duration::from_secs(1); // 1 second
@@ -341,7 +340,6 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; std::mem::size_of::<ReadDirRecvMetaData>()];
         let mut recv_data = vec![0u8; size];
 
         let result = self.handle.block_on(self.client.call_remote(
@@ -355,7 +353,7 @@ impl Client {
             &mut rsp_flags,
             &mut recv_meta_data_length,
             &mut recv_data_length,
-            &mut recv_meta_data,
+            &mut [],
             &mut recv_data,
         ));
         match result {
@@ -368,27 +366,31 @@ impl Client {
                     "readdir_remote recv_data: {:?}",
                     &recv_data[..recv_data_length]
                 );
-                let md = bincode::deserialize::<ReadDirRecvMetaData>(&recv_meta_data).unwrap();
-                let mut dirp_ptr = recv_data.as_ptr();
                 let mut total = 0;
                 let mut offset = offset;
-                while total < md.size {
-                    let dirp = unsafe { *(dirp_ptr as *const dirent64) };
-                    let kind = match dirp.d_type {
+                while total < recv_data_length {
+                    let r#type = u8::from_le_bytes(recv_data[total..total + 1].try_into().unwrap());
+                    let name_len =
+                        u16::from_le_bytes(recv_data[total + 1..total + 3].try_into().unwrap());
+                    let name = String::from_utf8(
+                        recv_data[total + 3..total + 3 + name_len as usize]
+                            .try_into()
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    let kind = match r#type {
                         DT_REG => fuser::FileType::RegularFile,
                         DT_DIR => fuser::FileType::Directory,
                         DT_LNK => fuser::FileType::Symlink,
                         _ => fuser::FileType::RegularFile,
                     };
-                    let name = unsafe { CStr::from_ptr(dirp.d_name.as_ptr()).to_str().unwrap() };
                     offset += 1;
-                    let r = reply.add(dirp.d_ino, offset, kind, name);
+                    let r = reply.add(1, offset, kind, name);
                     if r {
                         break;
                     }
 
-                    total += dirp.d_reclen as u32;
-                    dirp_ptr = unsafe { dirp_ptr.add(dirp.d_reclen as usize) };
+                    total += 3 + name_len as usize;
                 }
 
                 reply.ok();

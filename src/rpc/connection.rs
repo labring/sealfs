@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::io::IoSlice;
+
 use crate::rpc::protocol::{
-    RequestHeader, ResponseHeader, MAX_COPY_LENGTH, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH,
-    MAX_METADATA_LENGTH, REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
+    RequestHeader, ResponseHeader, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH, MAX_METADATA_LENGTH,
+    REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
 };
 use log::{debug, error};
 use tokio::{
@@ -61,10 +63,12 @@ impl ClientConnection {
     }
 
     // request
-    // | id | type | flags | total_length | file_path_length | meta_data_length | data_length | filename | meta_data | data |
-    // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 0~ | 0~ |
+    // | batch | id | type | flags | total_length | file_path_length | meta_data_length | data_length | filename | meta_data | data |
+    // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 1~4kB | 0~ | 0~ |
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_request(
         &self,
+        batch: u32,
         id: u32,
         operation_type: u32,
         flags: u32,
@@ -77,10 +81,11 @@ impl ClientConnection {
         let data_length = data.len();
         let total_length = filename_length + meta_data_length + data_length;
         debug!(
-            "send_request id: {}, type: {}, flags: {}, total_length: {}, filname_length: {}, meta_data_length, {}, data_length: {}, filename: {:?}, meta_data: {:?}",
-            id, operation_type, flags, total_length, filename_length, meta_data_length, data_length, filename, meta_data
+            "send_request batch: {}, id: {}, type: {}, flags: {}, total_length: {}, filname_length: {}, meta_data_length, {}, data_length: {}, filename: {:?}, meta_data: {:?}",
+            batch, id, operation_type, flags, total_length, filename_length, meta_data_length, data_length, filename, meta_data
         );
         let mut request = Vec::with_capacity(total_length + REQUEST_HEADER_SIZE);
+        request.extend_from_slice(&batch.to_le_bytes());
         request.extend_from_slice(&id.to_le_bytes());
         request.extend_from_slice(&operation_type.to_le_bytes());
         request.extend_from_slice(&flags.to_le_bytes());
@@ -89,21 +94,31 @@ impl ClientConnection {
         request.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
         request.extend_from_slice(&(data_length as u32).to_le_bytes());
         request.extend_from_slice(filename.as_bytes());
-        if total_length < MAX_COPY_LENGTH {
-            request.extend_from_slice(meta_data);
-            request.extend_from_slice(data);
-            self.write_stream
-                .as_ref()
-                .unwrap()
-                .lock()
-                .await
-                .write_all(&request)
-                .await?;
-        } else {
-            let mut g = self.write_stream.as_ref().unwrap().lock().await;
-            g.write_all(&request).await?;
-            g.write_all(meta_data).await?;
-            g.write_all(data).await?;
+        let mut stream = self.write_stream.as_ref().unwrap().lock().await;
+        let mut offset = 0;
+        loop {
+            if offset >= request.len() + meta_data_length + data_length {
+                break;
+            }
+            if offset < request.len() {
+                let bufs: &[_] = &[
+                    IoSlice::new(&request[offset..]),
+                    IoSlice::new(meta_data),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else if offset < request.len() + meta_data_length {
+                let bufs: &[_] = &[
+                    IoSlice::new(&meta_data[offset - request.len()..]),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else {
+                let bufs: &[_] = &[IoSlice::new(
+                    &data[offset - request.len() - meta_data_length..],
+                )];
+                offset += stream.write_vectored(bufs).await?;
+            }
         }
         Ok(())
     }
@@ -118,17 +133,19 @@ impl ClientConnection {
             RESPONSE_HEADER_SIZE
         );
         self.receive(read_stream, &mut header).await?;
-        let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-        let status = i32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        let flags = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-        let total_length = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-        let meta_data_length = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
-        let data_length = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
+        let batch = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        let id = u32::from_le_bytes(header[4..8].try_into().unwrap());
+        let status = i32::from_le_bytes(header[8..12].try_into().unwrap());
+        let flags = u32::from_le_bytes(header[12..16].try_into().unwrap());
+        let total_length = u32::from_le_bytes(header[16..20].try_into().unwrap());
+        let meta_data_length = u32::from_le_bytes(header[20..24].try_into().unwrap());
+        let data_length = u32::from_le_bytes(header[24..28].try_into().unwrap());
         debug!(
-            "received response_header id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}",
-            id, status, flags, total_length, meta_data_length, data_length
+            "received response_header batch: {}, id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}",
+            batch, id, status, flags, total_length, meta_data_length, data_length
         );
         Ok(ResponseHeader {
+            batch,
             id,
             status,
             flags,
@@ -221,10 +238,11 @@ impl ServerConnection {
     }
 
     // response
-    // | id | status | flags | total_length | meta_data_lenght | data_length | meta_data | data |
-    // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 0~ | 0~ |
+    // | batch | id | status | flags | total_length | meta_data_lenght | data_length | meta_data | data |
+    // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 0~ | 0~ |
     pub async fn send_response(
         &self,
+        batch: u32,
         id: u32,
         status: i32,
         flags: u32,
@@ -238,21 +256,38 @@ impl ServerConnection {
             "{} response id: {}, status: {}, flags: {}, total_length: {}, meta_data_length: {}, data_length: {}, meta_data: {:?}",
             self.name_id, id, status, flags, total_length, meta_data_length, data_length, meta_data);
         let mut response = Vec::with_capacity(RESPONSE_HEADER_SIZE + total_length);
+        response.extend_from_slice(&batch.to_le_bytes());
         response.extend_from_slice(&id.to_le_bytes());
         response.extend_from_slice(&status.to_le_bytes());
         response.extend_from_slice(&flags.to_le_bytes());
         response.extend_from_slice(&(total_length as u32).to_le_bytes());
         response.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
         response.extend_from_slice(&(data_length as u32).to_le_bytes());
-        if total_length < MAX_COPY_LENGTH {
-            response.extend_from_slice(meta_data);
-            response.extend_from_slice(data);
-            self.write_stream.lock().await.write_all(&response).await?;
-        } else {
-            let mut g = self.write_stream.lock().await;
-            g.write_all(&response).await?;
-            g.write_all(meta_data).await?;
-            g.write_all(data).await?;
+        let mut stream = self.write_stream.lock().await;
+        let mut offset = 0;
+        loop {
+            if offset >= response.len() + meta_data_length + data_length {
+                break;
+            }
+            if offset < response.len() {
+                let bufs: &[_] = &[
+                    IoSlice::new(&response[offset..]),
+                    IoSlice::new(meta_data),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else if offset < response.len() + meta_data_length {
+                let bufs: &[_] = &[
+                    IoSlice::new(&meta_data[offset - response.len()..]),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else {
+                let bufs: &[_] = &[IoSlice::new(
+                    &data[offset - response.len() - meta_data_length..],
+                )];
+                offset += stream.write_vectored(bufs).await?;
+            }
         }
         Ok(())
     }
@@ -267,18 +302,20 @@ impl ServerConnection {
             self.name_id, REQUEST_HEADER_SIZE
         );
         self.receive(read_stream, &mut header).await?;
-        let id = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
-        let operation_type = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
-        let flags: u32 = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-        let total_length = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-        let file_path_length = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
-        let meta_data_length = u32::from_le_bytes([header[20], header[21], header[22], header[23]]);
-        let data_length = u32::from_le_bytes([header[24], header[25], header[26], header[27]]);
+        let batch = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        let id = u32::from_le_bytes(header[4..8].try_into().unwrap());
+        let operation_type = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let flags: u32 = u32::from_le_bytes(header[12..16].try_into().unwrap());
+        let total_length = u32::from_le_bytes(header[16..20].try_into().unwrap());
+        let file_path_length = u32::from_le_bytes(header[20..24].try_into().unwrap());
+        let meta_data_length = u32::from_le_bytes(header[24..28].try_into().unwrap());
+        let data_length = u32::from_le_bytes(header[28..32].try_into().unwrap());
         debug!(
-            "{} received request header: id: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
-            self.name_id, id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
+            "{} received request header: batch: {}, id: {}, type: {}, flags: {}, total_length: {}, file_path_length: {}, meta_data_length: {}, data_length: {}",
+            self.name_id, batch, id, operation_type, flags, total_length, file_path_length, meta_data_length, data_length
         );
         Ok(RequestHeader {
+            batch,
             id,
             r#type: operation_type,
             flags,
