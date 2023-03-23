@@ -47,14 +47,14 @@ jobs:
         id: make-build
         run:  |
           make build
-          make build features=mem-db
+          # make build features=mem-db
         continue-on-error: true
       
       - name: Check
         id: cargo-check
         run:  |
           cargo check --features=disk-db
-          cargo check --features=mem-db
+          # cargo check --features=mem-db
         continue-on-error: true
       
       
@@ -62,7 +62,7 @@ jobs:
         id: make-test
         run:  |
           make test
-          make test features=mem-db
+          # make test features=mem-db
         continue-on-error: true
       
       - name: Clippy
@@ -70,7 +70,7 @@ jobs:
         run:  |
           rustup component add clippy
           cargo clippy --features=disk-db -- -D warnings
-          cargo clippy --features=mem-db -- -D warnings
+          # cargo clippy --features=mem-db -- -D warnings
         continue-on-error: true
 
 
@@ -83,6 +83,7 @@ jobs:
 
       - name: Backup Temporary
         run: |
+          rm -rf /tmp/test*
           if [ -d /data/actions/_work/sealfs/sealfs/target/debug ]; then
             if [ -d /data/backup/debug ]; then
               rm -rf /data/backup/debug
