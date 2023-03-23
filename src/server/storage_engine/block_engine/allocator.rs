@@ -182,8 +182,7 @@ impl BlockGroup {
 
     fn allocator_slice_space(&mut self, chunk_size: u64) -> Vec<AllocatorEntry> {
         let mut result_vec = Vec::new();
-        let mut chunk_size_vec = Vec::new();
-        chunk_size_vec.push(chunk_size);
+        let mut chunk_size_vec = vec![chunk_size];
         let slice_space_vec = &mut self.slice_space_manager;
         let mut borrow_size = NOBORROW;
         let mut if_need_borrow_from_smaller = false;
