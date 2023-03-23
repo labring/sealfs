@@ -2,9 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::io::IoSlice;
+
 use crate::rpc::protocol::{
-    RequestHeader, ResponseHeader, MAX_COPY_LENGTH, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH,
-    MAX_METADATA_LENGTH, REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
+    RequestHeader, ResponseHeader, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH, MAX_METADATA_LENGTH,
+    REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
 };
 use log::{debug, error};
 use tokio::{
@@ -92,21 +94,31 @@ impl ClientConnection {
         request.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
         request.extend_from_slice(&(data_length as u32).to_le_bytes());
         request.extend_from_slice(filename.as_bytes());
-        if total_length < MAX_COPY_LENGTH {
-            request.extend_from_slice(meta_data);
-            request.extend_from_slice(data);
-            self.write_stream
-                .as_ref()
-                .unwrap()
-                .lock()
-                .await
-                .write_all(&request)
-                .await?;
-        } else {
-            let mut g = self.write_stream.as_ref().unwrap().lock().await;
-            g.write_all(&request).await?;
-            g.write_all(meta_data).await?;
-            g.write_all(data).await?;
+        let mut stream = self.write_stream.as_ref().unwrap().lock().await;
+        let mut offset = 0;
+        loop {
+            if offset >= request.len() + meta_data_length + data_length {
+                break;
+            }
+            if offset < request.len() {
+                let bufs: &[_] = &[
+                    IoSlice::new(&request[offset..]),
+                    IoSlice::new(meta_data),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else if offset < request.len() + meta_data_length {
+                let bufs: &[_] = &[
+                    IoSlice::new(&meta_data[offset - request.len()..]),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else {
+                let bufs: &[_] = &[IoSlice::new(
+                    &data[offset - request.len() - meta_data_length..],
+                )];
+                offset += stream.write_vectored(bufs).await?;
+            }
         }
         Ok(())
     }
@@ -251,15 +263,31 @@ impl ServerConnection {
         response.extend_from_slice(&(total_length as u32).to_le_bytes());
         response.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
         response.extend_from_slice(&(data_length as u32).to_le_bytes());
-        if total_length < MAX_COPY_LENGTH {
-            response.extend_from_slice(meta_data);
-            response.extend_from_slice(data);
-            self.write_stream.lock().await.write_all(&response).await?;
-        } else {
-            let mut g = self.write_stream.lock().await;
-            g.write_all(&response).await?;
-            g.write_all(meta_data).await?;
-            g.write_all(data).await?;
+        let mut stream = self.write_stream.lock().await;
+        let mut offset = 0;
+        loop {
+            if offset >= response.len() + meta_data_length + data_length {
+                break;
+            }
+            if offset < response.len() {
+                let bufs: &[_] = &[
+                    IoSlice::new(&response[offset..]),
+                    IoSlice::new(meta_data),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else if offset < response.len() + meta_data_length {
+                let bufs: &[_] = &[
+                    IoSlice::new(&meta_data[offset - response.len()..]),
+                    IoSlice::new(data),
+                ];
+                offset += stream.write_vectored(bufs).await?;
+            } else {
+                let bufs: &[_] = &[IoSlice::new(
+                    &data[offset - response.len() - meta_data_length..],
+                )];
+                offset += stream.write_vectored(bufs).await?;
+            }
         }
         Ok(())
     }
