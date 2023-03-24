@@ -194,7 +194,7 @@ where
                 debug!("Create File");
                 let (meta_data, status) = match self.engine.create_file(file_path, mode).await {
                     Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
                 Ok((status, 0, meta_data, Vec::new()))
             }
@@ -202,7 +202,7 @@ where
                 debug!("Create Dir");
                 let (meta_data, status) = match self.engine.create_dir(file_path, mode).await {
                     Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
                 Ok((status, 0, meta_data, Vec::new()))
             }
@@ -210,7 +210,7 @@ where
                 debug!("Get File Attr");
                 let (meta_data, status) = match self.engine.get_file_attr(file_path).await {
                     Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
                 Ok((status, 0, meta_data, Vec::new()))
             }
@@ -218,7 +218,7 @@ where
                 debug!("Open File {}", file_path);
                 let status = match self.engine.open_file(file_path, mode).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as i32,
+                    Err(e) => EngineErr2Status!(e),
                 };
                 Ok((status, 0, Vec::new(), Vec::new()))
             }
@@ -228,7 +228,7 @@ where
                 let (data, status) = match self.engine.read_dir(file_path, md.size, md.offset).await
                 {
                     Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                    Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
                 Ok((status, 0, Vec::new(), data))
             }
@@ -238,7 +238,7 @@ where
                 let (data, status) =
                     match self.engine.read_file(file_path, md.size, md.offset).await {
                         Ok(value) => (value, 0),
-                        Err(e) => (Vec::new(), EngineErr2Status!(e) as i32),
+                        Err(e) => (Vec::new(), EngineErr2Status!(e)),
                     };
                 Ok((status, 0, Vec::new(), data))
             }
@@ -251,7 +251,7 @@ where
                     .await
                 {
                     Ok(size) => (0, size as u32),
-                    Err(e) => (EngineErr2Status!(e) as i32, 0),
+                    Err(e) => (EngineErr2Status!(e), 0),
                 };
                 Ok((status, 0, size.to_le_bytes().to_vec(), Vec::new()))
             }
@@ -259,7 +259,7 @@ where
                 debug!("Delete File");
                 let status = match self.engine.delete_file(file_path).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as i32,
+                    Err(e) => EngineErr2Status!(e),
                 };
                 Ok((status, 0, Vec::new(), Vec::new()))
             }
@@ -267,7 +267,7 @@ where
                 debug!("Delete Dir");
                 let status = match self.engine.delete_dir(file_path).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as i32,
+                    Err(e) => EngineErr2Status!(e),
                 };
                 Ok((status, 0, Vec::new(), Vec::new()))
             }
@@ -298,7 +298,7 @@ where
                 let md: TruncateFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let status = match self.engine.truncate_file(file_path, md.length).await {
                     Ok(()) => 0,
-                    Err(e) => EngineErr2Status!(e) as i32,
+                    Err(e) => EngineErr2Status!(e),
                 };
                 Ok((status, 0, Vec::new(), Vec::new()))
             }

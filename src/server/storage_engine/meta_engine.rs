@@ -303,12 +303,12 @@ impl MetaEngine {
 
     pub fn put_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, EngineError> {
         let value = bincode::serialize(&attr).map_err(|_e| EngineError::IO)?;
-        self.file_attr_db.db.put(&path, &value)?;
+        self.file_attr_db.db.put(path, &value)?;
         Ok(value)
     }
 
     pub fn get_file_attr(&self, path: &str) -> Result<FileAttrSimple, EngineError> {
-        match self.file_attr_db.db.get(&path)? {
+        match self.file_attr_db.db.get(path)? {
             Some(value) => {
                 bincode::deserialize::<FileAttrSimple>(&value).map_err(|_e| EngineError::IO)
             }
@@ -319,7 +319,7 @@ impl MetaEngine {
     pub fn get_file_attr_raw(&self, path: &str) -> Result<Vec<u8>, EngineError> {
         self.file_attr_db
             .db
-            .get(&path)
+            .get(path)
             .map_err(|_e| EngineError::IO)
             .map(|v| match v {
                 Some(v) => Ok(v),

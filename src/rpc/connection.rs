@@ -167,12 +167,11 @@ impl ClientConnection {
             "waiting for response_meta_data, length: {}",
             meta_data_length
         );
-        self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
+        self.receive(read_stream, &mut meta_data[0..meta_data_length])
             .await?;
         debug!("received reponse_meta_data, meta_data: {:?}", meta_data);
         debug!("waiting for response_data, length: {}", data_length);
-        self.receive(read_stream, &mut data[0..data_length as usize])
-            .await?;
+        self.receive(read_stream, &mut data[0..data_length]).await?;
         debug!("received reponse_data");
         Ok(())
     }

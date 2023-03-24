@@ -82,6 +82,8 @@ high availability, the priority would be lower.
 
 ## Compile
 
+rust version 1.68
+
 ```bash
 cargo build
 ```

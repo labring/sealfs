@@ -329,7 +329,7 @@ impl Client {
 
         let server_address = self.get_connection_address(&path).unwrap();
         let md = ReadDirSendMetaData {
-            offset: offset as i64,
+            offset,
             size: size as u32,
         };
         let send_meta_data = bincode::serialize(&md).unwrap();
@@ -414,11 +414,7 @@ impl Client {
         };
         let server_address = self.get_connection_address(&path).unwrap();
 
-        let meta_data = bincode::serialize(&ReadFileSendMetaData {
-            offset: offset as i64,
-            size: size as u32,
-        })
-        .unwrap();
+        let meta_data = bincode::serialize(&ReadFileSendMetaData { offset, size }).unwrap();
 
         let mut status = 0i32;
         let mut rsp_flags = 0u32;

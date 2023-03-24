@@ -217,13 +217,13 @@ impl FileAttrSimple {
         unsafe {
             (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mask = 0;
             (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ino = 0;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mode = kind | self.perm as u16;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_nlink = self.nlink as u32;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mode = kind | self.perm;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_nlink = self.nlink;
             (*(statxbuf.as_mut_ptr() as *mut statx)).stx_uid = self.uid;
             (*(statxbuf.as_mut_ptr() as *mut statx)).stx_gid = self.gid;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_size = self.size as u64;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blksize = self.blksize as u32;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blocks = self.blocks as u64;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_size = self.size;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blksize = self.blksize;
+            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blocks = self.blocks;
             (*(statxbuf.as_mut_ptr() as *mut statx)).stx_atime = statx_timestamp {
                 tv_sec: self.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
                 tv_nsec: 0,
