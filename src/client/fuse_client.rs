@@ -414,11 +414,7 @@ impl Client {
         };
         let server_address = self.get_connection_address(&path).unwrap();
 
-        let meta_data = bincode::serialize(&ReadFileSendMetaData {
-            offset,
-            size,
-        })
-        .unwrap();
+        let meta_data = bincode::serialize(&ReadFileSendMetaData { offset, size }).unwrap();
 
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
