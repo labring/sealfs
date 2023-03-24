@@ -32,6 +32,10 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           override: true
 
+      - name: Remove cache in tmp
+        run: |
+          rm -rf /tmp/test*
+
       - name: Copy cache
         run: |
           mkdir -p /data/actions/_work/sealfs/sealfs/target
