@@ -49,7 +49,11 @@ fn read_file(engine: &FileEngine, n: isize) {
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
-    let meta_engine = Arc::new(meta_engine::MetaEngine::new("/tmp/bench/db"));
+    let meta_engine = Arc::new(meta_engine::MetaEngine::new(
+        "/tmp/bench/db",
+        128 << 20,
+        128 * 1024 * 1024,
+    ));
     let engine = file_engine::FileEngine::new("/tmp/bench/root", meta_engine);
 
     c.bench_function("default engine file 512", |b| {

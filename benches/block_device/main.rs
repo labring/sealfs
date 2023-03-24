@@ -33,7 +33,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         .arg("losetup /dev/loop8 node1")
         .output()
         .unwrap();
-    let meta_engine = Arc::new(meta_engine::MetaEngine::new("/tmp/bench/db"));
+    let meta_engine = Arc::new(meta_engine::MetaEngine::new(
+        "/tmp/bench/db",
+        128 << 20,
+        128 * 1024 * 1024,
+    ));
     let engine = BlockEngine::new("/dev/loop8", meta_engine);
 
     c.bench_function("block device test", |b| {
