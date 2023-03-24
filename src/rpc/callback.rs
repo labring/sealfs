@@ -100,7 +100,7 @@ impl CallbackPool {
     pub fn free(&self) {
         for i in 0..self.callbacks.len() {
             unsafe {
-                drop_in_place(self.callbacks[i as usize] as *mut OperationCallback);
+                drop_in_place(self.callbacks[i] as *mut OperationCallback);
             }
         }
     }
