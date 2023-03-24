@@ -4,7 +4,8 @@
 
 use crate::common::distribute_hash_table::{hash, index_selector};
 use crate::common::serialization::{
-    FileAttrSimple, OperationType, ReadDirSendMetaData, ReadFileSendMetaData, WriteFileSendMetaData,
+    CreateDirSendMetaData, CreateFileSendMetaData, FileAttrSimple, OpenFileSendMetaData,
+    OperationType, ReadDirSendMetaData, ReadFileSendMetaData, WriteFileSendMetaData,
 };
 use crate::rpc;
 use dashmap::DashMap;
@@ -13,7 +14,7 @@ use fuser::{
     ReplyWrite,
 };
 use lazy_static::lazy_static;
-use libc::{DT_DIR, DT_LNK, DT_REG};
+use libc::{mode_t, DT_DIR, DT_LNK, DT_REG};
 use log::debug;
 use std::ffi::OsStr;
 use std::ops::Deref;
@@ -183,9 +184,9 @@ impl Client {
         &self,
         parent: u64,
         name: &OsStr,
-        _mode: u32,
-        _umask: u32,
-        _flags: i32,
+        mode: u32,
+        umask: u32,
+        flags: i32,
         reply: ReplyCreate,
     ) {
         log::info!("create_remote");
@@ -206,12 +207,15 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
+        let send_meta_data =
+            bincode::serialize(&CreateFileSendMetaData { mode, umask, flags }).unwrap();
+
         let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::CreateFile.into(),
             0,
             &path,
-            &[],
+            &send_meta_data,
             &[],
             &mut status,
             &mut rsp_flags,
@@ -525,12 +529,15 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
+        let mode: mode_t = 0o755;
+        let send_meta_data = bincode::serialize(&CreateDirSendMetaData { mode }).unwrap();
+
         let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::CreateDir.into(),
             0,
             &path,
-            &[],
+            &send_meta_data,
             &[],
             &mut status,
             &mut rsp_flags,
@@ -568,7 +575,7 @@ impl Client {
         }
     }
 
-    pub fn open_remote(&self, ino: u64, _flags: i32, reply: ReplyOpen) {
+    pub fn open_remote(&self, ino: u64, flags: i32, reply: ReplyOpen) {
         log::info!("open_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
@@ -585,12 +592,22 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
+        let mode: mode_t = if flags & libc::O_WRONLY != 0 {
+            libc::S_IWUSR
+        } else if flags & libc::O_RDWR != 0 {
+            libc::S_IWUSR | libc::S_IRUSR
+        } else {
+            libc::S_IRUSR
+        };
+
+        let send_meta_data = bincode::serialize(&OpenFileSendMetaData { flags, mode }).unwrap();
+
         let result = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::OpenFile.into(),
             0,
             &path,
-            &[],
+            &send_meta_data,
             &[],
             &mut status,
             &mut rsp_flags,

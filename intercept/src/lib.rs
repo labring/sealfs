@@ -15,7 +15,6 @@ use libc::{
     SYS_write, SYS_writev, AT_FDCWD, O_CREAT, O_DIRECTORY, O_TRUNC, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, S_IFLNK,
 };
-use log::debug;
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
 use sealfs::common::distribute_hash_table::build_hash_ring;
 use serde::{Deserialize, Serialize};

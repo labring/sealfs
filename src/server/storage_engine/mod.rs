@@ -4,8 +4,6 @@
 
 use std::sync::Arc;
 
-use nix::sys::stat::Mode;
-
 use self::meta_engine::MetaEngine;
 
 use super::EngineError;
@@ -21,11 +19,17 @@ pub trait StorageEngine {
 
     fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError>;
 
-    fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError>;
+    fn open_file(&self, path: String, flag: i32, mode: u32) -> Result<(), EngineError>;
 
     fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError>;
 
-    fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError>;
+    fn create_file(
+        &self,
+        path: String,
+        oflag: i32,
+        umask: u32,
+        mode: u32,
+    ) -> Result<Vec<u8>, EngineError>;
 
     fn delete_file(&self, path: String) -> Result<(), EngineError>;
 
