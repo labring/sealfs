@@ -9,15 +9,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use log::debug;
-use nix::sys::stat::Mode;
 use storage_engine::StorageEngine;
 
 use crate::{
     common::{
         distribute_hash_table::build_hash_ring,
         serialization::{
-            DirectoryEntrySendMetaData, OperationType, ReadDirSendMetaData,
-            TruncateFileSendMetaData,
+            CreateDirSendMetaData, CreateFileSendMetaData, DirectoryEntrySendMetaData,
+            OpenFileSendMetaData, OperationType, ReadDirSendMetaData, TruncateFileSendMetaData,
         },
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
@@ -174,13 +173,6 @@ where
         let r#type = OperationType::try_from(operation_type).unwrap();
         let file_path = String::from_utf8(path).unwrap();
 
-        // todo: get mode from metadata
-        let mode = Mode::S_IRUSR
-            | Mode::S_IWUSR
-            | Mode::S_IRGRP
-            | Mode::S_IWGRP
-            | Mode::S_IROTH
-            | Mode::S_IWOTH;
         match r#type {
             OperationType::Unkown => {
                 debug!("Unkown");
@@ -192,7 +184,12 @@ where
             }
             OperationType::CreateFile => {
                 debug!("Create File");
-                let (meta_data, status) = match self.engine.create_file(file_path, mode).await {
+                let meta_data: CreateFileSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let (meta_data, status) = match self
+                    .engine
+                    .create_file(file_path, meta_data.flags, meta_data.umask, meta_data.mode)
+                    .await
+                {
                     Ok(value) => (value, 0),
                     Err(e) => (Vec::new(), EngineErr2Status!(e)),
                 };
@@ -200,10 +197,12 @@ where
             }
             OperationType::CreateDir => {
                 debug!("Create Dir");
-                let (meta_data, status) = match self.engine.create_dir(file_path, mode).await {
-                    Ok(value) => (value, 0),
-                    Err(e) => (Vec::new(), EngineErr2Status!(e)),
-                };
+                let meta_data: CreateDirSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let (meta_data, status) =
+                    match self.engine.create_dir(file_path, meta_data.mode).await {
+                        Ok(value) => (value, 0),
+                        Err(e) => (Vec::new(), EngineErr2Status!(e)),
+                    };
                 Ok((status, 0, meta_data, Vec::new()))
             }
             OperationType::GetFileAttr => {
@@ -216,7 +215,12 @@ where
             }
             OperationType::OpenFile => {
                 debug!("Open File {}", file_path);
-                let status = match self.engine.open_file(file_path, mode).await {
+                let meta_data: OpenFileSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let status = match self
+                    .engine
+                    .open_file(file_path, meta_data.flags, meta_data.mode)
+                    .await
+                {
                     Ok(()) => 0,
                     Err(e) => EngineErr2Status!(e),
                 };

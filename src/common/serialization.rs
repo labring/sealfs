@@ -351,3 +351,21 @@ pub struct ReadDirSendMetaData {
     pub offset: i64,
     pub size: u32,
 }
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct OpenFileSendMetaData {
+    pub flags: i32,
+    pub mode: u32,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct CreateFileSendMetaData {
+    pub mode: u32,
+    pub umask: u32,
+    pub flags: i32,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct CreateDirSendMetaData {
+    pub mode: u32,
+}

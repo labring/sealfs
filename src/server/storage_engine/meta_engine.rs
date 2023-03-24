@@ -1,7 +1,6 @@
 use bytes::BufMut;
 use libc::{DT_DIR, DT_LNK, DT_REG};
 use log::{debug, error};
-use nix::sys::stat::Mode;
 #[cfg(feature = "mem-db")]
 use pegasusdb::DB;
 #[cfg(feature = "disk-db")]
@@ -122,7 +121,7 @@ impl MetaEngine {
         }
     }
 
-    pub fn create_directory(&self, path: &str, _mode: Mode) -> Result<Vec<u8>, EngineError> {
+    pub fn create_directory(&self, path: &str, _mode: u32) -> Result<Vec<u8>, EngineError> {
         self.dir_db.db.put(path.as_bytes(), 2_usize.to_le_bytes())?;
         let attr = FileAttrSimple::new(fuser::FileType::Directory);
         self.put_file_attr(path, attr)
@@ -390,7 +389,8 @@ impl MetaEngine {
 
 #[cfg(test)]
 mod tests {
-    use nix::sys::stat::Mode;
+
+    use libc::mode_t;
 
     use crate::server::storage_engine::meta_engine::MetaEngine;
 
@@ -401,12 +401,7 @@ mod tests {
             let engine = MetaEngine::new(db_path);
             engine.init();
             engine.directory_add_entry("/", "a", 3).unwrap();
-            let mode = Mode::S_IRUSR
-                | Mode::S_IWUSR
-                | Mode::S_IRGRP
-                | Mode::S_IWGRP
-                | Mode::S_IROTH
-                | Mode::S_IWOTH;
+            let mode: mode_t = 0o777;
             engine.create_directory("/a", mode).unwrap();
             let v = engine.dir_db.db.get("/a").unwrap().unwrap();
             let l = usize::from_le_bytes(v.as_slice().try_into().unwrap());
@@ -426,12 +421,7 @@ mod tests {
             let engine = MetaEngine::new(db_path);
             engine.init();
             engine.directory_add_entry("/", "a1", 3).unwrap();
-            let mode = Mode::S_IRUSR
-                | Mode::S_IWUSR
-                | Mode::S_IRGRP
-                | Mode::S_IWGRP
-                | Mode::S_IROTH
-                | Mode::S_IWOTH;
+            let mode: mode_t = 0o777;
             engine.create_directory("/a1", mode).unwrap();
             let v = engine.dir_db.db.get("/a1").unwrap().unwrap();
             let l = usize::from_le_bytes(v.as_slice().try_into().unwrap());

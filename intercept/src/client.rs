@@ -4,12 +4,12 @@
 
 use dashmap::DashMap;
 use lazy_static::lazy_static;
-use libc::{dirent64, iovec, O_CREAT, O_DIRECTORY};
+use libc::{dirent64, iovec};
 use log::debug;
 use sealfs::common::distribute_hash_table::{hash, index_selector};
 use sealfs::common::serialization::{
-    FileAttrSimple, LinuxDirent, OperationType, ReadDirSendMetaData, ReadFileSendMetaData,
-    TruncateFileSendMetaData,
+    FileAttrSimple, LinuxDirent, OpenFileSendMetaData, OperationType, ReadDirSendMetaData,
+    ReadFileSendMetaData, TruncateFileSendMetaData,
 };
 use sealfs::{offset_of, rpc};
 pub struct Client {
@@ -64,21 +64,13 @@ impl Client {
         let mut recv_data_length = 0usize;
 
         let mut recv_meta_data = vec![0u8; 1024];
-        let (operation_type, send_meta_data) = match flag & O_CREAT {
-            0 => {
-                if (flag & O_DIRECTORY) != 0 {
-                    return Ok(());
-                }
-                (OperationType::OpenFile, vec![])
-            }
-            _ => (OperationType::CreateFile, Vec::from(mode.to_le_bytes())),
-        };
-        // todo: Err -> errno
+        let send_meta_data =
+            bincode::serialize(&OpenFileSendMetaData { flags: flag, mode }).unwrap();
         if self
             .handle
             .block_on(self.client.call_remote(
                 &server_address,
-                operation_type.into(),
+                OperationType::OpenFile.into(),
                 0,
                 pathname,
                 &send_meta_data,

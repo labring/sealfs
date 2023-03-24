@@ -4,7 +4,6 @@
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use nix::sys::stat::Mode;
 use rand::prelude::*;
 use sealfs::server::storage_engine::{
     file_engine::{self, FileEngine},
@@ -12,14 +11,10 @@ use sealfs::server::storage_engine::{
 };
 
 fn create_file(engine: &FileEngine, n: isize) {
-    let mode = Mode::S_IRUSR
-        | Mode::S_IWUSR
-        | Mode::S_IRGRP
-        | Mode::S_IWGRP
-        | Mode::S_IROTH
-        | Mode::S_IWOTH;
+    let mode = 0o777;
+    let oflag = libc::O_CREAT | libc::O_RDWR;
     (0..n).for_each(|i| {
-        engine.create_file(i.to_string(), mode).unwrap();
+        engine.create_file(i.to_string(), oflag, 0, mode).unwrap();
     })
 }
 
@@ -44,7 +39,7 @@ fn read_file(engine: &FileEngine, n: isize) {
     (0..n * 10).for_each(|_| {
         let mut rng = rand::thread_rng();
         let i: usize = rng.gen::<usize>() % n as usize;
-        let data = engine.read_file(i.to_string(), 10240, 0).unwrap();
+        let _ = engine.read_file(i.to_string(), 10240, 0).unwrap();
     })
 }
 

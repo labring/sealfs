@@ -139,13 +139,22 @@ impl StorageEngine for FileEngine {
         Ok(write_size)
     }
 
-    fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
+    fn create_file(
+        &self,
+        path: String,
+        oflag: i32,
+        _umask: u32,
+        mode: u32,
+    ) -> Result<Vec<u8>, EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
-        let oflag = OFlag::O_CREAT | OFlag::O_RDWR;
         match self.cache.get(local_file_name.as_bytes()) {
             Some(_) => {}
             None => {
-                let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+                let fd = fcntl::open(
+                    local_file_name.as_str(),
+                    OFlag::from_bits_truncate(oflag),
+                    Mode::from_bits_truncate(mode),
+                )?;
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
             }
@@ -170,10 +179,13 @@ impl StorageEngine for FileEngine {
         Ok(())
     }
 
-    fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError> {
+    fn open_file(&self, path: String, flags: i32, mode: u32) -> Result<(), EngineError> {
         let local_file_name = generate_local_file_name(&self.root, &path);
-        let oflags = OFlag::O_RDWR;
-        let _ = fcntl::open(local_file_name.as_str(), oflags, mode)?;
+        let _ = fcntl::open(
+            local_file_name.as_str(),
+            OFlag::from_bits_truncate(flags),
+            Mode::from_bits_truncate(mode),
+        )?;
         Ok(())
     }
 }
@@ -207,6 +219,7 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use crate::server::storage_engine::meta_engine::MetaEngine;
+    use libc::mode_t;
     use nix::{
         fcntl::{self, OFlag},
         sys::stat::Mode,
@@ -262,13 +275,11 @@ mod tests {
             let meta_engine = Arc::new(MetaEngine::new(db_path));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
-            let mode = Mode::S_IRUSR
-                | Mode::S_IWUSR
-                | Mode::S_IRGRP
-                | Mode::S_IWGRP
-                | Mode::S_IROTH
-                | Mode::S_IWOTH;
-            engine.create_file("/a.txt".to_string(), mode).unwrap();
+            let mode: mode_t = 0o777;
+            let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
+            engine
+                .create_file("/a.txt".to_string(), oflag, 0, mode)
+                .unwrap();
             let file_attr = meta_engine.get_file_attr("/a.txt").unwrap();
             assert_eq!(file_attr.kind, 4); // 4 is RegularFile
             let local_file_name = generate_local_file_name(root, "/a.txt");
@@ -281,16 +292,12 @@ mod tests {
             let meta_engine = Arc::new(MetaEngine::new(db_path));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
-            let mode = Mode::S_IRUSR
-                | Mode::S_IWUSR
-                | Mode::S_IRGRP
-                | Mode::S_IWGRP
-                | Mode::S_IROTH
-                | Mode::S_IWOTH;
+            let mode: mode_t = 0o777;
+            let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
             meta_engine.create_directory("/test_a", mode).unwrap();
             meta_engine.create_directory("/test_a/a", mode).unwrap();
             engine
-                .create_file("/test_a/a/a.txt".to_string(), mode)
+                .create_file("/test_a/a/a.txt".to_string(), oflag, 0, mode)
                 .unwrap();
             let local_file_name = generate_local_file_name(root, "/test_a/a/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
@@ -314,13 +321,11 @@ mod tests {
             let meta_engine = Arc::new(MetaEngine::new(db_path));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
-            let mode = Mode::S_IRUSR
-                | Mode::S_IWUSR
-                | Mode::S_IRGRP
-                | Mode::S_IWGRP
-                | Mode::S_IROTH
-                | Mode::S_IWOTH;
-            engine.create_file("/b.txt".to_string(), mode).unwrap();
+            let mode: mode_t = 0o777;
+            let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
+            engine
+                .create_file("/b.txt".to_string(), oflag, 0, mode)
+                .unwrap();
             engine
                 .write_file("/b.txt".to_string(), "hello world".as_bytes(), 0)
                 .unwrap();

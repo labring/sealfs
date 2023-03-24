@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use crate::server::storage_engine::StorageEngine;
 use crate::server::EngineError;
-use nix::sys::stat::Mode;
 
 use allocator::{Allocator, BitmapAllocator, CHUNK};
 use index::FileIndex;
@@ -52,7 +51,7 @@ impl StorageEngine for BlockEngine {
         }
     }
 
-    fn open_file(&self, _path: String, _mode: Mode) -> Result<(), EngineError> {
+    fn open_file(&self, _path: String, _flag: i32, _mode: u32) -> Result<(), EngineError> {
         todo!()
     }
 
@@ -74,7 +73,13 @@ impl StorageEngine for BlockEngine {
         }
     }
 
-    fn create_file(&self, _path: String, _mode: Mode) -> Result<Vec<u8>, EngineError> {
+    fn create_file(
+        &self,
+        _path: String,
+        _oflag: i32,
+        _umask: u32,
+        _mode: u32,
+    ) -> Result<Vec<u8>, EngineError> {
         todo!()
     }
 

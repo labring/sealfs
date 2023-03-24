@@ -8,7 +8,6 @@ use crate::common::{
 
 use crate::rpc::client::Client;
 use log::debug;
-use nix::sys::stat::Mode;
 use std::{sync::Arc, vec};
 use tokio::time::Duration;
 pub struct DistributedEngine<Storage: StorageEngine> {
@@ -52,7 +51,7 @@ where
         self.client.remove_connection(&address);
     }
 
-    pub async fn create_dir(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
+    pub async fn create_dir(&self, path: String, mode: u32) -> Result<Vec<u8>, EngineError> {
         if self.meta_engine.is_exist(path.as_str())? {
             return Err(EngineError::Exist);
         }
@@ -177,7 +176,13 @@ where
         self.meta_engine.read_directory(&path, size, offset)
     }
 
-    pub async fn create_file(&self, path: String, mode: Mode) -> Result<Vec<u8>, EngineError> {
+    pub async fn create_file(
+        &self,
+        path: String,
+        oflag: i32,
+        umask: u32,
+        mode: u32,
+    ) -> Result<Vec<u8>, EngineError> {
         debug!("create file: {}", path);
         if self.meta_engine.is_exist(&path)? {
             return Err(EngineError::Exist);
@@ -231,7 +236,7 @@ where
             };
         }
 
-        self.storage_engine.create_file(path, mode)
+        self.storage_engine.create_file(path, oflag, umask, mode)
     }
 
     pub async fn delete_file(&self, path: String) -> Result<(), EngineError> {
@@ -317,8 +322,8 @@ where
         self.meta_engine.get_file_attr_raw(&path)
     }
 
-    pub async fn open_file(&self, path: String, mode: Mode) -> Result<(), EngineError> {
-        self.storage_engine.open_file(path, mode)
+    pub async fn open_file(&self, path: String, flag: i32, mode: u32) -> Result<(), EngineError> {
+        self.storage_engine.open_file(path, flag, mode)
     }
 
     pub async fn directory_add_entry(&self, path: String, file_type: u8) -> i32 {
@@ -362,7 +367,7 @@ mod tests {
     use crate::server::storage_engine::meta_engine::MetaEngine;
     use crate::server::storage_engine::{file_engine::FileEngine, StorageEngine};
     use crate::server::{DistributedEngine, EngineError, FileRequestHandler};
-    use nix::sys::stat::Mode;
+    use libc::mode_t;
     use std::sync::Arc;
     use tokio::time::sleep;
 
@@ -390,23 +395,19 @@ mod tests {
     }
 
     async fn test_file(engine0: Arc<DistributedEngine<FileEngine>>) {
-        let mode = Mode::S_IRUSR
-            | Mode::S_IWUSR
-            | Mode::S_IRGRP
-            | Mode::S_IWGRP
-            | Mode::S_IROTH
-            | Mode::S_IWOTH;
+        let mode: mode_t = 0o777;
+        let oflag = libc::O_CREAT | libc::O_RDWR;
         // end with '/', not expected
         // match engine0.create_file("/test/".into(), mode).await {
         //     Err(EngineError::IsDir) => assert!(true),
         //     _ => assert!(false),
         // };
-        match engine0.create_file("/test".into(), mode).await {
+        match engine0.create_file("/test".into(), oflag, 0, mode).await {
             Ok(_) => assert!(true),
             _ => assert!(false),
         };
         // repeat the same file
-        match engine0.create_file("/test".into(), mode).await {
+        match engine0.create_file("/test".into(), oflag, 0, mode).await {
             Err(EngineError::Exist) => assert!(true),
             _ => assert!(false),
         };
@@ -421,12 +422,8 @@ mod tests {
         engine0: Arc<DistributedEngine<FileEngine>>,
         engine1: Arc<DistributedEngine<FileEngine>>,
     ) {
-        let mode = Mode::S_IRUSR
-            | Mode::S_IWUSR
-            | Mode::S_IRGRP
-            | Mode::S_IWGRP
-            | Mode::S_IROTH
-            | Mode::S_IWOTH;
+        let mode: mode_t = 0o777;
+        let oflag = libc::O_CREAT | libc::O_RDWR;
         // not end with '/'
         match engine1.create_dir("/test".into(), mode).await {
             Ok(_) => assert!(true),
@@ -438,7 +435,7 @@ mod tests {
             _ => assert!(false),
         };
         // dir add file
-        match engine0.create_file("/test/t1".into(), mode).await {
+        match engine0.create_file("/test/t1".into(), oflag, 0, mode).await {
             Ok(_) => assert!(true),
             _ => assert!(false),
         };

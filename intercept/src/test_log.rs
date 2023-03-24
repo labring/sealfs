@@ -3,19 +3,19 @@ use libc::SYS_write;
 use crate::syscall_intercept::syscall_no_intercept;
 
 struct CStrPointer {
-    p: *const u8,
+    _p: *const u8,
 }
 
 unsafe impl std::marker::Sync for CStrPointer {}
 unsafe impl std::marker::Send for CStrPointer {}
 lazy_static::lazy_static! {
     static ref LOG_BUF: CStrPointer = CStrPointer {
-        p: vec![0u8; 10].as_slice().as_ptr()
+        _p: vec![0u8; 10].as_slice().as_ptr()
     };
 }
 
-unsafe fn print_log(mut num: i32, pre_char: char, suf_char: char) {
-    let c = LOG_BUF.p as *mut u8;
+unsafe fn _print_log(mut num: i32, pre_char: char, suf_char: char) {
+    let c = LOG_BUF._p as *mut u8;
     let mut cnt = 1;
     *c = pre_char as u8;
     while num != 0 {
