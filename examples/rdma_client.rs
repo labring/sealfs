@@ -1,18 +1,9 @@
-//! hello_client and hello_server demos show how rpc process the message sent by client
-//! and the usage of 'call_remote' and 'dispatch' APIs.
+//! cargo run --example rdma_client --features=disk-db
 //!
-//! After starting server:
-//!
-//!     cargo run --example hello_server --features=disk-db
-//!
-//! You can try this example by running:
-//!
-//!     cargo run --example hello_client --features=disk-db
 
 use log::debug;
-use sealfs::rpc::client::Client;
-use std::sync::Arc;
-use std::time::Duration;
+use sealfs::rpc::rdma::client::Client;
+use std::{sync::Arc, time::Duration};
 
 #[tokio::main]
 pub async fn main() {
@@ -30,25 +21,27 @@ pub async fn main() {
     }
     let avg = sum / iter;
     println!("avg: {:?}", avg);
+    // sleep for 1 second to wait for server to start
+    // tokio::time::sleep(tokio::time::Duration::from_secs(100)).await;
 }
 
 pub async fn cli(total: u32) -> Duration {
     let client = Arc::new(Client::new());
-    let server_address = "127.0.0.1:50051";
+    let server_address = "127.0.0.1:7777";
     client.add_connection(server_address).await;
     // sleep for 1 second to wait for server to start
-    // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    // tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     let mut handles = vec![];
     let start = tokio::time::Instant::now();
-    for _ in 0..total {
+    for i in 0..total {
         let new_client = client.clone();
         handles.push(tokio::spawn(async move {
             let mut status = 0;
             let mut rsp_flags = 0;
             let mut recv_meta_data_length = 0;
             let mut recv_data_length = 0;
-            let mut recv_meta_data = vec![];
-            let mut recv_data = vec![];
+            let mut recv_meta_data = vec![0u8; 4];
+            let mut recv_data = vec![0u8; 4];
             debug!("call_remote, start");
             let result = new_client
                 .call_remote(
@@ -57,7 +50,7 @@ pub async fn cli(total: u32) -> Duration {
                     0,
                     "",
                     &[],
-                    &[0u8; 16 * 1024],
+                    &[0u8; 10],
                     &mut status,
                     &mut rsp_flags,
                     &mut recv_meta_data_length,
@@ -70,7 +63,7 @@ pub async fn cli(total: u32) -> Duration {
             match result {
                 Ok(_) => {
                     if status == 0 {
-                        // print recv_metadata and recv_data
+                        // // print recv_metadata and recv_data
                         // println!(
                         //     "result: {}, recv_meta_data: {:?}, recv_data: {:?}",
                         //     i, recv_meta_data, recv_data

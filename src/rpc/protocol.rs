@@ -29,6 +29,7 @@ pub const RESPONSE_HEADER_SIZE: usize = 4 * 7;
 
 // pub const CLIENT_RESPONSE_TIMEOUT: time::Duration = time::Duration::from_micros(300); // timeout for client response loop
 
+#[derive(Debug)]
 pub struct RequestHeader {
     pub batch: u32,
     pub id: u32,
