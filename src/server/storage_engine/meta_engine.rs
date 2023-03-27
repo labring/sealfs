@@ -210,7 +210,7 @@ impl MetaEngine {
                         break;
                     }
                     result.put_u8(ty);
-                    result.put(value.len().to_le_bytes().as_ref());
+                    result.put((value.len() as u16).to_le_bytes().as_ref());
                     result.put(value.as_ref());
                     l -= 1;
                 }

@@ -92,8 +92,10 @@ impl Filesystem for SealFS {
         reply: ReplyWrite,
     ) {
         info!(
-            "write, ino = {}, offset = {}, data = {:?}",
-            ino, offset, data
+            "write, ino = {}, offset = {}, data_len = {}",
+            ino,
+            offset,
+            data.len()
         );
         CLIENT.write_remote(ino, offset, data, reply);
     }

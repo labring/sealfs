@@ -19,5 +19,4 @@ build:
 
 test:
 	cargo test --features=$(features)
-	./servers_run.sh &
-	./client_run.sh
+	./test_io500.sh /data
