@@ -209,7 +209,7 @@ impl CallbackPool {
     ) -> Result<(i32, u32, usize, usize), Box<dyn std::error::Error>> {
         let receiver =
             unsafe { (*(self.callbacks[id as usize] as *mut OperationCallback)).get_receiver() };
-        let result = timeout(Duration::from_millis(3000), receiver.recv()).await;
+        let result = timeout(Duration::from_millis(30000), receiver.recv()).await;
         let is_ok = match result {
             Ok(r) => match r {
                 Some(_) => true,
@@ -225,7 +225,7 @@ impl CallbackPool {
                     Ok(_) => false,
                     Err(_) => {
                         // This means that the response has been received, and signal has been sent.
-                        match timeout(Duration::from_millis(3000), receiver.recv()).await {
+                        match timeout(Duration::from_millis(30000), receiver.recv()).await {
                             Ok(r) => match r {
                                 Some(_) => true,
                                 None => panic!("wait_for_callback error"),

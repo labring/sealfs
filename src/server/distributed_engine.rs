@@ -7,7 +7,7 @@ use crate::common::{
 };
 
 use crate::rpc::client::Client;
-use libc::O_CREAT;
+use libc::{O_CREAT, O_DIRECTORY, O_EXCL};
 use log::debug;
 use std::{sync::Arc, vec};
 use tokio::time::Duration;
@@ -185,7 +185,7 @@ where
         mode: u32,
     ) -> Result<Vec<u8>, EngineError> {
         debug!("create file: {}", path);
-        if self.meta_engine.is_exist(&path)? {
+        if (oflag & O_EXCL) != 0 && self.meta_engine.is_exist(&path)? {
             return Err(EngineError::Exist);
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
@@ -326,6 +326,8 @@ where
     pub async fn open_file(&self, path: String, flag: i32, mode: u32) -> Result<(), EngineError> {
         if (flag & O_CREAT) != 0 {
             self.create_file(path, flag, 0, mode).await.map(|_v| ())
+        } else if (flag & O_DIRECTORY) != 0 {
+            Ok(())
         } else {
             self.storage_engine.open_file(path, flag, mode)
         }
