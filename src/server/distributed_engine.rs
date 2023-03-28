@@ -7,6 +7,7 @@ use crate::common::{
 };
 
 use crate::rpc::client::Client;
+use libc::O_CREAT;
 use log::debug;
 use std::{sync::Arc, vec};
 use tokio::time::Duration;
@@ -323,7 +324,11 @@ where
     }
 
     pub async fn open_file(&self, path: String, flag: i32, mode: u32) -> Result<(), EngineError> {
-        self.storage_engine.open_file(path, flag, mode)
+        if (flag & O_CREAT) != 0 {
+            self.create_file(path, flag, 0, mode).await.map(|_v| ())
+        } else {
+            self.storage_engine.open_file(path, flag, mode)
+        }
     }
 
     pub async fn directory_add_entry(&self, path: String, file_type: u8) -> i32 {
