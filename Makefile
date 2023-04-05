@@ -3,7 +3,9 @@ features := disk-db
 flags += --workspace --verbose --features=$(features)
 deps = 	protobuf-compiler	\
 		libfuse-dev			\
-		libcapstone-dev		
+		libcapstone-dev		\
+		libibverbs1 ibverbs-utils librdmacm1 libibumad3 ibverbs-providers rdma-core libibverbs-dev iproute2 perftest build-essential net-tools librdmacm-dev rdmacm-utils cmake libprotobuf-dev protobuf-compiler clang	\
+		cython pandoc libnl-3-dev libnl-route-3-dev
 
 all_release: install_deps release
 all_debug: install_deps debug

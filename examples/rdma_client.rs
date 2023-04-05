@@ -4,6 +4,7 @@
 use log::debug;
 use sealfs::rpc::rdma::client::Client;
 use std::{sync::Arc, time::Duration};
+use tokio::time::error::Elapsed;
 
 #[tokio::main]
 pub async fn main() {
@@ -13,16 +14,8 @@ pub async fn main() {
         .filter(None, log::LevelFilter::Info);
     builder.init();
     let total = 10000;
-    let iter = 10;
-    let mut sum = cli(total).await;
-    for _ in 1..iter {
-        let duration = cli(total).await;
-        sum += duration;
-    }
-    let avg = sum / iter;
-    println!("avg: {:?}", avg);
-    // sleep for 1 second to wait for server to start
-    // tokio::time::sleep(tokio::time::Duration::from_secs(100)).await;
+    let elapsed = cli(total).await;
+    println!("elapsed: {:?}", elapsed);
 }
 
 pub async fn cli(total: u32) -> Duration {
@@ -33,7 +26,7 @@ pub async fn cli(total: u32) -> Duration {
     // tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     let mut handles = vec![];
     let start = tokio::time::Instant::now();
-    for i in 0..total {
+    for _ in 0..total {
         let new_client = client.clone();
         handles.push(tokio::spawn(async move {
             let mut status = 0;

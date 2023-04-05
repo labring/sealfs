@@ -22,16 +22,9 @@ pub async fn main() {
         .filter(None, log::LevelFilter::Info);
     builder.init();
     let total = 10000;
-    let iter = 10;
-    let mut sum = cli(total).await;
-    for _ in 1..iter {
-        let duration = cli(total).await;
-        sum += duration;
-    }
-    let avg = sum / iter;
-    println!("avg: {:?}", avg);
+    let elapsed = cli(total).await;
+    println!("elapsed: {:?}", elapsed);
 }
-
 pub async fn cli(total: u32) -> Duration {
     let client = Arc::new(Client::new());
     let server_address = "127.0.0.1:50051";

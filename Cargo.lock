@@ -754,7 +754,7 @@ dependencies = [
 [[package]]
 name = "ibv"
 version = "0.1.0"
-source = "git+https://github.com/mond77/ibv.git?branch=main#891e7350ed73341836a2a7a465a034d489b8b918"
+source = "git+https://github.com/mond77/ibv.git?branch=main#051f676e74a8d5af9369641bbf43877c5e6447d6"
 dependencies = [
  "bincode",
  "clippy-utilities",
@@ -1343,7 +1343,7 @@ dependencies = [
 [[package]]
 name = "rdma-sys"
 version = "0.3.0"
-source = "git+https://github.com/mond77/rdma-sys.git?branch=master#ed48cb0e550e49ce4ec5f45fc861b5bbf28cff68"
+source = "git+https://github.com/mond77/rdma-sys.git#d4df57979b15643fd1223427610294f7a19f1922"
 dependencies = [
  "bindgen 0.59.2",
  "libc",
