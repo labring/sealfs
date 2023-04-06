@@ -89,6 +89,7 @@ impl Client {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn send_request(
         &self,
         addr: &str,
@@ -123,6 +124,12 @@ impl Client {
     }
 }
 
+impl Default for Client {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub async fn parse_response(conn: Arc<Conn>, pool: Arc<CallbackPool>) {
     loop {
         let response = conn.recv_msg().await.unwrap();
@@ -133,7 +140,7 @@ pub async fn parse_response(conn: Arc<Conn>, pool: Arc<CallbackPool>) {
         let batch = header.batch;
         let id = header.id;
 
-        if let Err(_) = pool.lock_if_not_timeout(batch, id) {
+        if pool.lock_if_not_timeout(batch, id).is_err() {
             debug!("parse_response: lock timeout");
             continue;
         }

@@ -4,7 +4,6 @@
 use log::debug;
 use sealfs::rpc::rdma::client::Client;
 use std::{sync::Arc, time::Duration};
-use tokio::time::error::Elapsed;
 
 #[tokio::main]
 pub async fn main() {
