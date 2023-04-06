@@ -45,7 +45,7 @@ impl Handler for HelloHandler {
                 // let mut count = HELLO_COUNT.lock().await;
                 // let buf = format!("Hello, {}!", count).into_bytes();
                 // *count += 1;
-                Ok((0, 0, vec![], vec![]))
+                Ok((0, 0, vec![1, 2, 3, 4], vec![5, 6, 7, 8]))
             }
             _ => {
                 todo!()

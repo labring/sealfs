@@ -25,12 +25,13 @@ pub async fn main() {
     let elapsed = cli(total).await;
     println!("elapsed: {:?}", elapsed);
 }
+
 pub async fn cli(total: u32) -> Duration {
     let client = Arc::new(Client::new());
     let server_address = "127.0.0.1:50051";
     client.add_connection(server_address).await;
     // sleep for 1 second to wait for server to start
-    // tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    // tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     let mut handles = vec![];
     let start = tokio::time::Instant::now();
     for _ in 0..total {
@@ -40,8 +41,8 @@ pub async fn cli(total: u32) -> Duration {
             let mut rsp_flags = 0;
             let mut recv_meta_data_length = 0;
             let mut recv_data_length = 0;
-            let mut recv_meta_data = vec![];
-            let mut recv_data = vec![];
+            let mut recv_meta_data = vec![0u8; 4];
+            let mut recv_data = vec![0u8; 4];
             debug!("call_remote, start");
             let result = new_client
                 .call_remote(
@@ -50,7 +51,7 @@ pub async fn cli(total: u32) -> Duration {
                     0,
                     "",
                     &[],
-                    &[0u8; 16 * 1024],
+                    &[0u8; 10],
                     &mut status,
                     &mut rsp_flags,
                     &mut recv_meta_data_length,
@@ -63,7 +64,7 @@ pub async fn cli(total: u32) -> Duration {
             match result {
                 Ok(_) => {
                     if status == 0 {
-                        // print recv_metadata and recv_data
+                        // // print recv_metadata and recv_data
                         // println!(
                         //     "result: {}, recv_meta_data: {:?}, recv_data: {:?}",
                         //     i, recv_meta_data, recv_data
