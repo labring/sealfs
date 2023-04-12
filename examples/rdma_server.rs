@@ -39,7 +39,7 @@ impl Handler for HelloHandler {
 
 #[tokio::main]
 pub async fn main() -> anyhow::Result<()> {
-    let mut server = Server::new("127.0.0.1:7777".to_string(), Arc::new(HelloHandler::new())).await;
+    let server = Server::new("127.0.0.1:7777".to_string(), Arc::new(HelloHandler::new())).await;
     server.run().await?;
     Ok(())
 }

@@ -33,7 +33,7 @@ kanal = "0.1.0-pre8"
 rand = "0.8.5"
 pegasusdb = { git = "https://github.com/uran0sH/pegasusdb.git" }
 bytes = "1.4.0"
-ibv = { git = "https://github.com/mond77/ibv.git", branch = "main" }
+ibv = { git = "https://github.com/mond77/ibv.git" }
 
 
 [build-dependencies]

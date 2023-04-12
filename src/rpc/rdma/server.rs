@@ -1,8 +1,8 @@
 use std::{io::IoSlice, sync::Arc};
 
-use ibv::connection::conn::Conn;
+use ibv::connection::conn::{Conn, MyReceiver};
 use log::debug;
-use tokio::sync::mpsc::{channel, Receiver};
+use tokio::sync::mpsc::channel;
 
 use ibv::connection::conn::run;
 
@@ -12,7 +12,7 @@ use crate::rpc::{
 };
 pub struct Server<H: Handler + std::marker::Sync + std::marker::Send + 'static> {
     pub addr: String,
-    incoming: Receiver<Conn>,
+    incoming: MyReceiver<Conn>,
     handler: Arc<H>,
 }
 
@@ -29,6 +29,7 @@ where
         let (tx, rx) = channel(1000);
         let address = addr.clone();
         tokio::spawn(run(address, tx));
+        let rx = MyReceiver::new(rx);
         Server {
             addr,
             incoming: rx,
@@ -36,11 +37,11 @@ where
         }
     }
 
-    pub async fn accept(&mut self) -> Conn {
-        self.incoming.recv().await.unwrap()
+    pub async fn accept(&self) -> Conn {
+        self.incoming.recv().await
     }
 
-    pub async fn run(&mut self) -> anyhow::Result<()> {
+    pub async fn run(&self) -> anyhow::Result<()> {
         loop {
             let conn = Arc::new(self.accept().await);
             println!("accept a connection");
