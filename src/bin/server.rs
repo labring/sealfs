@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use log::info;
-use sealfs::common::serialization::{OperationType, ManagerOperationType};
+use sealfs::common::serialization::ManagerOperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::Client;
 use sealfs::server;
@@ -16,7 +16,7 @@ use std::str::FromStr;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
 
-const SERVER_FLAG: u32 = 1;
+const _SERVER_FLAG: u32 = 1;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -25,8 +25,6 @@ struct Args {
     manager_address: Option<String>,
     #[arg(long)]
     server_address: Option<String>,
-    #[arg(long)]
-    all_servers_address: Option<Vec<String>>,
     #[arg(long)]
     lifetime: Option<String>,
     #[arg(long)]
@@ -53,7 +51,6 @@ struct Args {
 struct Properties {
     manager_address: String,
     server_address: String,
-    all_servers_address: Vec<String>,
     lifetime: String,
     database_path: String,
     cache_capacity: usize,
@@ -104,9 +101,6 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
             server_address: args
                 .server_address
                 .unwrap_or(default_properties.server_address),
-            all_servers_address: args
-                .all_servers_address
-                .unwrap_or(default_properties.all_servers_address),
             lifetime: args.lifetime.unwrap_or(default_properties.lifetime),
             database_path: args
                 .database_path
@@ -132,21 +126,20 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
 
     let manager_address = properties.manager_address;
     let server_address = properties.server_address.clone();
-    //connect to manager
-    info!("server_address: {}", server_address.clone());
-    if properties.heartbeat {
-        info!("Connect To Manager.");
-        let client = Client::new();
-        client.add_connection(&manager_address).await;
 
-        //begin scheduled task
-        tokio::spawn(begin_heartbeat_report(
-            client,
-            manager_address,
-            server_address.clone(),
-            properties.lifetime.clone(),
-        ));
-    }
+    //connect to manager
+
+    info!("server_address: {}", server_address.clone());
+    // if properties.heartbeat {
+
+    //     //begin scheduled task
+    //     tokio::spawn(begin_heartbeat_report(
+    //         client,
+    //         manager_address,
+    //         server_address.clone(),
+    //         properties.lifetime.clone(),
+    //     ));
+    // }
 
     //todo
     //start server
@@ -160,7 +153,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         properties.database_path,
         properties.storage_path,
         server_address,
-        properties.all_servers_address.clone(),
+        manager_address,
         properties.cache_capacity,
         properties.write_buffer_size,
     )
@@ -173,7 +166,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn begin_heartbeat_report(
+async fn _begin_heartbeat_report(
     client: Client,
     manager_address: String,
     server_address: String,
@@ -184,7 +177,7 @@ async fn begin_heartbeat_report(
     loop {
         let request = SendHeartRequest {
             address: server_address.clone(),
-            flags: SERVER_FLAG,
+            flags: _SERVER_FLAG,
             lifetime: lifetime.clone(),
         };
         let mut status = 0i32;

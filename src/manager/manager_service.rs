@@ -1,6 +1,12 @@
-use crate::{common::serialization::ManagerOperationType, rpc::server::Handler};
+use crate::{
+    common::serialization::{
+        AddNodesSendMetaData, DeleteNodesSendMetaData, GetClusterStatusRecvMetaData,
+        GetHashRingInfoRecvMetaData, ManagerOperationType,
+    },
+    rpc::server::Handler,
+};
 
-use super::{heart::Heart, manager::Manager};
+use super::{core::Manager, heart::Heart};
 
 use async_trait::async_trait;
 use log::debug;
@@ -42,7 +48,7 @@ impl Handler for ManagerService {
         &self,
         operation_type: u32,
         _flags: u32,
-        _path: Vec<u8>,
+        path: Vec<u8>,
         _data: Vec<u8>,
         metadata: Vec<u8>,
     ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
@@ -68,47 +74,70 @@ impl Handler for ManagerService {
             }
             ManagerOperationType::GetClusterStatus => {
                 let status = self.manager.get_cluster_status();
-                Ok((0, 0, bincode::serialize(&status).unwrap(), Vec::new()))
+                Ok((
+                    0,
+                    0,
+                    bincode::serialize(&GetClusterStatusRecvMetaData { status }).unwrap(),
+                    Vec::new(),
+                ))
             }
-            ManagerOperationType::GetHashRing => {
-                let hashring = self.manager.get_hash_ring_info();
-                Ok((0, 0, bincode::serialize(&hashring).unwrap(), Vec::new()))
-            }
+            ManagerOperationType::GetHashRing => Ok((
+                0,
+                0,
+                bincode::serialize(&GetHashRingInfoRecvMetaData {
+                    hash_ring_info: self.manager.get_hash_ring_info(),
+                })
+                .unwrap(),
+                Vec::new(),
+            )),
+            ManagerOperationType::GetNewHashRing => match self.manager.get_new_hash_ring_info() {
+                Ok(hash_ring_info) => Ok((
+                    0,
+                    0,
+                    bincode::serialize(&GetHashRingInfoRecvMetaData { hash_ring_info }).unwrap(),
+                    Vec::new(),
+                )),
+                Err(e) => {
+                    debug!("get new hash ring error: {}", e);
+                    Ok((libc::ENOENT, 0, Vec::new(), Vec::new()))
+                }
+            },
             ManagerOperationType::AddNodes => {
-                let request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
-                let mut response = MetadataResponse::default();
-                self.heart.instances.iter().for_each(|instance| {
-                    let key = instance.key();
-                    response.instances.push(key.to_owned());
-                });
-                Ok((0, 0, bincode::serialize(&response).unwrap(), Vec::new()))
+                let new_servers_info = bincode::deserialize::<AddNodesSendMetaData>(&metadata)
+                    .unwrap()
+                    .new_servers_info;
+                match self.manager.add_nodes(new_servers_info) {
+                    None => Ok((0, 0, Vec::new(), Vec::new())),
+                    Some(e) => {
+                        debug!("add nodes error: {}", e);
+                        Ok((libc::EIO, 0, Vec::new(), Vec::new()))
+                    }
+                }
             }
             ManagerOperationType::RemoveNodes => {
-                let request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
-                let mut response = MetadataResponse::default();
-                self.heart.instances.iter().for_each(|instance| {
-                    let key = instance.key();
-                    response.instances.push(key.to_owned());
-                });
-                Ok((0, 0, bincode::serialize(&response).unwrap(), Vec::new()))
+                let deleted_servers_info =
+                    bincode::deserialize::<DeleteNodesSendMetaData>(&metadata)
+                        .unwrap()
+                        .deleted_servers_info;
+                match self.manager.delete_nodes(deleted_servers_info) {
+                    None => Ok((0, 0, Vec::new(), Vec::new())),
+                    Some(e) => {
+                        debug!("remove nodes error: {}", e);
+                        Ok((libc::EIO, 0, Vec::new(), Vec::new()))
+                    }
+                }
             }
-            ManagerOperationType::PreFinishServer => {
-                let request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
-                let mut response = MetadataResponse::default();
-                self.heart.instances.iter().for_each(|instance| {
-                    let key = instance.key();
-                    response.instances.push(key.to_owned());
-                });
-                Ok((0, 0, bincode::serialize(&response).unwrap(), Vec::new()))
-            }
-            ManagerOperationType::FinishServer => {
-                let request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
-                let mut response = MetadataResponse::default();
-                self.heart.instances.iter().for_each(|instance| {
-                    let key = instance.key();
-                    response.instances.push(key.to_owned());
-                });
-                Ok((0, 0, bincode::serialize(&response).unwrap(), Vec::new()))
+            ManagerOperationType::UpdateServerStatus => {
+                match self.manager.set_server_status(
+                    String::from_utf8(path).unwrap(),
+                    bincode::deserialize(&metadata).unwrap(),
+                ) {
+                    None => Ok((0, 0, Vec::new(), Vec::new())),
+                    Some(e) => {
+                        debug!("update server status error: {}", e);
+                        Ok((libc::EIO, 0, Vec::new(), Vec::new()))
+                    }
+                }
             }
             _ => todo!(),
         }

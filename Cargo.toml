@@ -44,6 +44,10 @@ tonic = "0.8.2"
 core_affinity = "0.8.0"
 criterion = "0.4"
 
+# [[bin]]
+# name = "cli"
+# path = "src/bin/cli.rs"
+
 [[bin]]
 name = "client"
 path = "src/bin/client.rs"

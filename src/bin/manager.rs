@@ -8,6 +8,7 @@ use sealfs::{manager::manager_service::ManagerService, rpc::server::Server};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
+use std::str::FromStr;
 use std::{fmt::Debug, sync::Arc};
 
 #[derive(Parser, Debug)]
@@ -22,21 +23,29 @@ struct Args {
     /// To use customized configuration or not. If this flag is used, please provide a config file through --config_file <path>
     #[arg(long)]
     use_config_file: bool,
+    #[arg(long)]
+    heartbeat: Option<bool>,
+    #[arg(long)]
+    log_level: Option<String>,
+    #[arg(long)]
+    all_servers_address: Option<Vec<String>>,
+    #[arg(long)]
+    virtual_nodes: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Properties {
     address: String,
     protect_threshold: String,
+    all_servers_address: Vec<String>,
+    virtual_nodes: usize,
+    heartbeat: bool,
+    log_level: String,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let mut builder = env_logger::Builder::from_default_env();
-    builder
-        .format_timestamp(None)
-        .filter(None, log::LevelFilter::Debug);
-    builder.init();
 
     // read from default configuration.
     let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
@@ -48,6 +57,12 @@ async fn main() -> anyhow::Result<()> {
         .expect("manager.yaml read failed!");
     let default_properties: Properties =
         serde_yaml::from_str(&config_str).expect("manager.yaml serializa failed!");
+
+    builder.format_timestamp(None).filter(
+        None,
+        log::LevelFilter::from_str(&default_properties.log_level).unwrap(),
+    );
+    builder.init();
 
     // read from command line.
     let args: Args = Args::parse();
@@ -74,12 +89,26 @@ async fn main() -> anyhow::Result<()> {
             protect_threshold: args
                 .protect_threshold
                 .unwrap_or(default_properties.protect_threshold),
+            all_servers_address: args
+                .all_servers_address
+                .unwrap_or(default_properties.all_servers_address),
+            virtual_nodes: args
+                .virtual_nodes
+                .unwrap_or(default_properties.virtual_nodes),
+            heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
+            log_level: args.log_level.unwrap_or(default_properties.log_level),
         },
     };
 
     let address = properties.address;
 
-    let server = Server::new(Arc::new(ManagerService::new(vec![])), &address);
+    let servers_address = properties
+        .all_servers_address
+        .iter()
+        .map(|s| (s.to_string(), properties.virtual_nodes))
+        .collect::<Vec<(String, usize)>>();
+
+    let server = Server::new(Arc::new(ManagerService::new(servers_address)), &address);
     server.run().await?;
     Ok(())
 }

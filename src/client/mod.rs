@@ -11,11 +11,11 @@ use fuser::{
 };
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsStr, io::Read, str::FromStr};
+use std::{ffi::OsStr, io::Read, str::FromStr, sync::atomic::Ordering, time::Duration};
+use tokio::time::sleep;
 
 use crate::{
-    common::{distribute_hash_table::build_hash_ring, serialization::{OperationType, ManagerOperationType}},
-    manager::manager_service::MetadataRequest,
+    common::serialization::ManagerOperationType, manager::manager_service::MetadataRequest,
     rpc::client::Client,
 };
 
@@ -137,8 +137,40 @@ impl Filesystem for SealFS {
     }
 }
 
-pub async fn test(all_servers_address: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    CLIENT.temp_init(all_servers_address).await
+pub async fn sync_cluster_infos() {
+    loop {
+        {
+            let result = CLIENT.get_cluster_status().await;
+            match result {
+                Ok(status) => {
+                    if CLIENT.cluster_status.load(Ordering::Relaxed) != status {
+                        CLIENT.cluster_status.store(status, Ordering::Relaxed);
+                    }
+                }
+                Err(e) => {
+                    info!("sync server infos failed, error = {}", e);
+                }
+            }
+        }
+        sleep(Duration::from_secs(1)).await;
+    }
+}
+
+pub async fn init_client_async(manager_address: String) -> Result<(), Box<dyn std::error::Error>> {
+    {
+        *CLIENT.manager_address.lock().await = manager_address;
+    }
+    let result = CLIENT.init().await;
+    match result {
+        Ok(_) => {
+            info!("temp init success");
+        }
+        Err(e) => {
+            Err(e)?;
+        }
+    }
+    tokio::spawn(sync_cluster_infos());
+    Ok(())
 }
 
 pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
@@ -161,9 +193,6 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
         .expect("client.yaml read failed!");
     let config: Config = serde_yaml::from_str(&config_str).expect("client.yaml serializa failed!");
     let manager_address = config.manager_address;
-    let _http_manager_address = format!("http://{}", manager_address);
-
-    build_hash_ring(config.all_servers_address.clone());
 
     let log_level = match cli.log_level {
         Some(level) => level,
@@ -182,10 +211,17 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .unwrap();
 
+    info!("init client");
+    let result = runtime.block_on(init_client_async(manager_address.clone()));
+    match result {
+        Ok(_) => info!("init manager success"),
+        Err(e) => panic!("init manager failed, error = {}", e),
+    }
+
     if config.heartbeat {
         tokio::spawn(async move {
             let client = Client::new();
-            client.add_connection(&_http_manager_address).await;
+            client.add_connection(&manager_address).await;
             let request = MetadataRequest { flags: CLIENT_FLAG };
             let mut status = 0i32;
             let mut rsp_flags = 0u32;
@@ -194,7 +230,7 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
             let mut recv_data_length = 0usize;
             let result = client
                 .call_remote(
-                    &_http_manager_address,
+                    &manager_address,
                     ManagerOperationType::GetMetadata.into(),
                     0,
                     "",
@@ -212,14 +248,6 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
                 panic!("get metadata error.");
             }
         });
-    }
-
-    info!("init client");
-
-    let result = runtime.block_on(test(config.all_servers_address));
-    match result {
-        Ok(_) => info!("init manager success"),
-        Err(e) => panic!("init manager failed, error = {}", e),
     }
 
     info!("start fuse");

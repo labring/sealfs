@@ -39,6 +39,13 @@ function intercept_test() {
 
 echo "start fuse_client_run"
 
+# exit with 1 if no argument
+if [ $# -eq 0 ]
+then
+    echo "no argument"
+    exit 1
+fi
+
 set +e
 
 sudo umount ~/fs
@@ -49,6 +56,10 @@ sudo rm -rf $1/database*
 sudo rm -rf $1/storage*
 
 set -e
+
+SEALFS_CONFIG_PATH=./examples ./target/debug/manager --log-level warn &
+
+sleep 1
 
 for ((i=0; i<5; i++))
 do
@@ -75,7 +86,7 @@ echo "[global]" > config-minimal.ini
 echo "datadir = /home/luan/fs" >> config-minimal.ini
 echo "" >> config-minimal.ini
 echo "[debug]" >> config-minimal.ini
-echo "stonewall-time = 5" >> config-minimal.ini
+echo "stonewall-time = 1" >> config-minimal.ini
 
 cd ..
 

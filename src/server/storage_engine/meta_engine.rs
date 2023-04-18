@@ -8,7 +8,7 @@ use rocksdb::BlockBasedOptions;
 use rocksdb::{Cache, IteratorMode, Options, DB};
 
 use crate::{
-    common::serialization::FileAttrSimple,
+    common::serialization::{FileAttrSimple, FileTypeSimple},
     server::{path_split, EngineError},
 };
 
@@ -112,7 +112,7 @@ impl MetaEngine {
             let _ = self.dir_db.db.put(b"/", 2_usize.to_le_bytes());
         }
         if !self.file_attr_db.db.key_may_exist(b"/") {
-            let file_attr = FileAttrSimple::new(fuser::FileType::Directory);
+            let file_attr = FileAttrSimple::new(FileTypeSimple::Directory);
             let _ = self
                 .file_attr_db
                 .db
@@ -123,39 +123,84 @@ impl MetaEngine {
         }
     }
 
+    pub fn get_file_map(&self) -> Result<Vec<String>, EngineError> {
+        let mut file_map = Vec::new();
+        self.file_attr_db
+            .db
+            .iterator(IteratorMode::Start)
+            .for_each(|result| {
+                let (k, _) = result.unwrap();
+                let k = String::from_utf8(k.to_vec()).unwrap();
+                file_map.push(k);
+            });
+        Ok(file_map)
+    }
+
     pub fn put_file(&self, loacl_file_name: &str, path: &str) -> Result<(), EngineError> {
-        self.file_db.db.put(loacl_file_name, path)?;
-        Ok(())
+        match self.file_db.db.put(loacl_file_name, path) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("put file error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
     }
 
     pub fn delete_file(&self, local_file_name: &str) -> Result<(), EngineError> {
-        self.file_db.db.delete(local_file_name)?;
-        Ok(())
+        match self.file_db.db.delete(local_file_name) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("delete file error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
     }
 
     pub fn is_exist(&self, path: &str) -> Result<bool, EngineError> {
         match self.file_attr_db.db.get(path.as_bytes()) {
             Ok(Some(_value)) => Ok(true),
             Ok(None) => Ok(false),
-            Err(_) => Err(EngineError::IO),
+            Err(e) => {
+                error!("is exist error: {}", e);
+                Err(EngineError::IO)
+            }
         }
     }
 
     pub fn create_directory(&self, path: &str, _mode: u32) -> Result<Vec<u8>, EngineError> {
-        self.dir_db.db.put(path.as_bytes(), 2_usize.to_le_bytes())?;
-        let attr = FileAttrSimple::new(fuser::FileType::Directory);
-        self.put_file_attr(path, attr)
+        match self.dir_db.db.put(path.as_bytes(), 2_usize.to_le_bytes()) {
+            Ok(_) => {
+                let attr = FileAttrSimple::new(FileTypeSimple::Directory);
+                self.put_file_attr(path, attr)
+            }
+            Err(e) => {
+                error!("create directory error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
     }
 
     pub fn delete_directory(&self, path: &str) -> Result<(), EngineError> {
-        if let Some(value) = self.dir_db.db.get(path.as_bytes())? {
-            if usize::from_le_bytes(value.as_slice().try_into().unwrap()) > 2 {
-                return Err(EngineError::NotEmpty);
+        match self.dir_db.db.get(path.as_bytes()) {
+            Ok(Some(value)) => {
+                if usize::from_le_bytes(value.as_slice().try_into().unwrap()) > 2 {
+                    return Err(EngineError::NotEmpty);
+                }
+            }
+            Ok(None) => return Err(EngineError::NoEntry),
+            Err(e) => {
+                error!("delete directory error: {}", e);
+                return Err(EngineError::IO);
+            }
+        };
+        self.delete_file_attr(path)?;
+        match self.dir_db.db.delete(path) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("delete directory error: {}", e);
+                Err(EngineError::IO)
             }
         }
-        self.delete_file_attr(path)?;
-        self.dir_db.db.delete(path)?;
-        Ok(())
     }
 
     pub fn read_directory(
@@ -164,24 +209,32 @@ impl MetaEngine {
         size: u32,
         offset: i64,
     ) -> Result<Vec<u8>, EngineError> {
-        if let Some(value) = self.file_attr_db.db.get(path.as_bytes())? {
+        match self.file_attr_db.db.get(path.as_bytes()) {
             // debug!("read_dir getting attr, path: {}, value: {:?}", path, value);
-            match bincode::deserialize::<FileAttrSimple>(&value) {
-                Ok(file_attr) => {
-                    // fuser::FileType::Directory
-                    if file_attr.kind != 3 {
-                        return Err(EngineError::NotDir);
+            Ok(Some(value)) => {
+                match bincode::deserialize::<FileAttrSimple>(&value) {
+                    Ok(file_attr) => {
+                        // fuser::FileType::Directory
+                        if file_attr.kind != 3 {
+                            return Err(EngineError::NotDir);
+                        }
+                    }
+                    Err(e) => {
+                        error!("read directory error: {}", e);
+                        return Err(EngineError::IO);
                     }
                 }
-                Err(_) => {
-                    return Err(EngineError::IO);
-                }
+            }
+            Ok(None) => return Err(EngineError::NoEntry),
+            Err(e) => {
+                error!("read directory error: {}", e);
+                return Err(EngineError::IO);
             }
         }
 
         let mut offset = offset;
-        match self.dir_db.db.get(path.as_bytes())? {
-            Some(value) => {
+        match self.dir_db.db.get(path.as_bytes()) {
+            Ok(Some(value)) => {
                 let mut result = Vec::with_capacity(size as usize);
                 let mut l = usize::from_le_bytes(value.as_slice().try_into().unwrap());
                 let mut total = 0;
@@ -198,11 +251,22 @@ impl MetaEngine {
                         continue;
                     }
                     let (key, value) = item.unwrap();
-                    let ty = match key.last().unwrap() {
-                        b'f' => DT_REG,
-                        b'd' => DT_DIR,
-                        b's' => DT_LNK,
-                        _ => DT_REG,
+                    let ty = {
+                        match (*key.last().unwrap()).try_into() {
+                            Ok(FileTypeSimple::RegularFile) => DT_REG,
+                            Ok(FileTypeSimple::Directory) => DT_DIR,
+                            Ok(FileTypeSimple::Symlink) => DT_LNK,
+                            Ok(_) => DT_REG,
+                            Err(e) => {
+                                error!(
+                                    "read directory error: {}, path: {}, key as string: {}",
+                                    e,
+                                    path,
+                                    String::from_utf8(key.to_vec()).unwrap()
+                                );
+                                return Err(EngineError::IO);
+                            }
+                        }
                     };
                     let rec_len = value.len() + 3;
                     total += rec_len;
@@ -216,7 +280,11 @@ impl MetaEngine {
                 }
                 Ok(result)
             }
-            None => Err(EngineError::IO),
+            Ok(None) => Err(EngineError::IO),
+            Err(e) => {
+                error!("read directory error: {}", e);
+                Err(EngineError::IO)
+            }
         }
     }
 
@@ -226,23 +294,33 @@ impl MetaEngine {
         file_name: &str,
         file_type: u8,
     ) -> Result<(), EngineError> {
-        let ft = match file_type {
-            3 => "d",
-            _ => "f",
-        };
-        match self.dir_db.db.get(parent_dir)? {
-            Some(value) => {
+        match self.dir_db.db.get(parent_dir) {
+            Ok(Some(value)) => {
                 let len = usize::from_le_bytes(value.as_slice().try_into().unwrap());
-                self.dir_db.db.put(parent_dir, (len + 1).to_le_bytes())?;
-                self.dir_db
-                    .db
-                    .put(format!("{}-{}-{}", parent_dir, file_name, ft), file_name)?;
+                match self.dir_db.db.put(parent_dir, (len + 1).to_le_bytes()) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("directory add entry error: {}", e);
+                        return Err(EngineError::IO);
+                    }
+                }
+                match self.dir_db.db.put(
+                    format!("{}-{}-{}", parent_dir, file_name, file_type as char),
+                    file_name,
+                ) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        error!("directory add entry error: {}", e);
+                        Err(EngineError::IO)
+                    }
+                }
             }
-            None => {
-                return Err(EngineError::NoEntry);
+            Ok(None) => Err(EngineError::NoEntry),
+            Err(e) => {
+                error!("directory add entry error: {}", e);
+                Err(EngineError::IO)
             }
         }
-        Ok(())
     }
 
     pub fn directory_delete_entry(
@@ -251,36 +329,69 @@ impl MetaEngine {
         file_name: &str,
         file_type: u8,
     ) -> Result<(), EngineError> {
-        if let Some(value) = self.dir_db.db.get(parent_dir.as_bytes())? {
-            let ft = match file_type {
-                3 => "d",
-                _ => "f",
-            };
-            let len = usize::from_le_bytes(value.as_slice().try_into().unwrap());
-            self.dir_db
-                .db
-                .put(parent_dir.as_bytes(), (len - 1).to_le_bytes())?;
-            self.dir_db
-                .db
-                .delete(format!("{}-{}-{}", parent_dir, file_name, ft))?;
+        match self.dir_db.db.get(parent_dir.as_bytes()) {
+            Ok(Some(value)) => {
+                let len = usize::from_le_bytes(value.as_slice().try_into().unwrap());
+                match self
+                    .dir_db
+                    .db
+                    .put(parent_dir.as_bytes(), (len - 1).to_le_bytes())
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("directory delete entry error: {}", e);
+                        return Err(EngineError::IO);
+                    }
+                }
+                match self.dir_db.db.delete(format!(
+                    "{}-{}-{}",
+                    parent_dir, file_name, file_type as char
+                )) {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        error!("directory delete entry error: {}", e);
+                        Err(EngineError::IO)
+                    }
+                }
+            }
+            Ok(None) => Err(EngineError::NoEntry),
+            Err(e) => {
+                error!("directory delete entry error: {}", e);
+                Err(EngineError::IO)
+            }
         }
-        Ok(())
     }
 
     pub fn delete_from_parent(&self, path: &str, file_type: u8) -> Result<(), EngineError> {
-        let (parent, name) = path_split(path.to_string()).unwrap();
-        let ft = match file_type {
-            3 => "d",
-            _ => "f",
-        };
-        if let Some(value) = self.dir_db.db.get(parent.as_bytes())? {
-            let l = usize::from_le_bytes(value.as_slice().try_into().unwrap());
-            self.dir_db.db.put(&parent, (l - 1).to_le_bytes())?;
-            self.dir_db
-                .db
-                .delete(format!("{}-{}-{}", parent, name, ft))?;
+        let (parent, name) = path_split(path).unwrap();
+        match self.dir_db.db.get(parent.as_bytes()) {
+            Ok(Some(value)) => {
+                let l = usize::from_le_bytes(value.as_slice().try_into().unwrap());
+                match self.dir_db.db.put(&parent, (l - 1).to_le_bytes()) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("delete from parent error: {}", e);
+                        return Err(EngineError::IO);
+                    }
+                }
+                match self
+                    .dir_db
+                    .db
+                    .delete(format!("{}-{}-{}", parent, name, file_type as char))
+                {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        error!("delete from parent error: {}", e);
+                        Err(EngineError::IO)
+                    }
+                }
+            }
+            Ok(None) => Err(EngineError::NoEntry),
+            Err(e) => {
+                error!("delete from parent error: {}", e);
+                Err(EngineError::IO)
+            }
         }
-        Ok(())
     }
 
     // fn delete_dir_recursive(&self, path: String) -> Result<(), EngineError> {
@@ -321,34 +432,82 @@ impl MetaEngine {
     // }
 
     pub fn put_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, EngineError> {
-        let value = bincode::serialize(&attr).map_err(|_e| EngineError::IO)?;
-        self.file_attr_db.db.put(path, &value)?;
-        Ok(value)
+        let value = match bincode::serialize(&attr).map_err(|_e| EngineError::IO) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("put_file_attr error: {}", e);
+                return Err(EngineError::IO);
+            }
+        };
+        match self.file_attr_db.db.put(path, &value) {
+            Ok(_) => Ok(value),
+            Err(e) => {
+                error!("put_file_attr error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
     }
 
     pub fn get_file_attr(&self, path: &str) -> Result<FileAttrSimple, EngineError> {
-        match self.file_attr_db.db.get(path)? {
-            Some(value) => {
+        match self.file_attr_db.db.get(path) {
+            Ok(Some(value)) => {
                 bincode::deserialize::<FileAttrSimple>(&value).map_err(|_e| EngineError::IO)
             }
-            None => Err(EngineError::NoEntry),
+            Ok(None) => Err(EngineError::NoEntry),
+            Err(e) => {
+                error!("get_file_attr error: {}", e);
+                Err(EngineError::IO)
+            }
         }
     }
 
     pub fn get_file_attr_raw(&self, path: &str) -> Result<Vec<u8>, EngineError> {
-        self.file_attr_db
+        match self
+            .file_attr_db
             .db
             .get(path)
             .map_err(|_e| EngineError::IO)
             .map(|v| match v {
                 Some(v) => Ok(v),
                 None => Err(EngineError::NoEntry),
-            })?
+            }) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("get_file_attr_raw error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
+    }
+
+    pub fn complete_transfer_file(
+        &self,
+        path: &str,
+        file_attr: FileAttrSimple,
+    ) -> Result<(), EngineError> {
+        let value = match bincode::serialize(&file_attr).map_err(|_e| EngineError::IO) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("complete_transfer_file error: {}", e);
+                return Err(EngineError::IO);
+            }
+        };
+        match self.file_attr_db.db.put(path, value) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("complete_transfer_file error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
     }
 
     pub fn delete_file_attr(&self, path: &str) -> Result<(), EngineError> {
-        self.file_attr_db.db.delete(path.as_bytes())?;
-        Ok(())
+        match self.file_attr_db.db.delete(path.as_bytes()) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("delete_file_attr error: {}", e);
+                Err(EngineError::IO)
+            }
+        }
     }
 
     pub fn is_dir(&self, path: &str) -> Result<bool, EngineError> {
@@ -373,8 +532,8 @@ impl MetaEngine {
                 debug!("read_file path: {}, no entry", path);
                 Err(EngineError::NoEntry)
             }
-            Err(_) => {
-                debug!("read_file path: {}, io error", path);
+            Err(e) => {
+                error!("read_file path: {}, io error: {:?}", path, e);
                 Err(EngineError::IO)
             }
         }

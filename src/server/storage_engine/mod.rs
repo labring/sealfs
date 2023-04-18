@@ -17,21 +17,21 @@ pub trait StorageEngine {
 
     fn init(&self);
 
-    fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError>;
+    fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, EngineError>;
 
-    fn open_file(&self, path: String, flag: i32, mode: u32) -> Result<(), EngineError>;
+    fn open_file(&self, path: &str, flag: i32, mode: u32) -> Result<(), EngineError>;
 
-    fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError>;
+    fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, EngineError>;
 
     fn create_file(
         &self,
-        path: String,
+        path: &str,
         oflag: i32,
         umask: u32,
         mode: u32,
     ) -> Result<Vec<u8>, EngineError>;
 
-    fn delete_file(&self, path: String) -> Result<(), EngineError>;
+    fn delete_file(&self, path: &str) -> Result<(), EngineError>;
 
-    fn truncate_file(&self, path: String, length: i64) -> Result<(), EngineError>;
+    fn truncate_file(&self, path: &str, length: i64) -> Result<(), EngineError>;
 }

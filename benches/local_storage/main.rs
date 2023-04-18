@@ -14,13 +14,15 @@ fn create_file(engine: &FileEngine, n: isize) {
     let mode = 0o777;
     let oflag = libc::O_CREAT | libc::O_RDWR;
     (0..n).for_each(|i| {
-        engine.create_file(i.to_string(), oflag, 0, mode).unwrap();
+        engine
+            .create_file(i.to_string().as_str(), oflag, 0, mode)
+            .unwrap();
     })
 }
 
 fn delete_file(engine: &FileEngine, n: isize) {
     (0..n).for_each(|i| {
-        engine.delete_file(i.to_string()).unwrap();
+        engine.delete_file(i.to_string().as_str()).unwrap();
     })
 }
 
@@ -30,7 +32,7 @@ fn write_file(engine: &FileEngine, n: isize) {
         let i: usize = rng.gen::<usize>() % n as usize;
         let bytes = vec![1u8; 10240];
         engine
-            .write_file(i.to_string(), bytes.as_slice(), 0)
+            .write_file(i.to_string().as_str(), bytes.as_slice(), 0)
             .unwrap();
     })
 }
@@ -39,7 +41,7 @@ fn read_file(engine: &FileEngine, n: isize) {
     (0..n * 10).for_each(|_| {
         let mut rng = rand::thread_rng();
         let i: usize = rng.gen::<usize>() % n as usize;
-        let _ = engine.read_file(i.to_string(), 10240, 0).unwrap();
+        let _ = engine.read_file(i.to_string().as_str(), 10240, 0).unwrap();
     })
 }
 

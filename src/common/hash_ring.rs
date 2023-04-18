@@ -1,4 +1,4 @@
-use std::{sync::RwLock, collections::HashMap};
+use std::collections::HashMap;
 
 use conhash::{ConsistentHash, Node};
 
@@ -23,12 +23,14 @@ impl Clone for HashRing {
         let servers = self.servers.clone();
         let mut ring = ConsistentHash::<ServerNode>::new();
         for (server, weight) in servers.iter() {
-            ring.add(&ServerNode { address: server.clone() }, *weight);
+            ring.add(
+                &ServerNode {
+                    address: server.clone(),
+                },
+                *weight,
+            );
         }
-        HashRing {
-            ring,
-            servers,
-        }
+        HashRing { ring, servers }
     }
 }
 
@@ -37,7 +39,12 @@ impl HashRing {
         let mut ring = ConsistentHash::<ServerNode>::new();
         let mut servers_map = HashMap::new();
         for (server, weight) in servers {
-            ring.add(&ServerNode { address: server.clone() }, weight);
+            ring.add(
+                &ServerNode {
+                    address: server.clone(),
+                },
+                weight,
+            );
             servers_map.insert(server, weight);
         }
         HashRing {
@@ -58,5 +65,9 @@ impl HashRing {
     pub fn remove(&mut self, server: &ServerNode) {
         self.ring.remove(server);
         self.servers.remove(&server.address);
+    }
+
+    pub fn contains(&self, server: &str) -> bool {
+        self.servers.contains_key(server)
     }
 }

@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::common::cache::LRUCache;
 use crate::common::serialization::FileAttrSimple;
+use crate::common::{cache::LRUCache, serialization::FileTypeSimple};
 
 use super::EngineError;
 
 use super::meta_engine::MetaEngine;
 use super::StorageEngine;
-use log::debug;
+use log::{debug, error};
 use nix::{
     fcntl::{self, OFlag},
     sys::{
@@ -68,12 +68,12 @@ impl StorageEngine for FileEngine {
         self.fsck().unwrap();
     }
 
-    fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
-        if self.meta_engine.is_dir(&path)? {
+    fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
+        if self.meta_engine.is_dir(path)? {
             return Err(EngineError::IsDir);
         }
 
-        let local_file_name = generate_local_file_name(&self.root, &path);
+        let local_file_name = generate_local_file_name(&self.root, path);
         let oflag = OFlag::O_RDWR;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
@@ -84,14 +84,26 @@ impl StorageEngine for FileEngine {
         let fd = match self.cache.get(local_file_name.as_bytes()) {
             Some(value) => value.fd,
             None => {
-                let fd = fcntl::open(local_file_name.as_str(), oflag, mode)?;
+                let fd = match fcntl::open(local_file_name.as_str(), oflag, mode) {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        error!("open file error: {:?}", err);
+                        return Err(EngineError::IO);
+                    }
+                };
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
                 fd
             }
         };
         let mut data = vec![0; size as usize];
-        let real_size = pread(fd, data.as_mut_slice(), offset)?;
+        let real_size = match pread(fd, data.as_mut_slice(), offset) {
+            Ok(size) => size,
+            Err(err) => {
+                error!("read file error: {:?}", err);
+                return Err(EngineError::IO);
+            }
+        };
         debug!(
             "read_file path: {}, size: {}, offset: {}, data: {:?}",
             path, real_size, offset, data
@@ -102,12 +114,12 @@ impl StorageEngine for FileEngine {
         Ok(data[..real_size].to_vec())
     }
 
-    fn write_file(&self, path: String, data: &[u8], offset: i64) -> Result<usize, EngineError> {
-        if self.meta_engine.is_dir(&path)? {
+    fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, EngineError> {
+        if self.meta_engine.is_dir(path)? {
             return Err(EngineError::IsDir);
         }
 
-        let local_file_name = generate_local_file_name(&self.root, &path);
+        let local_file_name = generate_local_file_name(&self.root, path);
         let oflags = OFlag::O_RDWR;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
@@ -118,13 +130,25 @@ impl StorageEngine for FileEngine {
         let fd = match self.cache.get(local_file_name.as_bytes()) {
             Some(value) => value.fd,
             None => {
-                let fd = fcntl::open(local_file_name.as_str(), oflags, mode)?;
+                let fd = match fcntl::open(local_file_name.as_str(), oflags, mode) {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        error!("open file error: {:?}", err);
+                        return Err(EngineError::IO);
+                    }
+                };
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
                 fd
             }
         };
-        let write_size = pwrite(fd, data, offset)?;
+        let write_size = match pwrite(fd, data, offset) {
+            Ok(size) => size,
+            Err(err) => {
+                error!("write file error: {:?}", err);
+                return Err(EngineError::IO);
+            }
+        };
         debug!(
             "write_file path: {}, write_size: {}, data_len: {}",
             path,
@@ -132,67 +156,101 @@ impl StorageEngine for FileEngine {
             data.len()
         );
 
-        let mut file_attr = self.meta_engine.get_file_attr(&path)?;
+        let mut file_attr = self.meta_engine.get_file_attr(path)?;
         file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
-        self.meta_engine.put_file_attr(&path, file_attr)?;
+        self.meta_engine.put_file_attr(path, file_attr)?;
 
         Ok(write_size)
     }
 
     fn create_file(
         &self,
-        path: String,
+        path: &str,
         oflag: i32,
         _umask: u32,
         mode: u32,
     ) -> Result<Vec<u8>, EngineError> {
-        let local_file_name = generate_local_file_name(&self.root, &path);
+        let local_file_name = generate_local_file_name(&self.root, path);
         match self.cache.get(local_file_name.as_bytes()) {
             Some(_) => {}
             None => {
-                let fd = fcntl::open(
+                let fd = match fcntl::open(
                     local_file_name.as_str(),
                     OFlag::from_bits_truncate(oflag),
                     Mode::from_bits_truncate(mode),
-                )?;
+                ) {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        error!("open file error: {:?}", err);
+                        return Err(EngineError::IO);
+                    }
+                };
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
             }
         };
-        self.meta_engine.put_file(&local_file_name, &path)?;
-        let attr = FileAttrSimple::new(fuser::FileType::RegularFile);
-        self.meta_engine.put_file_attr(&path, attr)
+        self.meta_engine.put_file(&local_file_name, path)?;
+        let attr = FileAttrSimple::new(FileTypeSimple::RegularFile);
+        self.meta_engine.put_file_attr(path, attr)
     }
 
-    fn delete_file(&self, path: String) -> Result<(), EngineError> {
-        let local_file_name = generate_local_file_name(&self.root, &path);
+    fn delete_file(&self, path: &str) -> Result<(), EngineError> {
+        let local_file_name = generate_local_file_name(&self.root, path);
         self.cache.remove(local_file_name.as_bytes());
-        unistd::unlink(local_file_name.as_str())?;
-        self.meta_engine.delete_file_attr(&path)?;
+        match unistd::unlink(local_file_name.as_str()) {
+            Ok(_) => {}
+            Err(err) => {
+                error!("delete file error: {:?}", err);
+                return Err(EngineError::IO);
+            }
+        };
+        self.meta_engine.delete_file_attr(path)?;
         self.meta_engine.delete_file(&local_file_name)?;
         Ok(())
     }
 
-    fn truncate_file(&self, path: String, length: i64) -> Result<(), EngineError> {
-        let local_file_name = generate_local_file_name(&self.root, &path);
-        unistd::truncate(local_file_name.as_str(), length)?;
+    fn truncate_file(&self, path: &str, length: i64) -> Result<(), EngineError> {
+        let local_file_name = generate_local_file_name(&self.root, path);
+        match unistd::truncate(local_file_name.as_str(), length) {
+            Ok(_) => {}
+            Err(err) => {
+                error!("truncate file error: {:?}", err);
+                return Err(EngineError::IO);
+            }
+        };
         Ok(())
     }
 
-    fn open_file(&self, path: String, flags: i32, mode: u32) -> Result<(), EngineError> {
-        let local_file_name = generate_local_file_name(&self.root, &path);
-        let _ = fcntl::open(
+    fn open_file(&self, path: &str, flags: i32, mode: u32) -> Result<(), EngineError> {
+        let local_file_name = generate_local_file_name(&self.root, path);
+        match fcntl::open(
             local_file_name.as_str(),
             OFlag::from_bits_truncate(flags),
             Mode::from_bits_truncate(mode),
-        )?;
+        ) {
+            Ok(fd) => {
+                self.cache
+                    .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
+            }
+            Err(err) => {
+                error!("open file error: {:?}", err);
+                return Err(EngineError::IO);
+            }
+        };
         Ok(())
     }
 }
 
 impl FileEngine {
     fn fsck(&self) -> Result<(), EngineError> {
-        for entry in std::fs::read_dir(&self.root)? {
+        let entries = match std::fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(err) => {
+                error!("read dir error: {:?}", err);
+                return Err(EngineError::IO);
+            }
+        };
+        for entry in entries {
             let entry = entry?;
             let file_name = format!("{}/{}", self.root, entry.file_name().to_str().unwrap());
             if self.meta_engine.check_file(&file_name) {
@@ -277,14 +335,12 @@ mod tests {
             engine.init();
             let mode: mode_t = 0o777;
             let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
-            engine
-                .create_file("/a.txt".to_string(), oflag, 0, mode)
-                .unwrap();
+            engine.create_file("/a.txt", oflag, 0, mode).unwrap();
             let file_attr = meta_engine.get_file_attr("/a.txt").unwrap();
             assert_eq!(file_attr.kind, 4); // 4 is RegularFile
             let local_file_name = generate_local_file_name(root, "/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
-            engine.delete_file("/a.txt".to_string()).unwrap();
+            engine.delete_file("/a.txt").unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
 
@@ -297,11 +353,11 @@ mod tests {
             meta_engine.create_directory("/test_a", mode).unwrap();
             meta_engine.create_directory("/test_a/a", mode).unwrap();
             engine
-                .create_file("/test_a/a/a.txt".to_string(), oflag, 0, mode)
+                .create_file("/test_a/a/a.txt", oflag, 0, mode)
                 .unwrap();
             let local_file_name = generate_local_file_name(root, "/test_a/a/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
-            engine.delete_file("/test_a/a/a.txt".to_string()).unwrap();
+            engine.delete_file("/test_a/a/a.txt").unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
@@ -323,13 +379,11 @@ mod tests {
             engine.init();
             let mode: mode_t = 0o777;
             let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
+            engine.create_file("/b.txt", oflag, 0, mode).unwrap();
             engine
-                .create_file("/b.txt".to_string(), oflag, 0, mode)
+                .write_file("/b.txt", "hello world".as_bytes(), 0)
                 .unwrap();
-            engine
-                .write_file("/b.txt".to_string(), "hello world".as_bytes(), 0)
-                .unwrap();
-            let value = engine.read_file("/b.txt".to_string(), 11, 0).unwrap();
+            let value = engine.read_file("/b.txt", 11, 0).unwrap();
             assert_eq!("hello world", String::from_utf8(value).unwrap());
             let file_attr = meta_engine.get_file_attr("/b.txt").unwrap();
             assert_eq!(file_attr.size, 11);
