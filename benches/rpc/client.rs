@@ -27,10 +27,8 @@ pub async fn run_cli_without_data(total: u32) {
     let client = Arc::new(Client::new());
     client.add_connection(server_address).await;
 
-    let mut data = vec![0u8; 50];
     for i in 0..total {
         let new_client = client.clone();
-        let data = data.clone();
         handles.push(rt.spawn(async move {
             let mut status = 0;
             let mut rsp_flags = 0;
@@ -46,7 +44,7 @@ pub async fn run_cli_without_data(total: u32) {
                     i,
                     "",
                     &[],
-                    &data,
+                    &[],
                     &mut status,
                     &mut rsp_flags,
                     &mut recv_meta_data_length,

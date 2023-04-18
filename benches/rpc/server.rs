@@ -1,10 +1,9 @@
 #![allow(unused)]
 
+use async_trait::async_trait;
 use sealfs::rpc::server::{Handler, Server};
 use std::{sync::Arc, vec};
 use tokio::sync::Mutex;
-
-use async_trait::async_trait;
 pub struct HelloHandler {}
 
 impl HelloHandler {
