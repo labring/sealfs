@@ -339,6 +339,7 @@ pub struct WriteFileSendMetaData {
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct DirectoryEntrySendMetaData {
     pub file_type: u8,
+    pub file_name: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]

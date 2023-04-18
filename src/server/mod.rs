@@ -287,7 +287,7 @@ where
                 let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
                 Ok((
                     self.engine
-                        .directory_add_entry(file_path, md.file_type)
+                        .directory_add_entry(file_path, md.file_name, md.file_type)
                         .await,
                     0,
                     vec![],
@@ -298,7 +298,7 @@ where
                 let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
                 Ok((
                     self.engine
-                        .directory_delete_entry(file_path, md.file_type)
+                        .directory_delete_entry(file_path, md.file_name, md.file_type)
                         .await,
                     0,
                     vec![],

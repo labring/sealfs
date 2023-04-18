@@ -63,6 +63,7 @@ jobs:
         run:  |
           sudo rm -rf /tmp/test*
           make test
+          ./test_io500.sh /data
           # make test features=mem-db
         continue-on-error: true
       

@@ -21,4 +21,3 @@ build:
 
 test:
 	cargo test --features=$(features)
-	./test_io500.sh /data
