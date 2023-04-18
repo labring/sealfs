@@ -4,4 +4,5 @@
 
 pub mod heart;
 pub mod manager_service;
+pub mod manager;
 pub mod uid;

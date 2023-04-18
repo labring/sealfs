@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{ffi::OsStr, io::Read, str::FromStr};
 
 use crate::{
-    common::{distribute_hash_table::build_hash_ring, serialization::OperationType},
+    common::{distribute_hash_table::build_hash_ring, serialization::{OperationType, ManagerOperationType}},
     manager::manager_service::MetadataRequest,
     rpc::client::Client,
 };
@@ -195,7 +195,7 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
             let result = client
                 .call_remote(
                     &_http_manager_address,
-                    OperationType::GetMetadata.into(),
+                    ManagerOperationType::GetMetadata.into(),
                     0,
                     "",
                     &bincode::serialize(&request).unwrap(),

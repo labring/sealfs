@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use log::info;
-use sealfs::common::serialization::OperationType;
+use sealfs::common::serialization::{OperationType, ManagerOperationType};
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::Client;
 use sealfs::server;
@@ -195,7 +195,7 @@ async fn begin_heartbeat_report(
             let result = client
                 .call_remote(
                     &manager_address,
-                    OperationType::SendHeart.into(),
+                    ManagerOperationType::SendHeart.into(),
                     0,
                     &server_address,
                     &bincode::serialize(&request).unwrap(),

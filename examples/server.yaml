@@ -1,23 +1,23 @@
 manager_address: 
   127.0.0.1:8081
 server_address: 
-  127.0.0.1:8085
+  127.0.0.1:8099
 all_servers_address:
-  - 127.0.0.1:8085
-  - 127.0.0.1:8086
-  - 127.0.0.1:8087
-  - 127.0.0.1:8088
-  - 127.0.0.1:8089
+  - 127.0.0.1:8099
+  # - 127.0.0.1:8086
+  # - 127.0.0.1:8087
+  # - 127.0.0.1:8088
+  # - 127.0.0.1:8089
 lifetime: 
   long
 database_path: 
-  /tmp/database0/
+  /tmp/database11/
 cache_capacity: 
   13421772
 write_buffer_size:
   0x4000000
 storage_path: 
-  /tmp/storage0/
+  /tmp/storage11/
 heartbeat: 
   false
 log_level: 

@@ -32,9 +32,7 @@ pub enum OperationType {
     DeleteDir = 10,
     DirectoryAddEntry = 11,
     DirectoryDeleteEntry = 12,
-    SendHeart = 13,
-    GetMetadata = 14,
-    TruncateFile = 15,
+    TruncateFile = 13,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -55,9 +53,7 @@ impl TryFrom<u32> for OperationType {
             10 => Ok(OperationType::DeleteDir),
             11 => Ok(OperationType::DirectoryAddEntry),
             12 => Ok(OperationType::DirectoryDeleteEntry),
-            13 => Ok(OperationType::SendHeart),
-            14 => Ok(OperationType::GetMetadata),
-            15 => Ok(OperationType::TruncateFile),
+            13 => Ok(OperationType::TruncateFile),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -79,9 +75,7 @@ impl From<OperationType> for u32 {
             OperationType::DeleteDir => 10,
             OperationType::DirectoryAddEntry => 11,
             OperationType::DirectoryDeleteEntry => 12,
-            OperationType::SendHeart => 13,
-            OperationType::GetMetadata => 14,
-            OperationType::TruncateFile => 15,
+            OperationType::TruncateFile => 13,
         }
     }
 }
@@ -102,9 +96,70 @@ impl OperationType {
             OperationType::DeleteDir => 10u32.to_le_bytes(),
             OperationType::DirectoryAddEntry => 11u32.to_le_bytes(),
             OperationType::DirectoryDeleteEntry => 12u32.to_le_bytes(),
-            OperationType::SendHeart => 13u32.to_le_bytes(),
-            OperationType::GetMetadata => 14u32.to_le_bytes(),
-            OperationType::TruncateFile => 15u32.to_le_bytes(),
+            OperationType::TruncateFile => 13u32.to_le_bytes(),
+        }
+    }
+}
+
+pub enum ManagerOperationType {
+    SendHeart = 1,
+    GetMetadata = 2,
+    GetClusterStatus = 3,
+    GetHashRing = 4,
+    GetNewHashRing = 5,
+    AddNodes = 6,
+    RemoveNodes = 7,
+    PreFinishServer = 8,
+    FinishServer = 9,
+}
+
+impl TryFrom<u32> for ManagerOperationType {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(ManagerOperationType::SendHeart),
+            2 => Ok(ManagerOperationType::GetMetadata),
+            3 => Ok(ManagerOperationType::GetClusterStatus),
+            4 => Ok(ManagerOperationType::GetHashRing),
+            5 => Ok(ManagerOperationType::GetNewHashRing),
+            6 => Ok(ManagerOperationType::AddNodes),
+            7 => Ok(ManagerOperationType::RemoveNodes),
+            8 => Ok(ManagerOperationType::PreFinishServer),
+            9 => Ok(ManagerOperationType::FinishServer),
+            _ => panic!("Unkown value: {}", value),
+        }
+    }
+}
+
+impl From<ManagerOperationType> for u32 {
+    fn from(value: ManagerOperationType) -> Self {
+        match value {
+            ManagerOperationType::SendHeart => 1,
+            ManagerOperationType::GetMetadata => 2,
+            ManagerOperationType::GetClusterStatus => 3,
+            ManagerOperationType::GetHashRing => 4,
+            ManagerOperationType::GetNewHashRing => 5,
+            ManagerOperationType::AddNodes => 6,
+            ManagerOperationType::RemoveNodes => 7,
+            ManagerOperationType::PreFinishServer => 8,
+            ManagerOperationType::FinishServer => 9,
+        }
+    }
+}
+
+impl ManagerOperationType {
+    pub fn to_le_bytes(&self) -> [u8; 4] {
+        match self {
+            ManagerOperationType::SendHeart => 1u32.to_le_bytes(),
+            ManagerOperationType::GetMetadata => 2u32.to_le_bytes(),
+            ManagerOperationType::GetClusterStatus => 3u32.to_le_bytes(),
+            ManagerOperationType::GetHashRing => 4u32.to_le_bytes(),
+            ManagerOperationType::GetNewHashRing => 5u32.to_le_bytes(),
+            ManagerOperationType::AddNodes => 6u32.to_le_bytes(),
+            ManagerOperationType::RemoveNodes => 7u32.to_le_bytes(),
+            ManagerOperationType::PreFinishServer => 8u32.to_le_bytes(),
+            ManagerOperationType::FinishServer => 9u32.to_le_bytes(),
         }
     }
 }

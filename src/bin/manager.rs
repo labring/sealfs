@@ -79,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
 
     let address = properties.address;
 
-    let server = Server::new(Arc::new(ManagerService::default()), &address);
+    let server = Server::new(Arc::new(ManagerService::new(vec![])), &address);
     server.run().await?;
     Ok(())
 }
