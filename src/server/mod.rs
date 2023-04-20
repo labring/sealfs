@@ -52,6 +52,9 @@ pub enum EngineError {
     #[error("ENOTEMPTY")]
     NotEmpty,
 
+    #[error("SYNCPOISON")]
+    SyncPoison,
+
     #[error(transparent)]
     StdIo(#[from] std::io::Error),
 
@@ -63,6 +66,9 @@ pub enum EngineError {
 
     #[error(transparent)]
     Pegasusdb(#[from] pegasusdb::Error),
+
+    #[error(transparent)]
+    Spdk(#[from] async_spdk::SpdkError),
 }
 
 impl From<u32> for EngineError {

@@ -11,6 +11,7 @@ use super::EngineError;
 pub mod block_engine;
 pub mod file_engine;
 pub mod meta_engine;
+pub mod seal_engine;
 
 pub trait StorageEngine {
     fn new(root: &str, meta_engine: Arc<MetaEngine>) -> Self;

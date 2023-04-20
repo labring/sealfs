@@ -34,6 +34,7 @@ rand = "0.8.5"
 pegasusdb = { git = "https://github.com/uran0sH/pegasusdb.git" }
 bytes = "1.4.0"
 ibv = { git = "https://github.com/mond77/ibv.git" }
+async-spdk = {git = "https://github.com/uran0sH/async-spdk", rev = "1407d13"}
 
 
 [build-dependencies]
