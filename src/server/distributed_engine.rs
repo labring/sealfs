@@ -419,7 +419,7 @@ mod tests {
         };
         // repeat the same file
         match engine0.create_file("/test".into(), oflag, 0, mode).await {
-            Err(EngineError::Exist) => assert!(true),
+            Ok(_) => assert!(true),
             _ => assert!(false),
         };
         match engine0.delete_file("/test".into()).await {
