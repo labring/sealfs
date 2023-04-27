@@ -4,7 +4,6 @@ use std::{
         atomic::{AtomicU32, Ordering},
         Arc,
     },
-    time::Duration,
 };
 
 use crate::rpc::protocol::REQUEST_POOL_SIZE;
