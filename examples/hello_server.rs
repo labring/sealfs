@@ -3,12 +3,13 @@
 //!
 //! You can try this example by running:
 //!
-//!     cargo run --example hello_server
+//!     cargo run --example hello_server --features=disk-db
 //!
 //! And then start client in another terminal by running:
 //!
-//!     cargo run --example hello_client
+//!     cargo run --example hello_client --features=disk-db
 
+#![allow(unused)]
 use async_trait::async_trait;
 use log::debug;
 use sealfs::rpc::server::{Handler, Server};
@@ -22,9 +23,9 @@ impl HelloHandler {
     }
 }
 
-lazy_static::lazy_static! {
-    static ref HELLO_COUNT: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
-}
+// lazy_static::lazy_static! {
+//     static ref HELLO_COUNT: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+// }
 
 #[async_trait]
 impl Handler for HelloHandler {
@@ -36,15 +37,15 @@ impl Handler for HelloHandler {
         data: Vec<u8>,
         _metadata: Vec<u8>,
     ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
-        debug!("dispatch, operation_type: {}", operation_type);
-        debug!("dispatch, path: {:?}", path);
-        debug!("dispatch, data: {:?}", data);
+        // debug!("dispatch, operation_type: {}", operation_type);
+        // debug!("dispatch, path: {:?}", path);
+        // debug!("dispatch, data: {:?}", data);
         match operation_type {
             0 => {
-                let mut count = HELLO_COUNT.lock().await;
-                let buf = format!("Hello, {}!", count).into_bytes();
-                *count += 1;
-                Ok((0, 0, vec![], buf))
+                // let mut count = HELLO_COUNT.lock().await;
+                // let buf = format!("Hello, {}!", count).into_bytes();
+                // *count += 1;
+                Ok((0, 0, vec![1, 2, 3, 4], vec![5, 6, 7, 8]))
             }
             _ => {
                 todo!()
@@ -58,9 +59,8 @@ pub async fn main() -> anyhow::Result<()> {
     let mut builder = env_logger::Builder::from_default_env();
     builder
         .format_timestamp(None)
-        .filter(None, log::LevelFilter::Debug);
+        .filter(None, log::LevelFilter::Info);
     builder.init();
-
     let server = Server::new(Arc::new(HelloHandler::new()), "127.0.0.1:50051");
     server.run().await?;
     Ok(())

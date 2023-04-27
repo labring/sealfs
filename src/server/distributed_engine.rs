@@ -72,6 +72,7 @@ where
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::Directory as u8,
+                file_name,
             })
             .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
@@ -84,7 +85,7 @@ where
                     &address,
                     OperationType::DirectoryAddEntry as u32,
                     0,
-                    &path,
+                    &parent_dir,
                     &send_meta_data,
                     &[],
                     &mut status,
@@ -128,6 +129,7 @@ where
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::Directory as u8,
+                file_name,
             })
             .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
@@ -140,7 +142,7 @@ where
                     &address,
                     OperationType::DirectoryDeleteEntry as u32,
                     0,
-                    &path,
+                    &parent_dir,
                     &send_meta_data,
                     &[],
                     &mut status,
@@ -200,6 +202,7 @@ where
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::RegularFile as u8,
+                file_name,
             })
             .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
@@ -212,7 +215,7 @@ where
                     &address,
                     OperationType::DirectoryAddEntry as u32,
                     0,
-                    &path,
+                    &parent_dir,
                     &send_meta_data,
                     &[],
                     &mut status,
@@ -256,6 +259,7 @@ where
         } else {
             let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
                 file_type: fuser::FileType::RegularFile as u8,
+                file_name,
             })
             .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
@@ -268,7 +272,7 @@ where
                     &address,
                     OperationType::DirectoryDeleteEntry as u32,
                     0,
-                    &path,
+                    &parent_dir,
                     &send_meta_data,
                     &[],
                     &mut status,
@@ -333,33 +337,28 @@ where
         }
     }
 
-    pub async fn directory_add_entry(&self, path: String, file_type: u8) -> i32 {
-        let status = match path_split(path) {
-            Ok((parentdir, filename)) => {
-                match self
-                    .meta_engine
-                    .directory_add_entry(&parentdir, &filename, file_type)
-                {
-                    Ok(()) => 0,
-                    Err(value) => value.into(),
-                }
-            }
+    pub async fn directory_add_entry(&self, path: String, file_name: String, file_type: u8) -> i32 {
+        let status: u32 = match self
+            .meta_engine
+            .directory_add_entry(&path, &file_name, file_type)
+        {
+            Ok(()) => 0,
             Err(value) => value.into(),
         };
         status as i32
     }
 
-    pub async fn directory_delete_entry(&self, path: String, file_type: u8) -> i32 {
-        let status = match path_split(path) {
-            Ok((parentdir, filename)) => {
-                match self
-                    .meta_engine
-                    .directory_delete_entry(&parentdir, &filename, file_type)
-                {
-                    Ok(()) => 0,
-                    Err(value) => value.into(),
-                }
-            }
+    pub async fn directory_delete_entry(
+        &self,
+        path: String,
+        file_name: String,
+        file_type: u8,
+    ) -> i32 {
+        let status: u32 = match self
+            .meta_engine
+            .directory_delete_entry(&path, &file_name, file_type)
+        {
+            Ok(()) => 0,
             Err(value) => value.into(),
         };
         status as i32

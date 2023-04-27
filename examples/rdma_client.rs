@@ -1,18 +1,9 @@
-//! hello_client and hello_server demos show how rpc process the message sent by client
-//! and the usage of 'call_remote' and 'dispatch' APIs.
+//! cargo run --example rdma_client --features=disk-db
 //!
-//! After starting server:
-//!
-//!     cargo run --example hello_server --features=disk-db
-//!
-//! You can try this example by running:
-//!
-//!     cargo run --example hello_client --features=disk-db
 
 use log::debug;
-use sealfs::rpc::client::Client;
-use std::sync::Arc;
-use std::time::Duration;
+use sealfs::rpc::rdma::client::Client;
+use std::{sync::Arc, time::Duration};
 
 #[tokio::main]
 pub async fn main() {
@@ -28,7 +19,7 @@ pub async fn main() {
 
 pub async fn cli(total: u32) -> Duration {
     let client = Arc::new(Client::new());
-    let server_address = "127.0.0.1:50051";
+    let server_address = "127.0.0.1:7777";
     client.add_connection(server_address).await;
     // sleep for 1 second to wait for server to start
     // tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
