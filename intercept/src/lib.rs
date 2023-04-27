@@ -18,6 +18,7 @@ use libc::{
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
 use sealfs::common::distribute_hash_table::build_hash_ring;
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::ffi::CStr;
 use std::io::Read;
 use std::str::FromStr;
@@ -43,7 +44,7 @@ pub async fn init_client_wrap(all_servers_address: Vec<String>) {
 extern "C" fn initialize() {
     unsafe {
         set_hook_fn(dispatch);
-        let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+        let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
         let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "client.yaml"))
             .expect("client.yaml open failed!");
         let mut config_str = String::new();
@@ -52,10 +53,11 @@ extern "C" fn initialize() {
             .expect("client.yaml read failed!");
         let config: Config =
             serde_yaml::from_str(&config_str).expect("client.yaml serializa failed!");
+        let log_level = std::env::var("SEALFS_LOG_LEVEL").unwrap_or(config.log_level);
         let mut builder = env_logger::Builder::from_default_env();
         builder
             .format_timestamp(None)
-            .filter(None, log::LevelFilter::from_str(&config.log_level).unwrap());
+            .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
         builder.init();
         build_hash_ring(config.all_servers_address.clone());
         RUNTIME.block_on(init_client_wrap(config.all_servers_address));
@@ -74,6 +76,32 @@ lazy_static! {
         .unwrap();
 }
 
+thread_local! {
+    /// A flag indicating whether the current thread is in an intercept context.
+    static INTERCEPTED: Cell<bool> = Cell::new(false);
+}
+
+struct InterceptGuard;
+
+impl InterceptGuard {
+    fn try_lock() -> Option<Self> {
+        INTERCEPTED.with(|x| {
+            if x.get() {
+                None
+            } else {
+                x.set(true);
+                Some(InterceptGuard)
+            }
+        })
+    }
+}
+
+impl Drop for InterceptGuard {
+    fn drop(&mut self) {
+        INTERCEPTED.with(|x| x.set(false));
+    }
+}
+
 #[allow(non_upper_case_globals)]
 extern "C" fn dispatch(
     syscall_number: isize,
@@ -85,6 +113,10 @@ extern "C" fn dispatch(
     _arg5: isize,
     result: &mut isize,
 ) -> InterceptResult {
+    let _guard = match InterceptGuard::try_lock() {
+        Some(g) => g,
+        None => return InterceptResult::Forward,
+    };
     match syscall_number as i64 {
         // int close(int fd)
         SYS_close => {

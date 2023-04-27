@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     builder.init();
 
     // read from default configuration.
-    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
     let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "manager.yaml"))
         .expect("manager.yaml open failed!");
     let mut config_str = String::new();

@@ -152,7 +152,7 @@ pub fn init_fs_client() -> Result<(), Box<dyn std::error::Error>> {
     if cli.allow_root {
         options.push(MountOption::AllowRoot);
     }
-    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or_else(|_| "~".to_string());
+    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
     let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "client.yaml"))
         .expect("client.yaml open failed!");
     let mut config_str = String::new();

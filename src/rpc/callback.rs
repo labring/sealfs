@@ -4,7 +4,6 @@ use std::{
         atomic::{AtomicU32, Ordering},
         Arc,
     },
-    time::Duration,
 };
 
 use crate::rpc::protocol::REQUEST_POOL_SIZE;
@@ -227,7 +226,7 @@ impl CallbackPool {
                     Ok(_) => false,
                     Err(_) => {
                         // This means that the response has been received, and signal has been sent.
-                        match timeout(Duration::from_millis(3000), receiver.recv()).await {
+                        match timeout(CLIENT_REQUEST_TIMEOUT, receiver.recv()).await {
                             Ok(r) => match r {
                                 Some(_) => true,
                                 None => panic!("wait_for_callback error"),
