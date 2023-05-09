@@ -187,8 +187,12 @@ where
         mode: u32,
     ) -> Result<Vec<u8>, EngineError> {
         debug!("create file: {}", path);
-        if (oflag & O_EXCL) != 0 && self.meta_engine.is_exist(&path)? {
-            return Err(EngineError::Exist);
+        if self.meta_engine.is_exist(&path)? {
+            if (oflag & O_EXCL) != 0 {
+                return Err(EngineError::Exist);
+            } else {
+                return self.get_file_attr(path).await;
+            }
         }
         let (parent_dir, file_name) = path_split(path.clone())?;
         let address = get_connection_address(parent_dir.as_str()).unwrap();
