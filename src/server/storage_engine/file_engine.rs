@@ -166,7 +166,7 @@ impl StorageEngine for FileEngine {
     fn create_file(
         &self,
         path: &str,
-        oflag: i32,
+        _oflag: i32,
         _umask: u32,
         mode: u32,
     ) -> Result<Vec<u8>, EngineError> {
@@ -176,7 +176,7 @@ impl StorageEngine for FileEngine {
             None => {
                 let fd = match fcntl::open(
                     local_file_name.as_str(),
-                    OFlag::from_bits_truncate(oflag),
+                    OFlag::from_bits_truncate(OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits()),
                     Mode::from_bits_truncate(mode),
                 ) {
                     Ok(fd) => fd,
@@ -221,11 +221,11 @@ impl StorageEngine for FileEngine {
         Ok(())
     }
 
-    fn open_file(&self, path: &str, flags: i32, mode: u32) -> Result<(), EngineError> {
+    fn open_file(&self, path: &str, _flags: i32, mode: u32) -> Result<(), EngineError> {
         let local_file_name = generate_local_file_name(&self.root, path);
         match fcntl::open(
             local_file_name.as_str(),
-            OFlag::from_bits_truncate(flags),
+            OFlag::from_bits_truncate(OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits()),
             Mode::from_bits_truncate(mode),
         ) {
             Ok(fd) => {

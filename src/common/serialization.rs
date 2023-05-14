@@ -36,6 +36,12 @@ pub enum OperationType {
     TruncateFile = 13,
     CheckFile = 14,
     CheckDir = 15,
+    CreateDirNoParent = 16,
+    CreateFileNoParent = 17,
+    DeleteDirNoParent = 18,
+    DeleteFileNoParent = 19,
+    CreateVolume = 20,
+    InitVolume = 21,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -59,6 +65,12 @@ impl TryFrom<u32> for OperationType {
             13 => Ok(OperationType::TruncateFile),
             14 => Ok(OperationType::CheckFile),
             15 => Ok(OperationType::CheckDir),
+            16 => Ok(OperationType::CreateDirNoParent),
+            17 => Ok(OperationType::CreateFileNoParent),
+            18 => Ok(OperationType::DeleteDirNoParent),
+            19 => Ok(OperationType::DeleteFileNoParent),
+            20 => Ok(OperationType::CreateVolume),
+            21 => Ok(OperationType::InitVolume),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -83,6 +95,12 @@ impl From<OperationType> for u32 {
             OperationType::TruncateFile => 13,
             OperationType::CheckFile => 14,
             OperationType::CheckDir => 15,
+            OperationType::CreateDirNoParent => 16,
+            OperationType::CreateFileNoParent => 17,
+            OperationType::DeleteDirNoParent => 18,
+            OperationType::DeleteFileNoParent => 19,
+            OperationType::CreateVolume => 20,
+            OperationType::InitVolume => 21,
         }
     }
 }
@@ -192,11 +210,12 @@ impl Display for ServerType {
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServerStatus {
-    Init = 201,
+    Initializing = 201,
     PreTransfer = 202,
     Transferring = 203,
     PreFinish = 204,
-    Finish = 205,
+    Finishing = 205,
+    Finished = 206,
 }
 
 impl TryFrom<u32> for ServerStatus {
@@ -204,11 +223,12 @@ impl TryFrom<u32> for ServerStatus {
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            201 => Ok(ServerStatus::Init),
+            201 => Ok(ServerStatus::Initializing),
             202 => Ok(ServerStatus::PreTransfer),
             203 => Ok(ServerStatus::Transferring),
             204 => Ok(ServerStatus::PreFinish),
-            205 => Ok(ServerStatus::Finish),
+            205 => Ok(ServerStatus::Finishing),
+            206 => Ok(ServerStatus::Finished),
             _ => Err(format!("Unkown value: {}", value)),
         }
     }
@@ -217,11 +237,12 @@ impl TryFrom<u32> for ServerStatus {
 impl From<ServerStatus> for u32 {
     fn from(value: ServerStatus) -> Self {
         match value {
-            ServerStatus::Init => 201,
+            ServerStatus::Initializing => 201,
             ServerStatus::PreTransfer => 202,
             ServerStatus::Transferring => 203,
             ServerStatus::PreFinish => 204,
-            ServerStatus::Finish => 205,
+            ServerStatus::Finishing => 205,
+            ServerStatus::Finished => 206,
         }
     }
 }
@@ -229,25 +250,26 @@ impl From<ServerStatus> for u32 {
 impl Display for ServerStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Init => write!(f, "Init"),
+            Self::Initializing => write!(f, "Init"),
             Self::PreTransfer => write!(f, "PreTransfer"),
             Self::Transferring => write!(f, "Transferring"),
             Self::PreFinish => write!(f, "PreFinish"),
-            Self::Finish => write!(f, "Finish"),
+            Self::Finishing => write!(f, "Finish"),
+            Self::Finished => write!(f, "CloseNodes"),
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ClusterStatus {
-    Init = 300,
+    Initializing = 300,
     Idle = 301,
-    StartNodes = 302,
+    NodesStarting = 302,
     SyncNewHashRing = 303,
     PreTransfer = 304,
     Transferring = 305,
     PreFinish = 306,
-    CloseNodes = 307,
+    Finishing = 307,
     StatusError = 308,
 }
 
@@ -256,14 +278,14 @@ impl TryFrom<u32> for ClusterStatus {
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            300 => Ok(ClusterStatus::Init),
+            300 => Ok(ClusterStatus::Initializing),
             301 => Ok(ClusterStatus::Idle),
-            302 => Ok(ClusterStatus::StartNodes),
+            302 => Ok(ClusterStatus::NodesStarting),
             303 => Ok(ClusterStatus::SyncNewHashRing),
             304 => Ok(ClusterStatus::PreTransfer),
             305 => Ok(ClusterStatus::Transferring),
             306 => Ok(ClusterStatus::PreFinish),
-            307 => Ok(ClusterStatus::CloseNodes),
+            307 => Ok(ClusterStatus::Finishing),
             308 => Ok(ClusterStatus::StatusError),
             _ => Err(format!("Unkown value: {}", value)),
         }
@@ -273,14 +295,14 @@ impl TryFrom<u32> for ClusterStatus {
 impl From<ClusterStatus> for u32 {
     fn from(value: ClusterStatus) -> Self {
         match value {
-            ClusterStatus::Init => 300,
+            ClusterStatus::Initializing => 300,
             ClusterStatus::Idle => 301,
-            ClusterStatus::StartNodes => 302,
+            ClusterStatus::NodesStarting => 302,
             ClusterStatus::SyncNewHashRing => 303,
             ClusterStatus::PreTransfer => 304,
             ClusterStatus::Transferring => 305,
             ClusterStatus::PreFinish => 306,
-            ClusterStatus::CloseNodes => 307,
+            ClusterStatus::Finishing => 307,
             ClusterStatus::StatusError => 308,
         }
     }
@@ -291,14 +313,14 @@ impl TryFrom<i32> for ClusterStatus {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            300 => Ok(ClusterStatus::Init),
+            300 => Ok(ClusterStatus::Initializing),
             301 => Ok(ClusterStatus::Idle),
-            302 => Ok(ClusterStatus::StartNodes),
+            302 => Ok(ClusterStatus::NodesStarting),
             303 => Ok(ClusterStatus::SyncNewHashRing),
             304 => Ok(ClusterStatus::PreTransfer),
             305 => Ok(ClusterStatus::Transferring),
             306 => Ok(ClusterStatus::PreFinish),
-            307 => Ok(ClusterStatus::CloseNodes),
+            307 => Ok(ClusterStatus::Finishing),
             308 => Ok(ClusterStatus::StatusError),
             _ => Err(format!("Unkown value: {}", value)),
         }
@@ -308,14 +330,14 @@ impl TryFrom<i32> for ClusterStatus {
 impl From<ClusterStatus> for i32 {
     fn from(value: ClusterStatus) -> Self {
         match value {
-            ClusterStatus::Init => 300,
+            ClusterStatus::Initializing => 300,
             ClusterStatus::Idle => 301,
-            ClusterStatus::StartNodes => 302,
+            ClusterStatus::NodesStarting => 302,
             ClusterStatus::SyncNewHashRing => 303,
             ClusterStatus::PreTransfer => 304,
             ClusterStatus::Transferring => 305,
             ClusterStatus::PreFinish => 306,
-            ClusterStatus::CloseNodes => 307,
+            ClusterStatus::Finishing => 307,
             ClusterStatus::StatusError => 308,
         }
     }
@@ -324,14 +346,14 @@ impl From<ClusterStatus> for i32 {
 impl Display for ClusterStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Init => write!(f, "Init"),
+            Self::Initializing => write!(f, "Init"),
             Self::Idle => write!(f, "Idle"),
-            Self::StartNodes => write!(f, "AddNodes"),
+            Self::NodesStarting => write!(f, "AddNodes"),
             Self::SyncNewHashRing => write!(f, "SyncNewHashRing"),
             Self::PreTransfer => write!(f, "PreTransfer"),
             Self::Transferring => write!(f, "Transferring"),
             Self::PreFinish => write!(f, "PreFinish"),
-            Self::CloseNodes => write!(f, "DeleteNodes"),
+            Self::Finishing => write!(f, "DeleteNodes"),
             Self::StatusError => write!(f, "StatusError"),
         }
     }
@@ -693,11 +715,23 @@ pub struct CreateFileSendMetaData {
     pub mode: u32,
     pub umask: u32,
     pub flags: i32,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct DeleteFileSendMetaData {
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct CreateDirSendMetaData {
     pub mode: u32,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct DeleteDirSendMetaData {
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq)]
@@ -733,4 +767,10 @@ pub struct CheckFileSendMetaData {
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct CheckDirSendMetaData {
     pub file_attr: FileAttrSimple,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct CreateVolumeSendMetaData {
+    pub name: String,
+    pub size: u64,
 }

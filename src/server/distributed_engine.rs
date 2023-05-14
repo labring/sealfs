@@ -1,40 +1,52 @@
 use super::storage_engine::meta_engine::MetaEngine;
+use super::storage_engine::StorageEngine;
+use super::transfer_manager::TransferManager;
+use super::volume::Volume;
 use super::EngineError;
-use super::{path_split, storage_engine::StorageEngine};
 use crate::common::byte::CHUNK_SIZE;
 use crate::common::hash_ring::HashRing;
+use crate::common::sender::Sender;
 use crate::common::serialization::{
     CheckDirSendMetaData, CheckFileSendMetaData, ClusterStatus, CreateDirSendMetaData,
-    CreateFileSendMetaData, FileAttrSimple, FileTypeSimple, GetClusterStatusRecvMetaData,
-    GetHashRingInfoRecvMetaData, ManagerOperationType, ServerStatus, WriteFileSendMetaData,
+    CreateFileSendMetaData, FileAttrSimple, FileTypeSimple, ManagerOperationType,
+    ReadFileSendMetaData, ServerStatus, WriteFileSendMetaData,
 };
 use crate::common::serialization::{DirectoryEntrySendMetaData, OperationType};
 
+use crate::common::util::get_full_path;
 use crate::rpc::client::Client;
-use dashmap::mapref::one::Ref;
+use dashmap::mapref::one::{Ref, RefMut};
 use dashmap::DashMap;
 use libc::{O_CREAT, O_DIRECTORY, O_EXCL};
 use log::{debug, error, info};
 use nix::fcntl::OFlag;
 use rocksdb::IteratorMode;
+use spin::RwLock;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{sync::Arc, vec};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio::time::Duration;
+
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub storage_engine: Arc<Storage>,
     pub meta_engine: Arc<MetaEngine>,
-    pub client: Client,
+    pub client: Arc<Client>,
+    pub sender: Sender,
 
     pub cluster_status: AtomicI32,
 
     pub hash_ring: Arc<RwLock<Option<HashRing>>>,
     pub new_hash_ring: Arc<RwLock<Option<HashRing>>>,
 
-    pub transfering_files: DashMap<String, bool>,
-
     pub manager_address: Arc<Mutex<String>>,
+
+    pub file_locks: DashMap<String, HashMap<String, u32>>,
+    pub volumes: DashMap<String, Volume>,
+    pub volume_lock: spin::Mutex<()>,
+    pub transfer_manager: TransferManager,
+    pub volume_indexes: DashMap<u32, String>,
 }
 
 impl<Storage> DistributedEngine<Storage>
@@ -46,16 +58,23 @@ where
         storage_engine: Arc<Storage>,
         meta_engine: Arc<MetaEngine>,
     ) -> Self {
+        let file_locks = DashMap::new();
+        let client = Arc::new(Client::new());
         Self {
             address,
             storage_engine,
             meta_engine,
-            client: Client::new(),
-            cluster_status: AtomicI32::new(ClusterStatus::Init.into()),
+            client: client.clone(),
+            sender: Sender::new(client),
+            cluster_status: AtomicI32::new(ClusterStatus::Initializing.into()),
             hash_ring: Arc::new(RwLock::new(None)),
             new_hash_ring: Arc::new(RwLock::new(None)),
-            transfering_files: DashMap::new(),
             manager_address: Arc::new(Mutex::new("".to_string())),
+            file_locks,
+            volumes: DashMap::new(),
+            volume_lock: spin::Mutex::new(()),
+            transfer_manager: TransferManager::new(),
+            volume_indexes: DashMap::new(),
         }
     }
 
@@ -68,79 +87,94 @@ where
             info!("add connection to {} failed, retrying...", address);
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        self.sender.init_volume(&address, "").await.unwrap();
     }
 
-    pub async fn make_up_file_map(&self) -> Result<(), EngineError> {
-        match self.meta_engine.get_file_map() {
-            Ok(file_map) => {
-                self.transfering_files.clear();
-                for path in file_map {
-                    if self.get_new_address(&path).await != self.address {
-                        self.transfering_files.insert(path, false);
+    pub async fn add_server_connection(&self, address: String) {
+        loop {
+            if self.client.add_connection(&address).await {
+                info!("add server connection to {}", address);
+                match self.sender.init_volume(&address, "").await {
+                    Ok(_) => {
+                        info!("init volume success");
+                        break;
+                    }
+                    Err(_) => {
+                        info!("init volume failed, retrying...");
                     }
                 }
-                Ok(())
             }
-            Err(e) => {
-                error!("make_up_file_map: {}", e);
-                Err(e)
+            info!("add server connection to {} failed, retrying...", address);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    pub fn lock_file(
+        &self,
+        path: &str,
+    ) -> Result<Ref<String, HashMap<std::string::String, u32>>, EngineError> {
+        match self.file_locks.get(path) {
+            Some(lock) => Ok(lock),
+            None => {
+                info!("lock file error: {}", path);
+                Err(EngineError::NoEntry)
             }
         }
     }
 
-    pub async fn create_file_remote(&self, path: &str) -> Result<(), EngineError> {
-        let address = self.get_new_address(path).await;
+    pub fn lock_file_mut(
+        &self,
+        path: &str,
+    ) -> Result<RefMut<String, HashMap<std::string::String, u32>>, EngineError> {
+        match self.file_locks.get_mut(path) {
+            Some(lock) => Ok(lock),
+            None => {
+                error!("lock file error: {}", path);
+                Err(EngineError::NoEntry)
+            }
+        }
+    }
 
+    pub fn make_up_file_map(&self) -> Vec<String> {
+        let mut file_map = Vec::new();
+        self.meta_engine
+            .file_attr_db
+            .db
+            .iterator(IteratorMode::Start)
+            .for_each(|result| {
+                let (k, _) = result.unwrap();
+                let k = String::from_utf8(k.to_vec()).unwrap();
+                if self.get_new_address(&k) != self.address {
+                    file_map.push(k);
+                }
+            });
+        self.transfer_manager.make_up_files(&file_map);
+        file_map
+    }
+
+    pub async fn create_file_remote(&self, path: &str) -> Result<(), EngineError> {
+        let address = self.get_new_address(path);
         let send_meta_data = bincode::serialize(&CreateFileSendMetaData {
             mode: 0o777,
             umask: 0,
             flags: OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits(),
+            name: "".to_string(),
         })
         .unwrap();
 
-        let mut status = 0i32;
-        let mut rsp_flags = 0u32;
-
-        let mut recv_meta_data_length = 0usize;
-        let mut recv_data_length = 0usize;
-
-        let mut recv_meta_data = vec![0u8; 1024];
-
-        let result = self
-            .client
-            .call_remote(
+        self.sender
+            .create_no_parent(
                 &address,
-                OperationType::CreateFile.into(),
-                0,
+                OperationType::CreateFileNoParent,
                 path,
                 &send_meta_data,
-                &[],
-                &mut status,
-                &mut rsp_flags,
-                &mut recv_meta_data_length,
-                &mut recv_data_length,
-                &mut recv_meta_data,
-                &mut [],
             )
-            .await;
-        match result {
-            Ok(_) => {
-                if status != 0 {
-                    error!("create file failed, status: {}", status);
-                    Err(EngineError::IO)
-                } else {
-                    Ok(())
-                }
-            }
-            Err(e) => {
-                error!("create file failed with error: {}", e);
-                Err(EngineError::IO)
-            }
-        }
+            .await?;
+        Ok(())
     }
 
     pub async fn write_file_remote(&self, path: &str) -> Result<(), EngineError> {
-        let address = self.get_new_address(path).await;
+        let address = self.get_new_address(path);
 
         let file_attr = self.meta_engine.get_file_attr(path).unwrap();
 
@@ -201,7 +235,7 @@ where
 
     pub async fn check_file_remote(&self, path: &str) -> Result<(), EngineError> {
         let file_attr = self.meta_engine.get_file_attr(path).unwrap();
-        let server_address = self.get_new_address(path).await;
+        let server_address = self.get_new_address(path);
         // println!("check: {} {}", file_path, server_address);
 
         let send_meta_data = bincode::serialize(&CheckFileSendMetaData { file_attr }).unwrap();
@@ -235,57 +269,36 @@ where
             error!("check file failed, status: {}", status);
             return Err(EngineError::IO);
         }
-        Ok(())
+
+        self.delete_file_no_parent(path)
     }
 
     pub async fn create_dir_remote(&self, path: &str) -> Result<(), EngineError> {
-        let address = self.get_new_address(path).await;
+        let address = self.get_new_address(path);
 
-        let send_meta_data = bincode::serialize(&CreateDirSendMetaData { mode: 0o777 }).unwrap();
+        let send_meta_data = bincode::serialize(&CreateDirSendMetaData {
+            mode: 0o777,
+            name: "".to_string(),
+        })
+        .unwrap();
 
-        let mut status = 0i32;
-        let mut rsp_flags = 0u32;
-
-        let mut recv_meta_data_length = 0usize;
-        let mut recv_data_length = 0usize;
-
-        let mut recv_meta_data = vec![0u8; 1024];
-
-        let result = self
-            .client
-            .call_remote(
+        self.sender
+            .create_no_parent(
                 &address,
-                OperationType::CreateDir.into(),
-                0,
+                OperationType::CreateDirNoParent,
                 path,
                 &send_meta_data,
-                &[],
-                &mut status,
-                &mut rsp_flags,
-                &mut recv_meta_data_length,
-                &mut recv_data_length,
-                &mut recv_meta_data,
-                &mut [],
             )
-            .await;
-        match result {
-            Ok(_) => {
-                if status != 0 {
-                    error!("create dir failed, status: {}", status);
-                    Err(EngineError::IO)
-                } else {
-                    Ok(())
-                }
-            }
-            Err(e) => {
-                error!("create dir failed with error: {}", e);
-                Err(EngineError::IO)
-            }
-        }
+            .await?;
+        Ok(())
     }
 
     pub async fn add_subdirs_remote(&self, path: &str) -> Result<(), EngineError> {
-        let address = self.get_new_address(path).await;
+        if !path.contains('/') {
+            // root directory of a volume
+            return Ok(());
+        }
+        let address = self.get_new_address(path);
 
         for item in self.meta_engine.dir_db.db.iterator(IteratorMode::From(
             format!("{}-", path).as_bytes(),
@@ -303,45 +316,17 @@ where
                 file_name,
             })
             .unwrap();
-            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
-                (0, 0, 0, 0);
-            let result = self
-                .client
-                .call_remote(
-                    &address,
-                    OperationType::DirectoryAddEntry as u32,
-                    0,
-                    path,
-                    &send_meta_data,
-                    &[],
-                    &mut status,
-                    &mut rsp_flags,
-                    &mut recv_meta_data_length,
-                    &mut recv_data_length,
-                    &mut [],
-                    &mut [],
-                )
-                .await;
-            match result {
-                Ok(_) => {
-                    if status != 0 {
-                        return Err(status.into());
-                    }
-                }
-                e => {
-                    error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                    return Err(EngineError::StdIo(std::io::Error::from(
-                        std::io::ErrorKind::NotConnected,
-                    )));
-                }
-            };
+
+            self.sender
+                .directory_add_entry(&address, path, &send_meta_data)
+                .await?;
         }
         Ok(())
     }
 
     pub async fn check_dir_remote(&self, path: &str) -> Result<(), EngineError> {
         let file_attr = self.meta_engine.get_file_attr(path).unwrap();
-        let server_address = self.get_new_address(path).await;
+        let server_address = self.get_new_address(path);
         // println!("check: {} {}", file_path, server_address);
 
         let send_meta_data = bincode::serialize(&CheckDirSendMetaData { file_attr }).unwrap();
@@ -375,28 +360,28 @@ where
             error!("check dir failed, status: {}", status);
             return Err(EngineError::IO);
         }
-        Ok(())
+
+        self.delete_dir_no_parent_force(path)
     }
 
-    pub async fn transfer_files(&self) -> Result<(), EngineError> {
-        let iter = self.transfering_files.iter_mut();
+    pub async fn transfer_files(&self, file_map: Vec<String>) -> Result<(), EngineError> {
         // transfer all files ,and set the flag as true
-        for mut kv in iter {
-            if *kv.value() {
+        info!("transfer_files: {:?}", file_map);
+        for k in file_map {
+            let _lock = self.transfer_manager.get_wlock(&k).await;
+            if self.transfer_manager.status(&k).unwrap() {
                 continue;
             }
-            let path = kv.key();
-
-            match self.meta_engine.is_dir(path) {
+            match self.meta_engine.is_dir(&k) {
                 Ok(true) => {
-                    self.create_dir_remote(path).await?;
-                    self.add_subdirs_remote(path).await?;
-                    self.check_dir_remote(path).await?;
+                    self.create_dir_remote(&k).await?;
+                    self.add_subdirs_remote(&k).await?;
+                    self.check_dir_remote(&k).await?;
                 }
                 Ok(false) => {
-                    self.create_file_remote(path).await?;
-                    self.write_file_remote(path).await?;
-                    self.check_file_remote(path).await?;
+                    self.create_file_remote(&k).await?;
+                    self.write_file_remote(&k).await?;
+                    self.check_file_remote(&k).await?;
                 }
                 Err(EngineError::NoEntry) => {
                     // file has been deleted before transfering
@@ -407,7 +392,8 @@ where
                     return Err(e);
                 }
             }
-            *kv.value_mut() = true;
+            info!("transfer_files: {} done", k);
+            self.transfer_manager.set_status(&k, true);
         }
         Ok(())
     }
@@ -416,10 +402,9 @@ where
         self.client.remove_connection(&address);
     }
 
-    pub async fn get_address(&self, path: &str) -> String {
+    pub fn get_address(&self, path: &str) -> String {
         self.hash_ring
             .read()
-            .await
             .as_ref()
             .unwrap()
             .get(path)
@@ -428,95 +413,143 @@ where
             .clone()
     }
 
-    pub async fn get_new_address(&self, path: &str) -> String {
-        self.new_hash_ring
-            .read()
-            .await
-            .as_ref()
-            .unwrap()
-            .get(path)
-            .unwrap()
-            .address
-            .clone()
+    pub fn get_new_address(&self, path: &str) -> String {
+        match self.new_hash_ring.read().as_ref() {
+            Some(ring) => ring.get(path).unwrap().address.clone(),
+            None => self.get_address(path),
+        }
     }
 
-    pub fn rlock_in_transfer_map(&self, path: &str) -> Option<Ref<String, bool>> {
-        self.transfering_files.get(path)
+    pub async fn rlock_in_transfer_map(&self, path: &str) -> tokio::sync::RwLockReadGuard<'_, ()> {
+        self.transfer_manager.get_rlock(path).await
     }
 
-    pub async fn get_server_address(&self, path: &str) -> (String, Option<Ref<String, bool>>) {
+    pub fn get_server_address(&self, path: &str) -> (String, bool) {
         let cluster_status = self.cluster_status.load(Ordering::Acquire);
 
         // check the ClusterStatus is not Idle
         // for efficiency, we use i32 operation to check the ClusterStatus
         if cluster_status == 301 {
-            return (self.get_address(path).await, None);
+            return (self.get_address(path), false);
         }
 
         match cluster_status.try_into().unwrap() {
-            ClusterStatus::SyncNewHashRing => (self.get_address(path).await, None),
+            ClusterStatus::Initializing => todo!(),
+            ClusterStatus::Idle => todo!(),
+            ClusterStatus::NodesStarting => (self.get_address(path), false),
+            ClusterStatus::SyncNewHashRing => (self.get_address(path), false),
             ClusterStatus::PreTransfer => {
-                let address = self.get_new_address(path).await;
+                let address = self.get_address(path);
                 if address != self.address {
-                    (address, None)
+                    (address, false)
                 } else {
-                    (self.get_address(path).await, None)
+                    let new_address = self.get_new_address(path);
+                    if new_address != self.address {
+                        // the most efficient way is to check the operation_type
+                        // if operation_type is Create, forward the request to the new node
+                        // here is a temporary solution
+                        match self.meta_engine.is_exist(path) {
+                            Ok(true) => (address, false),
+                            Ok(false) => (new_address, false),
+                            Err(e) => {
+                                error!("get forward address failed, error: {}", e);
+                                (new_address, false) // local db error, attempt to forward. but it may cause inconsistency
+                            }
+                        }
+                    } else {
+                        (address, false)
+                    }
                 }
             }
             ClusterStatus::Transferring => {
-                let address = self.get_new_address(path).await;
+                let address = self.get_address(path);
                 if address != self.address {
-                    if let Some(lock) = self.rlock_in_transfer_map(path) {
-                        (address, Some(lock))
-                    } else {
-                        (address, None)
-                    }
+                    (address, false)
                 } else {
-                    (self.get_address(path).await, None)
+                    let new_address = self.get_new_address(path);
+                    if new_address != self.address {
+                        match self.transfer_manager.status(path) {
+                            Some(true) => (new_address, false),
+                            Some(false) => (address, false),
+                            None => (new_address, false),
+                        }
+                    } else {
+                        (address, false)
+                    }
                 }
             }
-            ClusterStatus::PreFinish => (self.get_new_address(path).await, None),
-            s => panic!("get forward address failed, invalid cluster status: {}", s),
+            ClusterStatus::PreFinish => {
+                let address = self.get_address(path);
+                if address != self.address {
+                    (address, false)
+                } else {
+                    let new_address = self.get_new_address(path);
+                    if new_address != self.address {
+                        (new_address, false)
+                    } else {
+                        (address, false)
+                    }
+                }
+            }
+            ClusterStatus::Finishing => (self.get_address(path), false),
+            ClusterStatus::StatusError => todo!(),
+            //s => panic!("get forward address failed, invalid cluster status: {}", s),
         }
     }
 
-    pub async fn get_forward_address(
-        &self,
-        path: &str,
-    ) -> (Option<String>, Option<Ref<String, bool>>) {
+    pub fn get_forward_address(&self, path: &str) -> (Option<String>, bool) {
         let cluster_status = self.cluster_status.load(Ordering::Acquire);
 
         // check the ClusterStatus is not Idle
         // for efficiency, we use i32 operation to check the ClusterStatus
         if cluster_status == 301 {
-            return (None, None);
+            // assert!(self.address == self.get_address(path));
+            return (None, false);
         }
 
         match cluster_status.try_into().unwrap() {
-            ClusterStatus::StartNodes => (None, None),
-            ClusterStatus::SyncNewHashRing => (None, None),
+            ClusterStatus::NodesStarting => (None, false),
+            ClusterStatus::SyncNewHashRing => (None, false),
             ClusterStatus::PreTransfer => {
-                let address = self.get_new_address(path).await;
+                let address = self.get_new_address(path);
                 if address != self.address {
-                    (Some(address), None)
+                    // the most efficient way is to check the operation_type
+                    // if operation_type is Create, forward the request to the new node
+                    // here is a temporary solution
+                    match self.meta_engine.is_exist(path) {
+                        Ok(true) => (None, false),
+                        Ok(false) => (Some(address), false),
+                        Err(e) => {
+                            error!("get forward address failed, error: {}", e);
+                            (Some(address), false) // local db error, attempt to forward. but it may cause inconsistency
+                        }
+                    }
                 } else {
-                    (None, None)
+                    (None, false)
                 }
             }
             ClusterStatus::Transferring => {
-                let address = self.get_new_address(path).await;
+                let address = self.get_new_address(path);
                 if address != self.address {
-                    if let Some(lock) = self.rlock_in_transfer_map(path) {
-                        (None, Some(lock))
-                    } else {
-                        (Some(address), None)
+                    match self.transfer_manager.status(path) {
+                        Some(true) => (Some(address), false),
+                        Some(false) => (None, false),
+                        None => (Some(address), false),
                     }
                 } else {
-                    (None, None)
+                    (None, false)
                 }
             }
-            ClusterStatus::PreFinish => (Some(self.get_new_address(path).await), None),
-            ClusterStatus::CloseNodes => (None, None),
+            ClusterStatus::PreFinish => {
+                let address = self.get_new_address(path);
+                if address != self.address {
+                    (Some(address), false)
+                } else {
+                    (None, false)
+                }
+            }
+            ClusterStatus::Finishing => (None, false),
+            ClusterStatus::Initializing => (None, false),
             s => panic!("get forward address failed, invalid cluster status: {}", s),
         }
     }
@@ -562,130 +595,27 @@ where
     }
 
     pub async fn get_cluster_status(&self) -> Result<ClusterStatus, Box<dyn std::error::Error>> {
-        let mut status = 0i32;
-        let mut rsp_flags = 0u32;
-
-        let mut recv_meta_data_length = 0usize;
-        let mut recv_data_length = 0usize;
-
-        let mut recv_meta_data = vec![0u8; 4];
-
-        let result = self
-            .client
-            .call_remote(
-                &self.manager_address.lock().await,
-                ManagerOperationType::GetClusterStatus.into(),
-                0,
-                "",
-                &[],
-                &[],
-                &mut status,
-                &mut rsp_flags,
-                &mut recv_meta_data_length,
-                &mut recv_data_length,
-                &mut recv_meta_data,
-                &mut [],
-            )
-            .await;
-        match result {
-            Ok(_) => {
-                if status != 0 {
-                    return Err(format!("get cluster status failed: status {}", status).into());
-                }
-                let cluster_status_meta_data: GetClusterStatusRecvMetaData =
-                    bincode::deserialize(&recv_meta_data).unwrap();
-                Ok(cluster_status_meta_data.status)
-            }
-            Err(e) => Err(e),
-        }
+        Ok(self
+            .sender
+            .get_cluster_status(&self.manager_address.lock().await)
+            .await?
+            .try_into()?)
     }
 
     pub async fn get_hash_ring_info(
         &self,
     ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
-        let mut status = 0i32;
-        let mut rsp_flags = 0u32;
-
-        let mut recv_meta_data_length = 0usize;
-        let mut recv_data_length = 0usize;
-
-        let mut recv_meta_data = vec![0u8; 65535];
-
-        let result = self
-            .client
-            .call_remote(
-                &self.manager_address.lock().await,
-                ManagerOperationType::GetHashRing.into(),
-                0,
-                "",
-                &[],
-                &[],
-                &mut status,
-                &mut rsp_flags,
-                &mut recv_meta_data_length,
-                &mut recv_data_length,
-                &mut recv_meta_data,
-                &mut [],
-            )
-            .await;
-        match result {
-            Ok(_) => {
-                if status != 0 {
-                    return Err(format!("get hash ring failed: status {}", status).into());
-                }
-                let hash_ring_meta_data: GetHashRingInfoRecvMetaData =
-                    bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                Ok(hash_ring_meta_data.hash_ring_info)
-            }
-            Err(e) => {
-                error!("get hash ring failed: {:?}", e);
-                Err(e)
-            }
-        }
+        self.sender
+            .get_hash_ring_info(&self.manager_address.lock().await)
+            .await
     }
 
     pub async fn get_new_hash_ring_info(
         &self,
     ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
-        let mut status = 0i32;
-        let mut rsp_flags = 0u32;
-
-        let mut recv_meta_data_length = 0usize;
-        let mut recv_data_length = 0usize;
-
-        let mut recv_meta_data = vec![0u8; 65535];
-
-        let result = self
-            .client
-            .call_remote(
-                &self.manager_address.lock().await,
-                ManagerOperationType::GetNewHashRing.into(),
-                0,
-                "",
-                &[],
-                &[],
-                &mut status,
-                &mut rsp_flags,
-                &mut recv_meta_data_length,
-                &mut recv_data_length,
-                &mut recv_meta_data,
-                &mut [],
-            )
-            .await;
-        match result {
-            Ok(_) => {
-                if status != 0 {
-                    return Err(format!("get new hash ring failed: status {}", status).into());
-                }
-                let hash_ring_meta_data: GetHashRingInfoRecvMetaData =
-                    bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                Ok(hash_ring_meta_data.hash_ring_info)
-            }
-            Err(e) => {
-                error!("get new hash ring failed: {:?}", e);
-                Err(e)
-            }
-        }
+        self.sender
+            .get_new_hash_ring_info(&self.manager_address.lock().await)
+            .await
     }
 
     #[inline]
@@ -697,11 +627,49 @@ where
         path: &str,
         data: Vec<u8>,
         metadata: Vec<u8>,
-    ) -> Result<(i32, u32, Vec<u8>, Vec<u8>), EngineError> {
-        let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
-            (0, 0, 0, 0);
-        let mut recv_meta_data = vec![];
-        let mut recv_data = vec![];
+    ) -> Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>), EngineError> {
+        let (
+            mut status,
+            mut rsp_flags,
+            mut recv_meta_data_length,
+            mut recv_data_length,
+            mut recv_meta_data,
+            mut recv_data,
+        ) = match operation_type.try_into().unwrap() {
+            OperationType::Unkown => todo!(),
+            OperationType::Lookup => todo!(),
+            OperationType::CreateFile => (0, 0, 0, 0, vec![0; 1024], vec![]),
+            OperationType::CreateDir => (0, 0, 0, 0, vec![0; 1024], vec![]),
+            OperationType::GetFileAttr => (0, 0, 0, 0, vec![0; 1024], vec![]),
+            OperationType::ReadDir => (0, 0, 0, 0, vec![0; 2048], vec![]),
+            OperationType::OpenFile => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::ReadFile => {
+                let unwraped_meta_data =
+                    bincode::deserialize::<ReadFileSendMetaData>(&metadata).unwrap();
+                (
+                    0,
+                    0,
+                    0,
+                    0,
+                    vec![],
+                    vec![0; unwraped_meta_data.size as usize],
+                )
+            }
+            OperationType::WriteFile => (0, 0, 0, 0, vec![0; 4], vec![]),
+            OperationType::DeleteFile => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::DeleteDir => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::DirectoryAddEntry => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::DirectoryDeleteEntry => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::TruncateFile => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::CheckDir => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::CheckFile => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::CreateDirNoParent => (0, 0, 0, 0, vec![0; 1024], vec![]),
+            OperationType::CreateFileNoParent => (0, 0, 0, 0, vec![0; 1024], vec![]),
+            OperationType::DeleteDirNoParent => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::DeleteFileNoParent => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::CreateVolume => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::InitVolume => todo!(),
+        };
         let result = self
             .client
             .call_remote(
@@ -733,131 +701,148 @@ where
                 )));
             }
         };
-        Ok((status, rsp_flags, recv_meta_data, recv_data))
+        Ok((
+            status,
+            rsp_flags,
+            recv_meta_data_length,
+            recv_data_length,
+            recv_meta_data,
+            recv_data,
+        ))
     }
 
-    pub async fn create_dir(&self, path: &str, mode: u32) -> Result<Vec<u8>, EngineError> {
-        if self.meta_engine.is_exist(path)? {
-            return Err(EngineError::Exist);
+    pub fn create_dir_no_parent(&self, path: &str, mode: u32) -> Result<Vec<u8>, EngineError> {
+        match self.file_locks.insert(path.to_owned(), HashMap::new()) {
+            Some(_) => Err(EngineError::Exist),
+            None => self.meta_engine.create_directory(path, mode),
+        }
+    }
+
+    pub async fn create_dir(
+        &self,
+        send_meta_data: Vec<u8>,
+        parent: &str,
+        name: &str,
+        mode: u32,
+    ) -> Result<Vec<u8>, EngineError> {
+        {
+            let mut file_lock = self.lock_file_mut(parent)?;
+            if file_lock.contains_key(name) {
+                return Err(EngineError::Exist); // this may indicate that the file is being created or deleted
+            }
+            file_lock.insert(name.to_owned(), 0);
         }
 
-        let (parent_dir, file_name) = path_split(path)?;
-        let (address, _lock) = self.get_server_address(&parent_dir).await;
-        if self.address == address {
+        let path = get_full_path(parent, name);
+        let (address, _lock) = self.get_server_address(&path);
+        let result = if self.address == address {
             info!(
-                "local create dir, path: {}, parent_dir: {}, file_name: {}",
-                path, parent_dir, file_name
+                "local create dir, parent_dir: {}, file_name: {}",
+                parent, name
             );
-            self.meta_engine.directory_add_entry(
-                parent_dir.as_str(),
-                file_name.as_str(),
-                FileTypeSimple::Directory.into(),
-            )?;
+            self.create_dir_no_parent(&path, mode)
         } else {
-            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
-                file_type: FileTypeSimple::Directory.into(),
-                file_name,
-            })
-            .unwrap();
-            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
-                (0, 0, 0, 0);
-            let mut recv_meta_data = vec![];
-            let mut recv_data = vec![];
-            let result = self
-                .client
-                .call_remote(
+            self.sender
+                .create_no_parent(
                     &address,
-                    OperationType::DirectoryAddEntry as u32,
-                    0,
-                    &parent_dir,
+                    OperationType::CreateDirNoParent,
+                    &path,
                     &send_meta_data,
-                    &[],
-                    &mut status,
-                    &mut rsp_flags,
-                    &mut recv_meta_data_length,
-                    &mut recv_data_length,
-                    &mut recv_meta_data,
-                    &mut recv_data,
                 )
-                .await;
+                .await
+        };
 
-            match result {
-                Ok(_) => {
-                    if status != 0 {
-                        return Err(status.into());
-                    }
-                }
-                Err(e) => {
-                    error!("Create dir: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                    return Err(EngineError::StdIo(std::io::Error::from(
-                        std::io::ErrorKind::NotConnected,
-                    )));
-                }
-            };
+        if result.is_ok() {
+            self.meta_engine
+                .directory_add_entry(parent, name, FileTypeSimple::Directory.into())?;
         }
 
-        self.meta_engine.create_directory(path, mode)
+        let mut file_lock = self.lock_file_mut(parent)?;
+        file_lock.remove(name);
+        drop(file_lock);
+
+        match result {
+            Ok(attr) => Ok(attr),
+            Err(e) => Err(e),
+        }
     }
 
-    pub async fn delete_dir(&self, path: &str) -> Result<(), EngineError> {
-        if !self.meta_engine.is_exist(path)? {
-            return Ok(());
+    pub fn delete_dir_no_parent(&self, path: &str) -> Result<(), EngineError> {
+        match self.file_locks.get_mut(path) {
+            Some(value) => {
+                self.meta_engine.delete_directory(path)?;
+                drop(value);
+                self.file_locks.remove(path);
+                Ok(())
+            }
+            None => Err(EngineError::NoEntry),
         }
-        let (parent_dir, file_name) = path_split(path)?;
-        let (address, _lock) = self.get_server_address(&parent_dir).await;
-        if self.address == address {
+    }
+
+    pub fn delete_dir_no_parent_force(&self, path: &str) -> Result<(), EngineError> {
+        match self.file_locks.get_mut(path) {
+            Some(value) => {
+                self.meta_engine.delete_directory_force(path)?;
+                drop(value);
+                self.file_locks.remove(path);
+                Ok(())
+            }
+            None => Err(EngineError::NoEntry),
+        }
+    }
+
+    pub async fn delete_dir(
+        &self,
+        send_meta_data: Vec<u8>,
+        parent: &str,
+        name: &str,
+    ) -> Result<(), EngineError> {
+        {
+            let mut file_lock = self.lock_file_mut(parent)?;
+            if file_lock.contains_key(name) {
+                return Err(EngineError::NoEntry); // this may indicate that the file is being created or deleted
+            }
+            file_lock.insert(name.to_owned(), 0);
+        }
+
+        let path = get_full_path(parent, name);
+        let (address, _lock) = self.get_server_address(&path);
+        let result = if self.address == address {
             info!(
-                "local delete dir, path: {}, parent_dir: {}, file_name: {}",
-                path, parent_dir, file_name
+                "local create dir, parent_dir: {}, file_name: {}",
+                parent, name
             );
+            match self.delete_dir_no_parent(&path) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            }
+        } else {
+            self.sender
+                .delete_no_parent(
+                    &address,
+                    OperationType::DeleteDirNoParent,
+                    &path,
+                    &send_meta_data,
+                )
+                .await
+        };
+
+        if result.is_ok() {
             self.meta_engine.directory_delete_entry(
-                &parent_dir,
-                &file_name,
+                parent,
+                name,
                 FileTypeSimple::Directory.into(),
             )?;
-        } else {
-            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
-                file_type: FileTypeSimple::Directory.into(),
-                file_name,
-            })
-            .unwrap();
-            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
-                (0, 0, 0, 0);
-            let mut recv_meta_data = vec![];
-            let mut recv_data = vec![];
-            let result = self
-                .client
-                .call_remote(
-                    &address,
-                    OperationType::DirectoryDeleteEntry as u32,
-                    0,
-                    &parent_dir,
-                    &send_meta_data,
-                    &[],
-                    &mut status,
-                    &mut rsp_flags,
-                    &mut recv_meta_data_length,
-                    &mut recv_data_length,
-                    &mut recv_meta_data,
-                    &mut recv_data,
-                )
-                .await;
-            match result {
-                Ok(_) => {
-                    if status != 0 {
-                        return Err(status.into());
-                    }
-                }
-                e => {
-                    error!("Delete dir: DirectoryDeleteEntry failed: {} ,{:?}", path, e);
-                    return Err(EngineError::StdIo(std::io::Error::from(
-                        std::io::ErrorKind::NotConnected,
-                    )));
-                }
-            };
         }
-        debug!("delete_directory: {}", path);
-        self.meta_engine.delete_directory(path)
+
+        let mut file_lock = self.lock_file_mut(parent)?;
+        file_lock.remove(name);
+        drop(file_lock);
+
+        match result {
+            Ok(attr) => Ok(attr),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn read_dir(
@@ -866,144 +851,218 @@ where
         size: u32,
         offset: i64,
     ) -> Result<Vec<u8>, EngineError> {
+        let _file_lock = self.lock_file(path)?;
         self.meta_engine.read_directory(path, size, offset)
     }
 
-    pub async fn create_file(
+    pub fn create_file_no_parent(
         &self,
         path: &str,
         oflag: i32,
         umask: u32,
         mode: u32,
     ) -> Result<Vec<u8>, EngineError> {
-        debug!("create file: {}", path);
-        if self.meta_engine.is_exist(path)? {
-            if (oflag & O_EXCL) != 0 {
-                return Err(EngineError::Exist);
-            } else {
-                return self.get_file_attr(path).await;
+        match self.file_locks.insert(path.to_owned(), HashMap::new()) {
+            Some(_) => Err(EngineError::Exist),
+            None => {
+                info!("local create file, path: {}", path);
+                self.storage_engine.create_file(path, oflag, umask, mode)
             }
         }
-        let (parent_dir, file_name) = path_split(path)?;
-        let (address, _lock) = self.get_server_address(&parent_dir).await;
-        if self.address == address {
-            info!(
-                "local create file, path: {}, parent_dir: {}, file_name: {}",
-                path, parent_dir, file_name
-            );
-            self.meta_engine.directory_add_entry(
-                &parent_dir,
-                &file_name,
-                FileTypeSimple::RegularFile.into(),
-            )?;
-        } else {
-            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
-                file_type: FileTypeSimple::RegularFile.into(),
-                file_name,
-            })
-            .unwrap();
-            let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
-                (0, 0, 0, 0);
-            let result = self
-                .client
-                .call_remote(
-                    &address,
-                    OperationType::DirectoryAddEntry as u32,
-                    0,
-                    &parent_dir,
-                    &send_meta_data,
-                    &[],
-                    &mut status,
-                    &mut rsp_flags,
-                    &mut recv_meta_data_length,
-                    &mut recv_data_length,
-                    &mut [],
-                    &mut [],
-                )
-                .await;
-            match result {
-                Ok(_) => {
-                    if status != 0 {
-                        return Err(status.into());
-                    }
-                }
-                e => {
-                    error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                    return Err(EngineError::StdIo(std::io::Error::from(
-                        std::io::ErrorKind::NotConnected,
-                    )));
-                }
-            };
-        }
-
-        self.storage_engine.create_file(path, oflag, umask, mode)
     }
 
-    pub async fn delete_file(&self, path: &str) -> Result<(), EngineError> {
-        if !self.meta_engine.is_exist(path)? {
-            return Ok(());
-        }
-
-        let (parent_dir, file_name) = path_split(path)?;
-        let (address, _lock) = self.get_server_address(&parent_dir).await;
+    pub async fn call_get_attr_remote_or_local(&self, path: &str) -> Result<Vec<u8>, EngineError> {
+        let (address, _lock) = self.get_server_address(path);
         if self.address == address {
-            info!(
-                "local delete file, path: {}, parent_dir: {}, file_name: {}",
-                path, parent_dir, file_name
-            );
-            self.meta_engine.directory_delete_entry(
-                &parent_dir,
-                &file_name,
-                FileTypeSimple::RegularFile.into(),
-            )?;
+            info!("local get attr, path: {}", path);
+            self.meta_engine.get_file_attr_raw(path)
         } else {
-            let send_meta_data = bincode::serialize(&DirectoryEntrySendMetaData {
-                file_type: FileTypeSimple::RegularFile.into(),
-                file_name,
-            })
-            .unwrap();
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
                 (0, 0, 0, 0);
-            let result = self
+            let mut recv_meta_data = vec![0; 1024];
+            match self
                 .client
                 .call_remote(
                     &address,
-                    OperationType::DirectoryDeleteEntry as u32,
+                    OperationType::GetFileAttr as u32,
                     0,
-                    &parent_dir,
-                    &send_meta_data,
+                    path,
+                    &[],
                     &[],
                     &mut status,
                     &mut rsp_flags,
                     &mut recv_meta_data_length,
                     &mut recv_data_length,
-                    &mut [],
+                    &mut recv_meta_data,
                     &mut [],
                 )
-                .await;
-            match result {
+                .await
+            {
                 Ok(_) => {
                     if status != 0 {
-                        return Err(status.into());
+                        Err(status.into())
+                    } else {
+                        Ok(recv_meta_data)
                     }
                 }
-                e => {
-                    error!(
-                        "Delete file: DirectoryDeleteEntry failed: {} ,{:?}",
-                        path, e
-                    );
-                    return Err(EngineError::StdIo(std::io::Error::from(
-                        std::io::ErrorKind::NotConnected,
-                    )));
+                Err(e) => {
+                    error!("Get attr failed: {} ,{:?}", path, e);
+                    Err(EngineError::IO)
                 }
-            };
+            }
+        }
+    }
+
+    pub async fn create_file(
+        &self,
+        send_meta_data: Vec<u8>,
+        parent: &str,
+        name: &str,
+        oflag: i32,
+        umask: u32,
+        mode: u32,
+    ) -> Result<Vec<u8>, EngineError> {
+        let path = get_full_path(parent, name);
+        {
+            let mut file_lock = self.lock_file_mut(parent)?;
+            if file_lock.contains_key(name) {
+                if (oflag & O_EXCL) != 0 {
+                    return Err(EngineError::Exist); // this may indicate that the file is being created or deleted
+                } else {
+                    drop(file_lock);
+                    match self.call_get_attr_remote_or_local(&path).await {
+                        Ok(attr) => return Ok(attr),
+                        Err(EngineError::NoEntry) => {
+                            return Ok(bincode::serialize(&FileAttrSimple::new(
+                                FileTypeSimple::RegularFile,
+                            ))
+                            .unwrap()); // this may indicate that the file is creating or deleting
+                        }
+                        Err(e) => {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            file_lock.insert(name.to_owned(), 0);
         }
 
-        self.storage_engine.delete_file(path)
+        let (address, _lock) = self.get_server_address(&path);
+        let result = if self.address == address {
+            info!(
+                "local create file, parent_file: {}, file_name: {}",
+                parent, name
+            );
+            match self.create_file_no_parent(&path, oflag, umask, mode) {
+                Ok(attr) => Ok(attr),
+                Err(EngineError::Exist) => {
+                    if (oflag & O_EXCL) != 0 {
+                        return Err(EngineError::Exist); // this may indicate that the file is being created or deleted
+                    } else {
+                        return self.call_get_attr_remote_or_local(&path).await;
+                    }
+                }
+                Err(e) => {
+                    error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
+                    Err(e)
+                }
+            }
+        } else {
+            self.sender
+                .create_no_parent(
+                    &address,
+                    OperationType::CreateFileNoParent,
+                    &path,
+                    &send_meta_data,
+                )
+                .await
+        };
+
+        let mut file_lock = self.lock_file_mut(parent)?;
+        if result.is_ok() {
+            self.meta_engine.directory_add_entry(
+                parent,
+                name,
+                FileTypeSimple::RegularFile.into(),
+            )?;
+        }
+        file_lock.remove(name);
+        drop(file_lock);
+
+        match result {
+            Ok(attr) => Ok(attr),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn delete_file_no_parent(&self, path: &str) -> Result<(), EngineError> {
+        match self.file_locks.get_mut(path) {
+            Some(value) => {
+                self.storage_engine.delete_file(path)?;
+                drop(value);
+                self.file_locks.remove(path);
+                Ok(())
+            }
+            None => Err(EngineError::NoEntry),
+        }
+    }
+
+    pub async fn delete_file(
+        &self,
+        send_meta_data: Vec<u8>,
+        parent: &str,
+        name: &str,
+    ) -> Result<(), EngineError> {
+        {
+            let mut file_lock = self.lock_file_mut(parent)?;
+            if file_lock.contains_key(name) {
+                return Err(EngineError::NoEntry); // this may indicate that the file is being created or deleted
+            }
+            file_lock.insert(name.to_owned(), 0);
+        }
+
+        let path = get_full_path(parent, name);
+        let (address, _lock) = self.get_server_address(&path);
+        let result = if self.address == address {
+            debug!(
+                "local create file, parent_file: {}, file_name: {}",
+                parent, name
+            );
+            match self.delete_file_no_parent(&path) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e),
+            }
+        } else {
+            self.sender
+                .delete_no_parent(
+                    &address,
+                    OperationType::DeleteFileNoParent,
+                    &path,
+                    &send_meta_data,
+                )
+                .await
+        };
+
+        let mut file_lock = self.lock_file_mut(parent)?;
+        if result.is_ok() {
+            self.meta_engine.directory_delete_entry(
+                parent,
+                name,
+                FileTypeSimple::RegularFile.into(),
+            )?;
+        }
+        file_lock.remove(name);
+        drop(file_lock);
+
+        match result {
+            Ok(attr) => Ok(attr),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn truncate_file(&self, path: &str, length: i64) -> Result<(), EngineError> {
         // a temporary implementation
+        let _file_lock = self.lock_file(path)?;
         self.storage_engine.truncate_file(path, length)
     }
 
@@ -1013,6 +1072,7 @@ where
         size: u32,
         offset: i64,
     ) -> Result<Vec<u8>, EngineError> {
+        let _file_lock = self.lock_file(path)?;
         self.storage_engine.read_file(path, size, offset)
     }
 
@@ -1022,29 +1082,42 @@ where
         data: &[u8],
         offset: i64,
     ) -> Result<usize, EngineError> {
+        let _file_lock = self.lock_file(path)?;
         self.storage_engine.write_file(path, data, offset)
     }
 
     pub async fn get_file_attr(&self, path: &str) -> Result<Vec<u8>, EngineError> {
+        let _file_lock = self.lock_file(path)?;
         self.meta_engine.get_file_attr_raw(path)
     }
 
     pub async fn open_file(&self, path: &str, flag: i32, mode: u32) -> Result<(), EngineError> {
         if (flag & O_CREAT) != 0 {
-            self.create_file(path, flag, 0, mode).await.map(|_v| ())
+            todo!("create file should be converted at client side")
         } else if (flag & O_DIRECTORY) != 0 {
             Ok(())
         } else {
+            let _file_lock = self.lock_file(path)?;
             self.storage_engine.open_file(path, flag, mode)
         }
     }
 
     pub async fn directory_add_entry(&self, path: &str, file_name: String, file_type: u8) -> i32 {
+        let _lock = match self.lock_file(path) {
+            Ok(lock) => lock,
+            Err(e) => {
+                error!("directory add entry, lock file failed: {:?}", e);
+                return e.into();
+            }
+        };
         match self
             .meta_engine
             .directory_add_entry(path, &file_name, file_type)
         {
-            Ok(()) => 0,
+            Ok(()) => {
+                debug!("{} Directory Add Entry success", self.address);
+                0
+            }
             Err(value) => {
                 debug!("{} Directory Add Entry error: {:?}", self.address, value);
                 value.into()
@@ -1074,6 +1147,13 @@ where
         file_name: String,
         file_type: u8,
     ) -> i32 {
+        let _lock = match self.lock_file(path) {
+            Ok(lock) => lock,
+            Err(e) => {
+                error!("directory delete entry, lock file failed: {:?}", e);
+                return e.into();
+            }
+        };
         match self
             .meta_engine
             .directory_delete_entry(path, &file_name, file_type)
@@ -1085,130 +1165,26 @@ where
             }
         }
     }
+
+    pub fn create_volume(&self, name: &str) -> Result<(), EngineError> {
+        let _vlock = {
+            let _lock = self.volume_lock.lock();
+            if self.volumes.contains_key(name) {
+                return Err(EngineError::Exist);
+            }
+            self.volumes.insert(
+                name.to_owned(),
+                Volume {
+                    name: name.to_owned(),
+                    size: 100000000,
+                    used_size: 0,
+                },
+            );
+            self.volumes.get(name).unwrap()
+        };
+        match self.create_dir_no_parent(name, 0o755) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     // use super::{enginerpc::enginerpc_client::EnginerpcClient, RPCService};
-//     use crate::rpc::server::Server;
-//     use crate::server::storage_engine::meta_engine::MetaEngine;
-//     use crate::server::storage_engine::{file_engine::FileEngine, StorageEngine};
-//     use crate::server::{DistributedEngine, EngineError, FileRequestHandler};
-//     use libc::mode_t;
-//     use std::sync::Arc;
-//     use tokio::time::sleep;
-
-//     async fn add_server(
-//         database_path: String,
-//         storage_path: String,
-//         server_address: String,
-//     ) -> Arc<DistributedEngine<FileEngine>> {
-//         let meta_engine = Arc::new(MetaEngine::new(
-//             &database_path,
-//             128 << 20,
-//             128 * 1024 * 1024,
-//         ));
-//         let local_storage = Arc::new(FileEngine::new(&storage_path, Arc::clone(&meta_engine)));
-//         local_storage.init();
-
-//         let engine = Arc::new(DistributedEngine::new(
-//             server_address.clone(),
-//             local_storage,
-//             meta_engine,
-//         ));
-//         let handler = Arc::new(FileRequestHandler::new(engine.clone()));
-//         let server = Server::new(handler, &server_address);
-//         tokio::spawn(async move {
-//             server.run().await.unwrap();
-//         });
-//         sleep(std::time::Duration::from_millis(3000)).await;
-//         engine
-//     }
-
-//     async fn test_file(engine0: Arc<DistributedEngine<FileEngine>>) {
-//         let mode: mode_t = 0o777;
-//         let oflag = libc::O_CREAT | libc::O_RDWR;
-//         // end with '/', not expected
-//         // match engine0.create_file("/test/".into(), mode).await {
-//         //     Err(EngineError::IsDir) => assert!(true),
-//         //     _ => assert!(false),
-//         // };
-//         match engine0.create_file("/test".into(), oflag, 0, mode).await {
-//             Ok(_) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         // repeat the same file
-//         match engine0.create_file("/test".into(), oflag, 0, mode).await {
-//             Ok(_) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         match engine0.delete_file("/test".into()).await {
-//             Ok(_) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         println!("OK test_file");
-//     }
-
-//     async fn test_dir(
-//         engine0: Arc<DistributedEngine<FileEngine>>,
-//         engine1: Arc<DistributedEngine<FileEngine>>,
-//     ) {
-//         let mode: mode_t = 0o777;
-//         let oflag = libc::O_CREAT | libc::O_RDWR;
-//         // not end with '/'
-//         match engine1.create_dir("/test".into(), mode).await {
-//             Ok(_) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         // repeat the same dir
-//         match engine1.create_dir("/test".into(), mode).await {
-//             Err(EngineError::Exist) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         // dir add file
-//         match engine0.create_file("/test/t1".into(), oflag, 0, mode).await {
-//             Ok(_) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         // dir has file
-//         match engine1.delete_dir("/test".into()).await {
-//             Err(EngineError::NotEmpty) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         match engine0.delete_file("/test/t1".into()).await {
-//             Ok(()) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         match engine1.delete_dir("/test".into()).await {
-//             Ok(()) => assert!(true),
-//             _ => assert!(false),
-//         };
-//         println!("OK test_dir");
-//     }
-
-//     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-//     async fn test_all() {
-//         let address0 = "127.0.0.1:18080".to_string();
-//         let address1 = "127.0.0.1:18081".to_string();
-//         let engine0 = add_server(
-//             "/tmp/test_file_db0".into(),
-//             "/tmp/test0".into(),
-//             address0.clone(),
-//         )
-//         .await;
-//         let engine1 = add_server(
-//             "/tmp/test_file_db1".into(),
-//             "/tmp/test1".into(),
-//             address1.clone(),
-//         )
-//         .await;
-//         println!("add_server success!");
-//         engine0.add_connection(address1).await;
-//         engine1.add_connection(address0).await;
-//         println!("add_connection success!");
-//         test_file(engine0.clone()).await;
-//         test_dir(engine0.clone(), engine1.clone()).await;
-//         engine0.client.close();
-//         engine1.client.close();
-//     }
-// }

@@ -1475,6 +1475,7 @@ dependencies = [
  "rocksdb",
  "serde",
  "serde_yaml",
+ "spin",
  "thiserror",
  "tokio",
  "tonic",
@@ -1565,6 +1566,12 @@ dependencies = [
  "libc",
  "winapi",
 ]
+
+[[package]]
+name = "spin"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "static_assertions"

@@ -16,11 +16,6 @@ pub struct Server<H: Handler + std::marker::Sync + std::marker::Send + 'static> 
     handler: Arc<H>,
 }
 
-// unsafe impl<'a, H> Send for Server<H>
-// where H: Handler + std::marker::Sync + std::marker::Send + 'static {}
-// unsafe impl<'a, H> Sync for Server<H>
-// where H: Handler + std::marker::Sync + std::marker::Send + 'static {}
-
 impl<H: Handler + std::marker::Sync + std::marker::Send> Server<H>
 where
     H: Handler + std::marker::Sync + std::marker::Send + 'static,
@@ -123,7 +118,7 @@ async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static>(
 ) {
     debug!("handle, id: {}", header.id);
     let response = handler
-        .dispatch(header.r#type, header.flags, path, data, metadata)
+        .dispatch(0, header.r#type, header.flags, path, data, metadata)
         .await;
     debug!("handle, response: {:?}", response);
     match response {
@@ -134,8 +129,8 @@ async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static>(
                 header.id,
                 response.0,
                 response.1,
-                &response.2,
-                &response.3,
+                &response.4[0..response.2],
+                &response.5[0..response.3],
             )
             .await;
             match result {

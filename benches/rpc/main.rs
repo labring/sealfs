@@ -24,7 +24,7 @@ fn rpc_benchmark(c: &mut Criterion) {
     // c.bench_function("rpc_bench10", |b| b.iter(|| cli(10)));
     // c.bench_function("rpc_bench100", |b| b.iter(|| cli(100)));
     // c.bench_function("rpc_bench1000", |b| b.iter(|| cli(1000)));
-    c.bench_function("rpc_bench10000", |b| b.iter(|| cli(10000)));
+    c.bench_function("rpc_bench100000", |b| b.iter(|| cli(100000)));
     // c.bench_function("rpc_bench100000_without_data", |b| b.iter(|| cli(100000)));
     // c.bench_function("rpc_bench100000_data_size_1024", |b| {
     //     b.iter(|| cli_size(100000, 1024))

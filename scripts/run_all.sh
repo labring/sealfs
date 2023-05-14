@@ -51,10 +51,12 @@ done
 
 sleep 3
 
-SEALFS_CONFIG_PATH=./examples ./target/debug/client ~/fs --log-level $log_level &
+./target/debug/client --log-level $log_level create test1 100000 &
+
 sleep 3
 
-echo `jobs -p`
+./target/debug/client --log-level $log_level mount ~/fs test1 &
+sleep 3
 
 echo "press ctrl+c to stop"
 sleep 100000

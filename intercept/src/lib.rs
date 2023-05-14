@@ -20,7 +20,6 @@ use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::ffi::CStr;
-use std::io::Read;
 use std::str::FromStr;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -77,23 +76,20 @@ pub async fn init_client_async(manager_address: String) -> Result<(), Box<dyn st
 extern "C" fn initialize() {
     unsafe {
         set_hook_fn(dispatch);
-        let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
-        let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "client.yaml"))
-            .expect("client.yaml open failed!");
-        let mut config_str = String::new();
-        config_file
-            .read_to_string(&mut config_str)
-            .expect("client.yaml read failed!");
-        let config: Config =
-            serde_yaml::from_str(&config_str).expect("client.yaml serializa failed!");
-        let log_level = std::env::var("SEALFS_LOG_LEVEL").unwrap_or(config.log_level);
+        let manager_address =
+            std::env::var("SEALFS_MANAGER_ADDRESS").unwrap_or("127.0.0.1:8081".to_string());
+        let _volume_name = match std::env::var("SEALFS_VOLUME_NAME") {
+            Ok(name) => name,
+            Err(_) => panic!("SEALFS_VOLUME_NAME is not set"),
+        };
+        let log_level = std::env::var("SEALFS_LOG_LEVEL").unwrap_or("warn".to_string());
         let mut builder = env_logger::Builder::from_default_env();
         builder
             .format_timestamp(None)
             .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
         builder.init();
 
-        let result = RUNTIME.block_on(init_client_async(config.manager_address));
+        let result = RUNTIME.block_on(init_client_async(manager_address));
         match result {
             Ok(_) => info!("init manager success"),
             Err(e) => panic!("init manager failed, error = {}", e),

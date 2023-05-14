@@ -1,0 +1,1 @@
+target/debug/client --log-level info delete 127.0.0.1:8089

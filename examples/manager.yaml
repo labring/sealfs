@@ -11,6 +11,6 @@ virtual_nodes:
 heartbeat:
   false
 log_level:
-  warn
+  info
 protect_threshold:
   0.5

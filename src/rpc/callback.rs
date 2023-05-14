@@ -125,7 +125,7 @@ impl CallbackPool {
                 self.callback_status[id as usize].store(1, Ordering::Release);
                 Ok((batch + 1, id))
             }
-            Err(_) => Err("register_callback error")?,
+            Err(e) => Err(format!("register callback failed: {}", e).into()),
         }
     }
 

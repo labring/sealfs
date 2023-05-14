@@ -1,10 +1,9 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use ahash::{HashMap, HashMapExt};
 use anyhow::Error;
 use dashmap::DashMap;
-use log::debug;
-use std::sync::Mutex;
+use log::{debug, info};
 
 use crate::common::hash_ring::{HashRing, ServerNode};
 use crate::common::serialization::{ClusterStatus, ServerStatus, ServerType};
@@ -29,7 +28,7 @@ impl Manager {
             hashring,
             new_hashring: Arc::new(RwLock::new(None)),
             servers: Arc::new(Mutex::new(HashMap::new())),
-            cluster_status: Arc::new(Mutex::new(ClusterStatus::Init)),
+            cluster_status: Arc::new(Mutex::new(ClusterStatus::Initializing)),
             _clients: DashMap::new(),
         };
 
@@ -37,7 +36,7 @@ impl Manager {
             manager.servers.lock().unwrap().insert(
                 server,
                 Server {
-                    status: ServerStatus::Init,
+                    status: ServerStatus::Initializing,
                     r#_type: ServerType::Running,
                     _replicas: weight,
                 },
@@ -78,6 +77,7 @@ impl Manager {
     }
 
     pub fn add_nodes(&self, nodes: Vec<(String, usize)>) -> Option<Error> {
+        info!("add_nodes: {:?}", nodes);
         let mut cluster_status = self.cluster_status.lock().unwrap();
         if *cluster_status != ClusterStatus::Idle {
             return Some(anyhow::anyhow!("cluster is not idle"));
@@ -94,7 +94,7 @@ impl Manager {
             servers.insert(
                 node,
                 Server {
-                    status: ServerStatus::Init,
+                    status: ServerStatus::Initializing,
                     r#_type: ServerType::Running,
                     _replicas: weight,
                 },
@@ -102,7 +102,7 @@ impl Manager {
         }
 
         self.new_hashring.write().unwrap().replace(new_hashring);
-        *cluster_status = ClusterStatus::SyncNewHashRing;
+        *cluster_status = ClusterStatus::NodesStarting;
 
         None
     }
@@ -135,10 +135,10 @@ impl Manager {
                 .collect::<Vec<String>>()
         );
 
-        debug!("set server status: {} {:?}", server_id, status);
+        info!("set server status: {} {:?}", server_id, status);
 
         match status {
-            ServerStatus::Init => {
+            ServerStatus::Initializing => {
                 panic!("cannot set server status to init");
             }
             ServerStatus::PreTransfer => {
@@ -147,7 +147,7 @@ impl Manager {
                     return Some(anyhow::anyhow!("cannot pretransfer for server: {}, cluster is not SyncNewHashRing: status: {:?}" , server_id, *cluster_status));
                 }
                 let mut servers = self.servers.lock().unwrap();
-                if servers.get(&server_id).unwrap().status != ServerStatus::Finish {
+                if servers.get(&server_id).unwrap().status != ServerStatus::Finished {
                     return Some(anyhow::anyhow!(
                         "cannot pretransfer for server: {}, server is not finish: status: {:?}",
                         server_id,
@@ -174,7 +174,7 @@ impl Manager {
                     ));
                 }
                 let mut servers = self.servers.lock().unwrap();
-                if servers.get(&server_id).unwrap().status != ServerStatus::Finish {
+                if servers.get(&server_id).unwrap().status != ServerStatus::PreTransfer {
                     return Some(anyhow::anyhow!(
                         "cannot transfer for server: {}, server is not finish: status: {:?}",
                         server_id,
@@ -210,51 +210,81 @@ impl Manager {
                     .iter()
                     .all(|kv| kv.1.status == ServerStatus::PreFinish)
                 {
+                    // manager should update all old hashring before updating cluster_status,
+                    // so that the new client can not get the old hashring and PreFinish status at the same time
+                    let _ = self
+                        .hashring
+                        .write()
+                        .unwrap()
+                        .replace(self.new_hashring.read().unwrap().clone().unwrap());
                     *cluster_status = ClusterStatus::PreFinish;
                 }
                 None
             }
-            ServerStatus::Finish => {
+            ServerStatus::Finishing => {
+                let mut cluster_status = self.cluster_status.lock().unwrap();
+                let mut servers: std::sync::MutexGuard<
+                    std::collections::HashMap<String, Server, ahash::RandomState>,
+                > = self.servers.lock().unwrap();
+                if servers.get(&server_id).unwrap().status != ServerStatus::PreFinish {
+                    return Some(anyhow::anyhow!(
+                        "cannot finish for server: {}, server is not prefinish: status: {:?}",
+                        server_id,
+                        servers.get(&server_id).unwrap().status
+                    ));
+                }
+                servers.get_mut(&server_id).unwrap().status = ServerStatus::Finishing;
+                // if every server is finish, then change cluster_status to finish
+                if servers
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::Finishing)
+                {
+                    *cluster_status = ClusterStatus::Finishing;
+                    // // remove servers which is not in new_hashring
+                    // let mut new_hashring = self.new_hashring.write().unwrap();
+                    // servers.retain(|k, _| new_hashring.as_ref().unwrap().contains(k));
+                    // // move new_hashring to hashring
+                    // new_hashring.take().unwrap();
+                }
+                None
+            }
+            ServerStatus::Finished => {
                 let mut cluster_status = self.cluster_status.lock().unwrap();
                 match *cluster_status {
-                    ClusterStatus::PreFinish => {
-                        let mut servers = self.servers.lock().unwrap();
-                        if servers.get(&server_id).unwrap().status != ServerStatus::PreFinish {
-                            return Some(anyhow::anyhow!("cannot finish for server: {}, server is not prefinish: status: {:?}", server_id, servers.get(&server_id).unwrap().status));
+                    ClusterStatus::Finishing => {
+                        let mut servers: std::sync::MutexGuard<std::collections::HashMap<String, Server, ahash::RandomState>> = self.servers.lock().unwrap();
+                        if servers.get(&server_id).unwrap().status != ServerStatus::Finishing {
+                            return Some(anyhow::anyhow!("cannot finish for server: {}, server is not Finishing: status: {:?}", server_id, servers.get(&server_id).unwrap().status));
                         }
-                        servers.get_mut(&server_id).unwrap().status = ServerStatus::Finish;
+                        servers.get_mut(&server_id).unwrap().status = ServerStatus::Finished;
                         // if every server is finish, then change cluster_status to finish
-                        if servers.iter().all(|kv| kv.1.status == ServerStatus::Finish) {
-                            *cluster_status = ClusterStatus::Idle;
+                        if servers.iter().all(|kv| kv.1.status == ServerStatus::Finished) {
                             // remove servers which is not in new_hashring
-                            let mut servers = self.servers.lock().unwrap();
                             let mut new_hashring = self.new_hashring.write().unwrap();
                             servers.retain(|k, _| new_hashring.as_ref().unwrap().contains(k));
                             // move new_hashring to hashring
-                            self.hashring
-                                .write()
-                                .unwrap()
-                                .replace(new_hashring.take().unwrap());
+                            let _ = new_hashring.take().unwrap();
+                            *cluster_status = ClusterStatus::Idle;
                         }
                         None
                     }
-                    ClusterStatus::Init => {
+                    ClusterStatus::Initializing => {
                         let mut servers = self.servers.lock().unwrap();
-                        if servers.get(&server_id).unwrap().status != ServerStatus::Init {
+                        if servers.get(&server_id).unwrap().status != ServerStatus::Initializing {
                             return Some(anyhow::anyhow!(
-                                "cannot finish for server: {}, server is not init: status: {:?}",
+                                "cannot finish for server: {}, server is not Initializing: status: {:?}",
                                 server_id,
                                 servers.get(&server_id).unwrap().status
                             ));
                         }
-                        servers.get_mut(&server_id).unwrap().status = ServerStatus::Finish;
+                        servers.get_mut(&server_id).unwrap().status = ServerStatus::Finished;
                         // if every server is finish, then change cluster_status to finish
-                        if servers.iter().all(|kv| kv.1.status == ServerStatus::Finish) {
+                        if servers.iter().all(|kv| kv.1.status == ServerStatus::Finished) {
                             *cluster_status = ClusterStatus::Idle;
                         }
                         None
                     }
-                    ClusterStatus::StartNodes => {
+                    ClusterStatus::NodesStarting => {
                         let mut servers = self.servers.lock().unwrap();
                         if !self
                             .new_hashring
@@ -269,23 +299,23 @@ impl Manager {
                                 server_id
                             ));
                         }
-                        if servers.get(&server_id).unwrap().status != ServerStatus::Init {
+                        if servers.get(&server_id).unwrap().status != ServerStatus::Initializing {
                             return Some(anyhow::anyhow!(
-                                "cannot finish for server: {}, server is not init: status: {:?}",
+                                "cannot finish for server: {}, server is not Initializing: status: {:?}",
                                 server_id,
                                 servers.get(&server_id).unwrap().status
                             ));
                         }
-                        servers.get_mut(&server_id).unwrap().status = ServerStatus::Finish;
+                        servers.get_mut(&server_id).unwrap().status = ServerStatus::Finished;
                         // if every server is finish, then change cluster_status to finish
-                        if servers.iter().all(|kv| kv.1.status == ServerStatus::Finish) {
+                        if servers.iter().all(|kv| kv.1.status == ServerStatus::Finished) {
                             *cluster_status = ClusterStatus::SyncNewHashRing;
                         }
                         None
                     }
                     _ => {
                         Some(anyhow::anyhow!(
-                            "cannot finish for server: {}, cluster is not PreFinish, Init or AddNodes: status: {:?}",
+                            "cannot finish for server: {}, cluster is not Finishing, Init or AddNodes: status: {:?}",
                             server_id,
                             *cluster_status
                         ))

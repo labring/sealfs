@@ -3,15 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use log::info;
+use log::{info, warn};
 use sealfs::common::serialization::ManagerOperationType;
 use sealfs::manager::manager_service::SendHeartRequest;
 use sealfs::rpc::client::Client;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
-use std::fs;
-use std::io::Read;
 use std::str::FromStr;
 use tokio::time;
 use tokio::time::MissedTickBehavior;
@@ -23,35 +21,26 @@ const _SERVER_FLAG: u32 = 1;
 struct Args {
     #[arg(long)]
     manager_address: Option<String>,
-    #[arg(long)]
+    #[arg(required = true, long)]
     server_address: Option<String>,
-    #[arg(long)]
-    lifetime: Option<String>,
-    #[arg(long)]
+    #[arg(required = true, long)]
     database_path: Option<String>,
     #[arg(long)]
     cache_capacity: Option<usize>,
     #[arg(long)]
     write_buffer_size: Option<usize>,
-    #[arg(long)]
+    #[arg(required = true, long)]
     storage_path: Option<String>,
     #[arg(long)]
     heartbeat: Option<bool>,
     #[arg(long)]
     log_level: Option<String>,
-    /// The path of the configuration file
-    #[arg(long)]
-    config_file: Option<String>,
-    /// To use customized configuration or not. If this flag is used, please provide a config file through --config_file <path>
-    #[arg(long)]
-    use_config_file: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Properties {
     manager_address: String,
     server_address: String,
-    lifetime: String,
     database_path: String,
     cache_capacity: usize,
     write_buffer_size: usize,
@@ -62,65 +51,30 @@ struct Properties {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
-    // read from default configuration.
-    let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
-    let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "server.yaml"))
-        .expect("server.yaml open failed!");
-    let mut config_str = String::new();
-    config_file
-        .read_to_string(&mut config_str)
-        .expect("server.yaml read failed!");
-    let default_properties: Properties =
-        serde_yaml::from_str(&config_str).expect("server.yaml serializa failed!");
     // read from command line.
     let args: Args = Args::parse();
     // if the user provides the config file, parse it and use the arguments from the config file.
-    let properties: Properties = match args.use_config_file {
-        true => {
-            // read from default configuration.
-            match args.config_file {
-                Some(c) => {
-                    // read from user-provided config file
-                    let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
-                    let result: Properties =
-                        serde_yaml::from_str(&yaml_str).expect("server.yaml read failed!");
-                    result
-                }
-                _ => {
-                    println!(
-                        "No custom configuration provided, fallback to the default configuration."
-                    );
-                    default_properties
-                }
-            }
-        }
-        false => Properties {
-            manager_address: args
-                .manager_address
-                .unwrap_or(default_properties.manager_address),
-            server_address: args
-                .server_address
-                .unwrap_or(default_properties.server_address),
-            lifetime: args.lifetime.unwrap_or(default_properties.lifetime),
-            database_path: args
-                .database_path
-                .unwrap_or(default_properties.database_path),
-            cache_capacity: args
-                .cache_capacity
-                .unwrap_or(default_properties.cache_capacity),
-            write_buffer_size: args
-                .write_buffer_size
-                .unwrap_or(default_properties.write_buffer_size),
-            storage_path: args.storage_path.unwrap_or(default_properties.storage_path),
-            heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
-            log_level: args.log_level.unwrap_or(default_properties.log_level),
-        },
+    let properties: Properties = Properties {
+        manager_address: args.manager_address.unwrap_or("127.0.0.1:8081".to_owned()),
+        server_address: args.server_address.unwrap(),
+        database_path: args.database_path.unwrap(),
+        cache_capacity: args.cache_capacity.unwrap_or(13421772),
+        write_buffer_size: args.write_buffer_size.unwrap_or(0x4000000),
+        storage_path: args.storage_path.unwrap(),
+        heartbeat: args.heartbeat.unwrap_or(false),
+        log_level: args.log_level.unwrap_or("warn".to_owned()),
     };
 
     let mut builder = env_logger::Builder::from_default_env();
     builder.format_timestamp(None).filter(
         None,
-        log::LevelFilter::from_str(&properties.log_level).unwrap(),
+        match log::LevelFilter::from_str(&properties.log_level) {
+            Ok(level) => level,
+            Err(_) => {
+                warn!("Invalid log level, use default level: warn");
+                log::LevelFilter::Warn
+            }
+        },
     );
     builder.init();
 

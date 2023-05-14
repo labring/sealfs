@@ -207,14 +207,16 @@ impl ClientConnection {
 }
 
 pub struct ServerConnection {
+    pub id: u32,
     name_id: String,
     write_stream: Mutex<OwnedWriteHalf>,
     status: ConnectionStatus,
 }
 
 impl ServerConnection {
-    pub fn new(write_stream: OwnedWriteHalf, name_id: String) -> Self {
+    pub fn new(write_stream: OwnedWriteHalf, name_id: String, id: u32) -> Self {
         ServerConnection {
+            id,
             name_id,
             write_stream: Mutex::new(write_stream),
             status: ConnectionStatus::Connected,
@@ -382,6 +384,3 @@ impl ServerConnection {
         Ok(())
     }
 }
-
-unsafe impl std::marker::Sync for ServerConnection {}
-unsafe impl std::marker::Send for ServerConnection {}

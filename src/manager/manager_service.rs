@@ -9,7 +9,7 @@ use crate::{
 use super::{core::Manager, heart::Heart};
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, error};
 use serde::{Deserialize, Serialize};
 
 pub struct ManagerService {
@@ -46,12 +46,13 @@ impl ManagerService {
 impl Handler for ManagerService {
     async fn dispatch(
         &self,
+        _id: u32,
         operation_type: u32,
         _flags: u32,
         path: Vec<u8>,
         _data: Vec<u8>,
         metadata: Vec<u8>,
-    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)> {
         let r#type = ManagerOperationType::try_from(operation_type).unwrap();
         match r#type {
             ManagerOperationType::SendHeart => {
@@ -61,7 +62,7 @@ impl Handler for ManagerService {
                     .register_server(request.address, request.lifetime)
                     .await;
 
-                Ok((0, 0, Vec::new(), Vec::new()))
+                Ok((0, 0, 0, 0, Vec::new(), Vec::new()))
             }
             ManagerOperationType::GetMetadata => {
                 let _request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
@@ -70,36 +71,59 @@ impl Handler for ManagerService {
                     let key = instance.key();
                     response.instances.push(key.to_owned());
                 });
-                Ok((0, 0, bincode::serialize(&response).unwrap(), Vec::new()))
-            }
-            ManagerOperationType::GetClusterStatus => {
-                let status = self.manager.get_cluster_status();
+                let response_meta_data = bincode::serialize(&response).unwrap();
                 Ok((
                     0,
                     0,
-                    bincode::serialize(&GetClusterStatusRecvMetaData { status }).unwrap(),
+                    response_meta_data.len(),
+                    0,
+                    response_meta_data,
                     Vec::new(),
                 ))
             }
-            ManagerOperationType::GetHashRing => Ok((
-                0,
-                0,
-                bincode::serialize(&GetHashRingInfoRecvMetaData {
-                    hash_ring_info: self.manager.get_hash_ring_info(),
-                })
-                .unwrap(),
-                Vec::new(),
-            )),
-            ManagerOperationType::GetNewHashRing => match self.manager.get_new_hash_ring_info() {
-                Ok(hash_ring_info) => Ok((
+            ManagerOperationType::GetClusterStatus => {
+                let status = self.manager.get_cluster_status();
+                let response_meta_data =
+                    bincode::serialize(&GetClusterStatusRecvMetaData { status }).unwrap();
+                Ok((
                     0,
                     0,
-                    bincode::serialize(&GetHashRingInfoRecvMetaData { hash_ring_info }).unwrap(),
+                    response_meta_data.len(),
+                    0,
+                    response_meta_data,
                     Vec::new(),
-                )),
+                ))
+            }
+            ManagerOperationType::GetHashRing => {
+                let hash_ring_info = self.manager.get_hash_ring_info();
+                let response_meta_data =
+                    bincode::serialize(&GetHashRingInfoRecvMetaData { hash_ring_info }).unwrap();
+                Ok((
+                    0,
+                    0,
+                    response_meta_data.len(),
+                    0,
+                    response_meta_data,
+                    Vec::new(),
+                ))
+            }
+            ManagerOperationType::GetNewHashRing => match self.manager.get_new_hash_ring_info() {
+                Ok(hash_ring_info) => {
+                    let response_meta_data =
+                        bincode::serialize(&GetHashRingInfoRecvMetaData { hash_ring_info })
+                            .unwrap();
+                    Ok((
+                        0,
+                        0,
+                        response_meta_data.len(),
+                        0,
+                        response_meta_data,
+                        Vec::new(),
+                    ))
+                }
                 Err(e) => {
-                    debug!("get new hash ring error: {}", e);
-                    Ok((libc::ENOENT, 0, Vec::new(), Vec::new()))
+                    error!("get new hash ring error: {}", e);
+                    Ok((libc::ENOENT, 0, 0, 0, Vec::new(), Vec::new()))
                 }
             },
             ManagerOperationType::AddNodes => {
@@ -107,10 +131,10 @@ impl Handler for ManagerService {
                     .unwrap()
                     .new_servers_info;
                 match self.manager.add_nodes(new_servers_info) {
-                    None => Ok((0, 0, Vec::new(), Vec::new())),
+                    None => Ok((0, 0, 0, 0, Vec::new(), Vec::new())),
                     Some(e) => {
-                        debug!("add nodes error: {}", e);
-                        Ok((libc::EIO, 0, Vec::new(), Vec::new()))
+                        error!("add nodes error: {}", e);
+                        Ok((libc::EIO, 0, 0, 0, Vec::new(), Vec::new()))
                     }
                 }
             }
@@ -120,10 +144,10 @@ impl Handler for ManagerService {
                         .unwrap()
                         .deleted_servers_info;
                 match self.manager.delete_nodes(deleted_servers_info) {
-                    None => Ok((0, 0, Vec::new(), Vec::new())),
+                    None => Ok((0, 0, 0, 0, Vec::new(), Vec::new())),
                     Some(e) => {
-                        debug!("remove nodes error: {}", e);
-                        Ok((libc::EIO, 0, Vec::new(), Vec::new()))
+                        error!("remove nodes error: {}", e);
+                        Ok((libc::EIO, 0, 0, 0, Vec::new(), Vec::new()))
                     }
                 }
             }
@@ -132,10 +156,10 @@ impl Handler for ManagerService {
                     String::from_utf8(path).unwrap(),
                     bincode::deserialize(&metadata).unwrap(),
                 ) {
-                    None => Ok((0, 0, Vec::new(), Vec::new())),
+                    None => Ok((0, 0, 0, 0, Vec::new(), Vec::new())),
                     Some(e) => {
-                        debug!("update server status error: {}", e);
-                        Ok((libc::EIO, 0, Vec::new(), Vec::new()))
+                        error!("update server status error: {}", e);
+                        Ok((libc::EIO, 0, 0, 0, Vec::new(), Vec::new()))
                     }
                 }
             }

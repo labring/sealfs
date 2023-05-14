@@ -55,10 +55,10 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     c.bench_function("default engine file 512", |b| {
         b.iter(|| {
-            create_file(&engine, 512);
-            write_file(&engine, 512);
-            read_file(&engine, 512);
-            delete_file(&engine, 512);
+            create_file(&engine, 5120);
+            write_file(&engine, 5120);
+            read_file(&engine, 5120);
+            delete_file(&engine, 5120);
         })
     });
 }

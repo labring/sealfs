@@ -14,12 +14,13 @@ use super::{connection::ServerConnection, protocol::RequestHeader};
 pub trait Handler {
     async fn dispatch(
         &self,
+        id: u32,
         operation_type: u32,
         flags: u32,
         path: Vec<u8>,
         data: Vec<u8>,
         metadata: Vec<u8>,
-    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)>;
+    ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)>;
 }
 
 pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static>(
@@ -32,7 +33,14 @@ pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static
 ) {
     debug!("handle, id: {}", header.id);
     let response = handler
-        .dispatch(header.r#type, header.flags, path, data, metadata)
+        .dispatch(
+            connection.id,
+            header.r#type,
+            header.flags,
+            path,
+            data,
+            metadata,
+        )
         .await;
     debug!("handle, response: {:?}", response);
     match response {
@@ -43,8 +51,8 @@ pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static
                     header.id,
                     response.0,
                     response.1,
-                    &response.2,
-                    &response.3,
+                    &response.4[0..response.2],
+                    &response.5[0..response.3],
                 )
                 .await;
             match result {
@@ -129,7 +137,7 @@ impl<H: Handler + std::marker::Sync + std::marker::Send> Server<H> {
     pub async fn run(&self) -> anyhow::Result<()> {
         info!("Listening on {:?}", self.bind_address);
         let listener = TcpListener::bind(&self.bind_address).await?;
-        let mut id = 1;
+        let mut id = 1u32;
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
@@ -137,7 +145,7 @@ impl<H: Handler + std::marker::Sync + std::marker::Send> Server<H> {
                     info!("Connection {id} accepted");
                     let handler = Arc::clone(&self.handler);
                     let name_id = format!("{},{}", self.bind_address, id);
-                    let connection = Arc::new(ServerConnection::new(write_stream, name_id));
+                    let connection = Arc::new(ServerConnection::new(write_stream, name_id, id));
                     tokio::spawn(async move {
                         receive(handler, connection, read_stream).await;
                     });
