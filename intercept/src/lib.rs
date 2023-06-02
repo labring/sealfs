@@ -15,14 +15,16 @@ use libc::{
     SYS_write, SYS_writev, AT_FDCWD, O_CREAT, O_DIRECTORY, O_TRUNC, O_WRONLY, SEEK_CUR, SEEK_END,
     SEEK_SET, S_IFLNK,
 };
+use log::info;
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
-use sealfs::common::distribute_hash_table::build_hash_ring;
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::ffi::CStr;
-use std::io::Read;
 use std::str::FromStr;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 use syscall_intercept::*;
+use tokio::time::sleep;
 
 const STAT_SIZE: usize = std::mem::size_of::<stat>();
 const STATX_SIZE: usize = std::mem::size_of::<statx>();
@@ -35,32 +37,63 @@ struct Config {
     log_level: String,
 }
 
-pub async fn init_client_wrap(all_servers_address: Vec<String>) {
-    for server_address in all_servers_address {
-        CLIENT.add_connection(&server_address).await;
+pub async fn sync_cluster_infos() {
+    loop {
+        {
+            let result = CLIENT.get_cluster_status().await;
+            match result {
+                Ok(status) => {
+                    if CLIENT.cluster_status.load(Ordering::Relaxed) != status {
+                        CLIENT.cluster_status.store(status, Ordering::Relaxed);
+                    }
+                }
+                Err(e) => {
+                    info!("sync server infos failed, error = {}", e);
+                }
+            }
+        }
+        sleep(Duration::from_secs(1)).await;
     }
+}
+
+pub async fn init_client_async(manager_address: String) -> Result<(), Box<dyn std::error::Error>> {
+    {
+        *CLIENT.manager_address.lock().await = manager_address;
+    }
+    let result = CLIENT.init().await;
+    match result {
+        Ok(_) => {
+            info!("temp init success");
+        }
+        Err(e) => {
+            Err(e)?;
+        }
+    }
+    tokio::spawn(sync_cluster_infos());
+    Ok(())
 }
 
 extern "C" fn initialize() {
     unsafe {
         set_hook_fn(dispatch);
-        let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
-        let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "client.yaml"))
-            .expect("client.yaml open failed!");
-        let mut config_str = String::new();
-        config_file
-            .read_to_string(&mut config_str)
-            .expect("client.yaml read failed!");
-        let config: Config =
-            serde_yaml::from_str(&config_str).expect("client.yaml serializa failed!");
-        let log_level = std::env::var("SEALFS_LOG_LEVEL").unwrap_or(config.log_level);
+        let manager_address =
+            std::env::var("SEALFS_MANAGER_ADDRESS").unwrap_or("127.0.0.1:8081".to_string());
+        let _volume_name = match std::env::var("SEALFS_VOLUME_NAME") {
+            Ok(name) => name,
+            Err(_) => panic!("SEALFS_VOLUME_NAME is not set"),
+        };
+        let log_level = std::env::var("SEALFS_LOG_LEVEL").unwrap_or("warn".to_string());
         let mut builder = env_logger::Builder::from_default_env();
         builder
             .format_timestamp(None)
             .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
         builder.init();
-        build_hash_ring(config.all_servers_address.clone());
-        RUNTIME.block_on(init_client_wrap(config.all_servers_address));
+
+        let result = RUNTIME.block_on(init_client_async(manager_address));
+        match result {
+            Ok(_) => info!("init manager success"),
+            Err(e) => panic!("init manager failed, error = {}", e),
+        }
     }
 }
 

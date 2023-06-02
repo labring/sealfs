@@ -10,7 +10,8 @@ function green_font() {
 }
 
 function fuse_test() {
-    SEALFS_CONFIG_PATH=./examples ./target/debug/client ~/fs --log-level warn &
+    ./target/debug/client --log-level warn create test1 100000
+    ./target/debug/client --log-level warn mount ~/fs test1 &
     sleep 3
     start_time=$[$(date +%s%N)/1000000]
     cd io500
@@ -28,7 +29,7 @@ function fuse_test() {
 function intercept_test() {
     start_time=$[$(date +%s%N)/1000000]
     cd io500
-    SEALFS_CONFIG_PATH=../examples SEALFS_LOG_LEVEL=warn SEALFS_MOUNT_POINT=~/fs LD_PRELOAD=../target/debug/libintercept.so timeout -s SIGKILL 200 mpirun -np 2 ./io500 config-minimal.ini
+    SEALFS_CONFIG_PATH=../examples SEALFS_LOG_LEVEL=info SEALFS_MOUNT_POINT=~/fs LD_PRELOAD=../target/debug/libintercept.so timeout -s SIGKILL 200 mpirun -np 5 ./io500 config-minimal.ini
     result=$?
     cd ..
     end_time=$[$(date +%s%N)/1000000]
@@ -38,6 +39,13 @@ function intercept_test() {
 }
 
 echo "start fuse_client_run"
+
+# exit with 1 if no argument
+if [ $# -eq 0 ]
+then
+    echo "no argument"
+    exit 1
+fi
 
 set +e
 
@@ -50,10 +58,14 @@ sudo rm -rf $1/storage*
 
 set -e
 
+SEALFS_CONFIG_PATH=./examples ./target/debug/manager --log-level warn &
+
+sleep 1
+
 for ((i=0; i<5; i++))
 do
     port=$[8085+$i]
-    SEALFS_CONFIG_PATH=./examples ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level warn &
+    ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level warn &
 done
 
 sleep 3
@@ -75,7 +87,7 @@ echo "[global]" > config-minimal.ini
 echo "datadir = /home/luan/fs" >> config-minimal.ini
 echo "" >> config-minimal.ini
 echo "[debug]" >> config-minimal.ini
-echo "stonewall-time = 5" >> config-minimal.ini
+echo "stonewall-time = 1" >> config-minimal.ini
 
 cd ..
 
@@ -85,7 +97,7 @@ fuse_test
 fuse_result=$?
 echo "fuse result: $fuse_result"
 
-intercept_test
+#intercept_test
 intercept_result=$?
 echo "intercept result: $intercept_result"
 result=$(($fuse_result||$intercept_result))

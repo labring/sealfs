@@ -388,6 +388,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conhash"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c2564a059a984428b8a486c38f2c27bb37633b85b3fd6f4316c10a27ed4c775"
+dependencies = [
+ "log",
+ "md5",
+]
+
+[[package]]
 name = "core_affinity"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -925,6 +935,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b87248edafb776e59e6ee64a79086f65890d3510f2c656c000bf2a7e8a0aea40"
 
 [[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
+
+[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1440,6 +1456,7 @@ dependencies = [
  "bincode",
  "bytes",
  "clap 4.0.18",
+ "conhash",
  "core_affinity",
  "criterion",
  "dashmap",
@@ -1458,6 +1475,7 @@ dependencies = [
  "rocksdb",
  "serde",
  "serde_yaml",
+ "spin",
  "thiserror",
  "tokio",
  "tonic",
@@ -1548,6 +1566,12 @@ dependencies = [
  "libc",
  "winapi",
 ]
+
+[[package]]
+name = "spin"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "static_assertions"

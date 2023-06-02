@@ -20,19 +20,20 @@ impl HelloHandler {
 impl Handler for HelloHandler {
     async fn dispatch(
         &self,
+        _conn_id: u32,
         operation_type: u32,
         _flags: u32,
         _path: Vec<u8>,
         _data: Vec<u8>,
         _metadata: Vec<u8>,
-    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)> {
         // debug!("dispatch, operation_type: {}", operation_type);
         // debug!("dispatch, path: {:?}", path);
         // debug!("dispatch, data: {:?}", data);
         match operation_type {
             0 => {
                 // let success = String::from("Success").into_bytes();
-                Ok((0, 0, vec![], vec![]))
+                Ok((0, 0, 0, 0, vec![], vec![]))
             }
             _ => {
                 todo!()

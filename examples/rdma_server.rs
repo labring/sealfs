@@ -20,16 +20,17 @@ impl HelloHandler {
 impl Handler for HelloHandler {
     async fn dispatch(
         &self,
+        _conn_id: u32,
         operation_type: u32,
         _flags: u32,
         _path: Vec<u8>,
-        data: Vec<u8>,
-        metadata: Vec<u8>,
-    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+        _data: Vec<u8>,
+        _metadata: Vec<u8>,
+    ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)> {
         // println!("metadata: {:?}", metadata);
         // println!("data: {:?}", data);
         match operation_type {
-            0 => Ok((0, 0, vec![1, 2, 3, 4], vec![5, 6, 7, 8])),
+            0 => Ok((0, 0, 4, 4, vec![1, 2, 3, 4], vec![5, 6, 7, 8])),
             _ => {
                 todo!()
             }

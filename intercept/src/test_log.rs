@@ -9,13 +9,11 @@ struct CStrPointer {
 unsafe impl std::marker::Sync for CStrPointer {}
 unsafe impl std::marker::Send for CStrPointer {}
 lazy_static::lazy_static! {
-    static ref LOG_BUF: CStrPointer = CStrPointer {
-        _p: vec![0u8; 10].as_slice().as_ptr()
-    };
+    static ref LOG_BUF: Vec<u8> = vec![0u8; 10];
 }
 
-unsafe fn _print_log(mut num: i32, pre_char: char, suf_char: char) {
-    let c = LOG_BUF._p as *mut u8;
+pub unsafe fn _print_log(mut num: i32, pre_char: char, suf_char: char) {
+    let c = LOG_BUF.as_slice().as_ptr() as *mut u8;
     let mut cnt = 1;
     *c = pre_char as u8;
     while num != 0 {

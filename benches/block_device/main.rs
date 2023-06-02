@@ -10,15 +10,13 @@ use std::process::Command;
 fn write_file(engine: &BlockEngine, n: isize) {
     (0..n).for_each(|_| {
         let bytes = vec![1u8; 10240];
-        engine
-            .write_file("test".to_string(), bytes.as_slice(), 0)
-            .unwrap();
+        engine.write_file("test", bytes.as_slice(), 0).unwrap();
     })
 }
 
 fn read_file(engine: &BlockEngine, n: isize) {
     (0..n * 10).for_each(|_| {
-        engine.read_file("test".to_string(), 10240, 0).unwrap();
+        engine.read_file("test", 10240, 0).unwrap();
     })
 }
 

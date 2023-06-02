@@ -2,15 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
+
 use dashmap::DashMap;
 use lazy_static::lazy_static;
-use libc::{dirent64, iovec};
-use log::debug;
-use sealfs::common::distribute_hash_table::{hash, index_selector};
+use libc::{dirent64, iovec, O_CREAT};
+use log::{debug, info, warn};
+use sealfs::common::byte::CHUNK_SIZE;
+use sealfs::common::hash_ring::HashRing;
 use sealfs::common::serialization::{
-    FileAttrSimple, LinuxDirent, OpenFileSendMetaData, OperationType, ReadDirSendMetaData,
-    ReadFileSendMetaData, TruncateFileSendMetaData,
+    ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
+    DeleteFileSendMetaData, FileAttrSimple, GetClusterStatusRecvMetaData,
+    GetHashRingInfoRecvMetaData, LinuxDirent, ManagerOperationType, OpenFileSendMetaData,
+    OperationType, ReadDirSendMetaData, ReadFileSendMetaData, TruncateFileSendMetaData,
 };
+use sealfs::server::path_split;
 use sealfs::{offset_of, rpc};
 pub struct Client {
     // TODO replace with a thread safe data structure
@@ -18,8 +26,14 @@ pub struct Client {
     pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
     handle: tokio::runtime::Handle,
+
+    pub cluster_status: AtomicI32,
+
+    pub hash_ring: Arc<RwLock<Option<HashRing>>>,
+    pub new_hash_ring: Arc<RwLock<Option<HashRing>>>,
+    pub manager_address: Arc<tokio::sync::Mutex<String>>,
 }
-const CHUNK_SIZE: i64 = 65536;
+
 impl Default for Client {
     fn default() -> Self {
         Self::new()
@@ -34,6 +48,10 @@ impl Client {
             inodes: DashMap::new(),
             inodes_reverse: DashMap::new(),
             handle,
+            cluster_status: AtomicI32::new(ClusterStatus::Initializing.into()),
+            hash_ring: Arc::new(RwLock::new(None)),
+            new_hash_ring: Arc::new(RwLock::new(None)),
+            manager_address: Arc::new(tokio::sync::Mutex::new("".to_string())),
         }
     }
 
@@ -49,31 +67,131 @@ impl Client {
         self.client.remove_connection(server_address);
     }
 
-    pub fn get_connection_address(&self, path: &str) -> Option<String> {
-        // mock
-        Some(index_selector(hash(path)))
+    pub fn get_address(&self, path: &str) -> String {
+        self.hash_ring
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .get(path)
+            .unwrap()
+            .address
+            .clone()
     }
 
-    pub fn open_remote(&self, pathname: &str, flag: i32, mode: u32) -> Result<(), i32> {
-        debug!("open_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+    pub fn get_new_address(&self, path: &str) -> String {
+        self.new_hash_ring
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .get(path)
+            .unwrap()
+            .address
+            .clone()
+    }
+
+    pub fn get_connection_address(&self, path: &str) -> String {
+        let cluster_status = self.cluster_status.load(Ordering::Acquire);
+
+        // check the ClusterStatus is not Idle
+        // for efficiency, we use i32 operation to check the ClusterStatus
+        if cluster_status == 301 {
+            return self.get_address(path);
+        }
+
+        match cluster_status.try_into().unwrap() {
+            ClusterStatus::SyncNewHashRing => self.get_address(path),
+            ClusterStatus::PreTransfer => self.get_address(path),
+            ClusterStatus::Transferring => self.get_address(path),
+            ClusterStatus::PreFinish => self.get_new_address(path),
+            s => panic!("get forward address failed, invalid cluster status: {}", s),
+        }
+    }
+
+    pub async fn init(&'static self) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("temp init");
+
+        self.inodes_reverse.insert(1, "/".to_string());
+        self.inodes.insert("/".to_string(), 1);
+
+        debug!("add connection");
+
+        loop {
+            match self
+                .client
+                .add_connection(&self.manager_address.lock().await)
+                .await
+            {
+                true => {
+                    break;
+                }
+                false => {
+                    warn!("add connection failed, wait for a while");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+
+        let result = async {
+            loop {
+                let result = self.get_cluster_status().await;
+                match result {
+                    Ok(status) => match status.try_into().unwrap() {
+                        ClusterStatus::Idle => {
+                            self.cluster_status.store(status, Ordering::Release);
+                            return self.get_hash_ring_info().await;
+                        }
+                        ClusterStatus::Initializing => {
+                            info!("cluster is initalling, wait for a while");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                        ClusterStatus::PreFinish => {
+                            info!("cluster is initalling, wait for a while");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
+                        s => {
+                            return Err(format!("invalid cluster status: {}", s).into());
+                        }
+                    },
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+        .await;
+
+        match result {
+            Ok(all_servers_address) => {
+                for server_address in &all_servers_address {
+                    self.add_connection(&server_address.0).await;
+                }
+                self.hash_ring
+                    .write()
+                    .unwrap()
+                    .replace(HashRing::new(all_servers_address));
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn get_cluster_status(&self) -> Result<i32, Box<dyn std::error::Error>> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; 1024];
-        let send_meta_data =
-            bincode::serialize(&OpenFileSendMetaData { flags: flag, mode }).unwrap();
-        if self
-            .handle
-            .block_on(self.client.call_remote(
-                &server_address,
-                OperationType::OpenFile.into(),
+        let mut recv_meta_data = vec![0u8; 4];
+
+        let result = self
+            .client
+            .call_remote(
+                &self.manager_address.lock().await,
+                ManagerOperationType::GetClusterStatus.into(),
                 0,
-                pathname,
-                &send_meta_data,
+                "",
+                &[],
                 &[],
                 &mut status,
                 &mut rsp_flags,
@@ -81,15 +199,183 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
-            ))
-            .is_err()
-        {
-            return Err(libc::EIO);
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                if status != 0 {
+                    return Err(format!("get cluster status failed: status {}", status).into());
+                }
+                let cluster_status_meta_data: GetClusterStatusRecvMetaData =
+                    bincode::deserialize(&recv_meta_data).unwrap();
+                Ok(cluster_status_meta_data.status as i32)
+            }
+            Err(e) => Err(e),
         }
-        if status != 0 {
-            Err(status)
+    }
+
+    pub async fn get_hash_ring_info(
+        &self,
+    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+        let mut status = 0i32;
+        let mut rsp_flags = 0u32;
+
+        let mut recv_meta_data_length = 0usize;
+        let mut recv_data_length = 0usize;
+
+        let mut recv_meta_data = vec![0u8; 65535];
+
+        let result = self
+            .client
+            .call_remote(
+                &self.manager_address.lock().await,
+                ManagerOperationType::GetHashRing.into(),
+                0,
+                "",
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                if status != 0 {
+                    return Err(format!("get hash ring failed: status {}", status).into());
+                }
+                let hash_ring_meta_data: GetHashRingInfoRecvMetaData =
+                    bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                Ok(hash_ring_meta_data.hash_ring_info)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn get_new_hash_ring_info(
+        &self,
+    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+        let mut status = 0i32;
+        let mut rsp_flags = 0u32;
+
+        let mut recv_meta_data_length = 0usize;
+        let mut recv_data_length = 0usize;
+
+        let mut recv_meta_data = vec![0u8; 65535];
+
+        let result = self
+            .client
+            .call_remote(
+                &self.manager_address.lock().await,
+                ManagerOperationType::GetNewHashRing.into(),
+                0,
+                "",
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                if status != 0 {
+                    return Err(format!("get new hash ring failed: status {}", status).into());
+                }
+                let hash_ring_meta_data: GetHashRingInfoRecvMetaData =
+                    bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                Ok(hash_ring_meta_data.hash_ring_info)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn open_remote(&self, pathname: &str, flag: i32, mode: u32) -> Result<(), i32> {
+        debug!("open_remote {}", pathname);
+        if flag & O_CREAT != 0 {
+            let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
+            let server_address = self.get_connection_address(&parent);
+            let mut status = 0i32;
+            let mut rsp_flags = 0u32;
+
+            let mut recv_meta_data_length = 0usize;
+            let mut recv_data_length = 0usize;
+
+            let mut recv_meta_data = vec![0u8; 1024];
+            let send_meta_data = bincode::serialize(&CreateFileSendMetaData {
+                flags: flag,
+                umask: 0,
+                mode,
+                name,
+            })
+            .unwrap();
+            if self
+                .handle
+                .block_on(self.client.call_remote(
+                    &server_address,
+                    OperationType::CreateFile.into(),
+                    0,
+                    &parent,
+                    &send_meta_data,
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut recv_meta_data,
+                    &mut [],
+                ))
+                .is_err()
+            {
+                return Err(libc::EIO);
+            }
+            if status != 0 {
+                Err(status)
+            } else {
+                Ok(())
+            }
         } else {
-            Ok(())
+            let server_address = self.get_connection_address(&pathname);
+            let mut status = 0i32;
+            let mut rsp_flags = 0u32;
+
+            let mut recv_meta_data_length = 0usize;
+            let mut recv_data_length = 0usize;
+
+            let mut recv_meta_data = vec![0u8; 1024];
+            let send_meta_data =
+                bincode::serialize(&OpenFileSendMetaData { flags: flag, mode }).unwrap();
+            if self
+                .handle
+                .block_on(self.client.call_remote(
+                    &server_address,
+                    OperationType::OpenFile.into(),
+                    0,
+                    &pathname,
+                    &send_meta_data,
+                    &[],
+                    &mut status,
+                    &mut rsp_flags,
+                    &mut recv_meta_data_length,
+                    &mut recv_data_length,
+                    &mut recv_meta_data,
+                    &mut [],
+                ))
+                .is_err()
+            {
+                return Err(libc::EIO);
+            }
+            if status != 0 {
+                Err(status)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -100,7 +386,7 @@ impl Client {
 
     pub fn truncate_remote(&self, pathname: &str, length: i64) -> Result<(), i32> {
         debug!("truncate_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let server_address = self.get_connection_address(pathname);
         let send_meta_data = bincode::serialize(&TruncateFileSendMetaData { length }).unwrap();
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
@@ -134,20 +420,21 @@ impl Client {
 
     pub fn mkdir_remote(&self, pathname: &str, mode: u32) -> Result<(), i32> {
         debug!("mkdir_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
+        let server_address = self.get_connection_address(&parent);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let send_meta_data = mode.to_le_bytes();
+        let send_meta_data = bincode::serialize(&CreateDirSendMetaData { mode, name }).unwrap();
         let mut recv_meta_data = vec![0u8; 1024];
         if let Err(_) = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::CreateDir.into(),
             0,
-            pathname,
+            &parent,
             &send_meta_data,
             &[],
             &mut status,
@@ -168,19 +455,21 @@ impl Client {
 
     pub fn rmdir_remote(&self, pathname: &str) -> Result<(), i32> {
         debug!("rmdir_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
+        let server_address = self.get_connection_address(&parent);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
+        let send_meta_data = bincode::serialize(&DeleteDirSendMetaData { name }).unwrap();
         if let Err(_) = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::DeleteDir.into(),
             0,
-            pathname,
-            &[],
+            &parent,
+            &send_meta_data,
             &[],
             &mut status,
             &mut rsp_flags,
@@ -205,7 +494,7 @@ impl Client {
         dirp_offset: i64,
     ) -> Result<(isize, i64), i32> {
         debug!("getdents_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let server_address = self.get_connection_address(pathname);
         let md = ReadDirSendMetaData {
             offset: dirp_offset as i64,
             size: dirp.len() as u32,
@@ -289,7 +578,7 @@ impl Client {
         dirp_offset: i64,
     ) -> Result<(isize, i64), i32> {
         debug!("getdents64_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let server_address = self.get_connection_address(pathname);
         let md = ReadDirSendMetaData {
             offset: dirp_offset as i64,
             size: dirp.len() as u32,
@@ -365,19 +654,21 @@ impl Client {
 
     pub fn unlink_remote(&self, pathname: &str) -> Result<(), i32> {
         debug!("unlink_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
+        let server_address = self.get_connection_address(&parent);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
+        let send_meta_data = bincode::serialize(&DeleteFileSendMetaData { name }).unwrap();
         if let Err(_) = self.handle.block_on(self.client.call_remote(
             &server_address,
             OperationType::DeleteFile.into(),
             0,
-            pathname,
-            &[],
+            &parent,
+            &send_meta_data,
             &[],
             &mut status,
             &mut rsp_flags,
@@ -397,7 +688,7 @@ impl Client {
 
     pub fn stat_remote(&self, pathname: &str, statbuf: &mut [u8]) -> Result<(), i32> {
         debug!("stat_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let server_address = self.get_connection_address(pathname);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -433,7 +724,7 @@ impl Client {
 
     pub fn statx_remote(&self, pathname: &str, statxbuf: &mut [u8]) -> Result<(), i32> {
         debug!("statx_remote {}", pathname);
-        let server_address = self.get_connection_address(pathname).unwrap();
+        let server_address = self.get_connection_address(pathname);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -478,7 +769,7 @@ impl Client {
             let mut result = 0;
             while chunk_left < end_idx {
                 // let file_path = format!("{}_{}", pathname, idx);
-                let server_address = self.get_connection_address(&pathname).unwrap();
+                let server_address = self.get_connection_address(&pathname);
                 let mut status = 0i32;
                 let mut rsp_flags = 0u32;
 
@@ -542,7 +833,7 @@ impl Client {
             let mut result = 0;
             while chunk_left < end_idx {
                 // let file_path = format!("{}_{}", pathname, idx);
-                let server_address = self.get_connection_address(&pathname).unwrap();
+                let server_address = self.get_connection_address(&pathname);
                 // println!("write: {} {}", file_path, server_address);
                 let mut status = 0i32;
                 let mut rsp_flags = 0u32;

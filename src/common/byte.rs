@@ -8,3 +8,5 @@ pub fn array2u32(array: &[u8]) -> u32 {
         + ((array[2] as u32) << 16)
         + ((array[3] as u32) << 24)
 }
+
+pub const CHUNK_SIZE: i64 = 65536;

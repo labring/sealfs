@@ -1,4 +1,16 @@
 address:
   127.0.0.1:8081
+all_servers_address:
+ - 127.0.0.1:8085
+ - 127.0.0.1:8086
+ - 127.0.0.1:8087
+ - 127.0.0.1:8088
+ - 127.0.0.1:8089
+virtual_nodes:
+  100
+heartbeat:
+  false
+log_level:
+  info
 protect_threshold:
   0.5

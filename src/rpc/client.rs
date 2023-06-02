@@ -81,7 +81,13 @@ impl Client {
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let connection = self.connections.get(server_address).unwrap();
+        let connection = match self.connections.get(server_address) {
+            Some(connection) => connection,
+            None => {
+                error!("connection not found: {}", server_address);
+                return Err("connection not found".into());
+            }
+        };
         let (batch, id) = self
             .pool
             .register_callback(recv_meta_data, recv_data)

@@ -31,12 +31,13 @@ impl HelloHandler {
 impl Handler for HelloHandler {
     async fn dispatch(
         &self,
+        _conn_id: u32,
         operation_type: u32,
         _flags: u32,
         path: Vec<u8>,
         data: Vec<u8>,
         _metadata: Vec<u8>,
-    ) -> anyhow::Result<(i32, u32, Vec<u8>, Vec<u8>)> {
+    ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)> {
         // debug!("dispatch, operation_type: {}", operation_type);
         // debug!("dispatch, path: {:?}", path);
         // debug!("dispatch, data: {:?}", data);
@@ -45,7 +46,7 @@ impl Handler for HelloHandler {
                 // let mut count = HELLO_COUNT.lock().await;
                 // let buf = format!("Hello, {}!", count).into_bytes();
                 // *count += 1;
-                Ok((0, 0, vec![1, 2, 3, 4], vec![5, 6, 7, 8]))
+                Ok((0, 0, 4, 4, vec![1, 2, 3, 4], vec![5, 6, 7, 8]))
             }
             _ => {
                 todo!()

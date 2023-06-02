@@ -41,8 +41,8 @@ impl StorageEngine for BlockEngine {
 
     fn init(&self) {}
 
-    fn read_file(&self, path: String, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
-        let index_vec = self.index.search(path.as_str());
+    fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
+        let index_vec = self.index.search(path);
         let real_offset_index = offset as u64 / CHUNK;
         let real_offset = index_vec.get(real_offset_index as usize);
         match real_offset {
@@ -51,13 +51,13 @@ impl StorageEngine for BlockEngine {
         }
     }
 
-    fn open_file(&self, _path: String, _flag: i32, _mode: u32) -> Result<(), EngineError> {
+    fn open_file(&self, _path: &str, _flag: i32, _mode: u32) -> Result<(), EngineError> {
         todo!()
     }
 
-    fn write_file(&self, path: String, data: &[u8], _offset: i64) -> Result<usize, EngineError> {
+    fn write_file(&self, path: &str, data: &[u8], _offset: i64) -> Result<usize, EngineError> {
         let pos = self.allocator.allocator_space(data.len() as u64);
-        let index_value_vec = self.index.search(path.as_str());
+        let index_value_vec = self.index.search(path);
         let mut vec = Vec::new();
         let mut length = (data.len() as u64) / CHUNK;
         if data.len() as u64 - length * CHUNK > 0 {
@@ -66,7 +66,7 @@ impl StorageEngine for BlockEngine {
         for n in 0..length {
             vec.push(pos + n * CHUNK);
         }
-        self.index.update_index(path.as_str(), vec);
+        self.index.update_index(path, vec);
         match index_value_vec.last() {
             Some(last) => self.storage.write(data, (last + pos) as i64),
             None => self.storage.write(data, pos as i64),
@@ -75,7 +75,7 @@ impl StorageEngine for BlockEngine {
 
     fn create_file(
         &self,
-        _path: String,
+        _path: &str,
         _oflag: i32,
         _umask: u32,
         _mode: u32,
@@ -83,11 +83,11 @@ impl StorageEngine for BlockEngine {
         todo!()
     }
 
-    fn delete_file(&self, _path: String) -> Result<(), EngineError> {
+    fn delete_file(&self, _path: &str) -> Result<(), EngineError> {
         todo!()
     }
 
-    fn truncate_file(&self, _path: String, _length: i64) -> Result<(), EngineError> {
+    fn truncate_file(&self, _path: &str, _length: i64) -> Result<(), EngineError> {
         todo!()
     }
 }

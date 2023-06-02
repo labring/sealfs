@@ -1,13 +1,14 @@
-use std::{
-    collections::BTreeMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 use fuser::FileType;
 use libc::{
     stat, statx, statx_timestamp, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
 };
 use serde::{Deserialize, Serialize};
+use std::fmt::{Debug, Formatter};
+use std::{
+    collections::BTreeMap,
+    fmt::Display,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 #[macro_export]
 macro_rules! offset_of {
@@ -32,9 +33,15 @@ pub enum OperationType {
     DeleteDir = 10,
     DirectoryAddEntry = 11,
     DirectoryDeleteEntry = 12,
-    SendHeart = 13,
-    GetMetadata = 14,
-    TruncateFile = 15,
+    TruncateFile = 13,
+    CheckFile = 14,
+    CheckDir = 15,
+    CreateDirNoParent = 16,
+    CreateFileNoParent = 17,
+    DeleteDirNoParent = 18,
+    DeleteFileNoParent = 19,
+    CreateVolume = 20,
+    InitVolume = 21,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -55,9 +62,15 @@ impl TryFrom<u32> for OperationType {
             10 => Ok(OperationType::DeleteDir),
             11 => Ok(OperationType::DirectoryAddEntry),
             12 => Ok(OperationType::DirectoryDeleteEntry),
-            13 => Ok(OperationType::SendHeart),
-            14 => Ok(OperationType::GetMetadata),
-            15 => Ok(OperationType::TruncateFile),
+            13 => Ok(OperationType::TruncateFile),
+            14 => Ok(OperationType::CheckFile),
+            15 => Ok(OperationType::CheckDir),
+            16 => Ok(OperationType::CreateDirNoParent),
+            17 => Ok(OperationType::CreateFileNoParent),
+            18 => Ok(OperationType::DeleteDirNoParent),
+            19 => Ok(OperationType::DeleteFileNoParent),
+            20 => Ok(OperationType::CreateVolume),
+            21 => Ok(OperationType::InitVolume),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -79,32 +92,370 @@ impl From<OperationType> for u32 {
             OperationType::DeleteDir => 10,
             OperationType::DirectoryAddEntry => 11,
             OperationType::DirectoryDeleteEntry => 12,
-            OperationType::SendHeart => 13,
-            OperationType::GetMetadata => 14,
-            OperationType::TruncateFile => 15,
+            OperationType::TruncateFile => 13,
+            OperationType::CheckFile => 14,
+            OperationType::CheckDir => 15,
+            OperationType::CreateDirNoParent => 16,
+            OperationType::CreateFileNoParent => 17,
+            OperationType::DeleteDirNoParent => 18,
+            OperationType::DeleteFileNoParent => 19,
+            OperationType::CreateVolume => 20,
+            OperationType::InitVolume => 21,
         }
     }
 }
 
-impl OperationType {
+pub enum ManagerOperationType {
+    SendHeart = 101,
+    GetMetadata = 102,
+    GetClusterStatus = 103,
+    GetHashRing = 104,
+    GetNewHashRing = 105,
+    AddNodes = 106,
+    RemoveNodes = 107,
+    UpdateServerStatus = 108,
+    FinishServer = 109,
+}
+
+impl TryFrom<u32> for ManagerOperationType {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            101 => Ok(ManagerOperationType::SendHeart),
+            102 => Ok(ManagerOperationType::GetMetadata),
+            103 => Ok(ManagerOperationType::GetClusterStatus),
+            104 => Ok(ManagerOperationType::GetHashRing),
+            105 => Ok(ManagerOperationType::GetNewHashRing),
+            106 => Ok(ManagerOperationType::AddNodes),
+            107 => Ok(ManagerOperationType::RemoveNodes),
+            108 => Ok(ManagerOperationType::UpdateServerStatus),
+            109 => Ok(ManagerOperationType::FinishServer),
+            _ => panic!("Unkown value: {}", value),
+        }
+    }
+}
+
+impl From<ManagerOperationType> for u32 {
+    fn from(value: ManagerOperationType) -> Self {
+        match value {
+            ManagerOperationType::SendHeart => 101,
+            ManagerOperationType::GetMetadata => 102,
+            ManagerOperationType::GetClusterStatus => 103,
+            ManagerOperationType::GetHashRing => 104,
+            ManagerOperationType::GetNewHashRing => 105,
+            ManagerOperationType::AddNodes => 106,
+            ManagerOperationType::RemoveNodes => 107,
+            ManagerOperationType::UpdateServerStatus => 108,
+            ManagerOperationType::FinishServer => 109,
+        }
+    }
+}
+
+impl ManagerOperationType {
     pub fn to_le_bytes(&self) -> [u8; 4] {
         match self {
-            OperationType::Unkown => 0u32.to_le_bytes(),
-            OperationType::Lookup => 1u32.to_le_bytes(),
-            OperationType::CreateFile => 2u32.to_le_bytes(),
-            OperationType::CreateDir => 3u32.to_le_bytes(),
-            OperationType::GetFileAttr => 4u32.to_le_bytes(),
-            OperationType::ReadDir => 5u32.to_le_bytes(),
-            OperationType::OpenFile => 6u32.to_le_bytes(),
-            OperationType::ReadFile => 7u32.to_le_bytes(),
-            OperationType::WriteFile => 8u32.to_le_bytes(),
-            OperationType::DeleteFile => 9u32.to_le_bytes(),
-            OperationType::DeleteDir => 10u32.to_le_bytes(),
-            OperationType::DirectoryAddEntry => 11u32.to_le_bytes(),
-            OperationType::DirectoryDeleteEntry => 12u32.to_le_bytes(),
-            OperationType::SendHeart => 13u32.to_le_bytes(),
-            OperationType::GetMetadata => 14u32.to_le_bytes(),
-            OperationType::TruncateFile => 15u32.to_le_bytes(),
+            ManagerOperationType::SendHeart => 101u32.to_le_bytes(),
+            ManagerOperationType::GetMetadata => 102u32.to_le_bytes(),
+            ManagerOperationType::GetClusterStatus => 103u32.to_le_bytes(),
+            ManagerOperationType::GetHashRing => 104u32.to_le_bytes(),
+            ManagerOperationType::GetNewHashRing => 105u32.to_le_bytes(),
+            ManagerOperationType::AddNodes => 106u32.to_le_bytes(),
+            ManagerOperationType::RemoveNodes => 107u32.to_le_bytes(),
+            ManagerOperationType::UpdateServerStatus => 108u32.to_le_bytes(),
+            ManagerOperationType::FinishServer => 109u32.to_le_bytes(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerType {
+    Running = 1,
+    Add = 2,
+    Remove = 3,
+}
+
+impl TryFrom<u32> for ServerType {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(ServerType::Running),
+            2 => Ok(ServerType::Add),
+            3 => Ok(ServerType::Remove),
+            _ => panic!("Unkown value: {}", value),
+        }
+    }
+}
+
+impl From<ServerType> for u32 {
+    fn from(value: ServerType) -> Self {
+        match value {
+            ServerType::Running => 1,
+            ServerType::Add => 2,
+            ServerType::Remove => 3,
+        }
+    }
+}
+
+impl Display for ServerType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ServerType::Running => write!(f, "Running"),
+            ServerType::Add => write!(f, "Add"),
+            ServerType::Remove => write!(f, "Remove"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ServerStatus {
+    Initializing = 201,
+    PreTransfer = 202,
+    Transferring = 203,
+    PreFinish = 204,
+    Finishing = 205,
+    Finished = 206,
+}
+
+impl TryFrom<u32> for ServerStatus {
+    type Error = String;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            201 => Ok(ServerStatus::Initializing),
+            202 => Ok(ServerStatus::PreTransfer),
+            203 => Ok(ServerStatus::Transferring),
+            204 => Ok(ServerStatus::PreFinish),
+            205 => Ok(ServerStatus::Finishing),
+            206 => Ok(ServerStatus::Finished),
+            _ => Err(format!("Unkown value: {}", value)),
+        }
+    }
+}
+
+impl From<ServerStatus> for u32 {
+    fn from(value: ServerStatus) -> Self {
+        match value {
+            ServerStatus::Initializing => 201,
+            ServerStatus::PreTransfer => 202,
+            ServerStatus::Transferring => 203,
+            ServerStatus::PreFinish => 204,
+            ServerStatus::Finishing => 205,
+            ServerStatus::Finished => 206,
+        }
+    }
+}
+
+impl Display for ServerStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Initializing => write!(f, "Init"),
+            Self::PreTransfer => write!(f, "PreTransfer"),
+            Self::Transferring => write!(f, "Transferring"),
+            Self::PreFinish => write!(f, "PreFinish"),
+            Self::Finishing => write!(f, "Finish"),
+            Self::Finished => write!(f, "CloseNodes"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ClusterStatus {
+    Initializing = 300,
+    Idle = 301,
+    NodesStarting = 302,
+    SyncNewHashRing = 303,
+    PreTransfer = 304,
+    Transferring = 305,
+    PreFinish = 306,
+    Finishing = 307,
+    StatusError = 308,
+}
+
+impl TryFrom<u32> for ClusterStatus {
+    type Error = String;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            300 => Ok(ClusterStatus::Initializing),
+            301 => Ok(ClusterStatus::Idle),
+            302 => Ok(ClusterStatus::NodesStarting),
+            303 => Ok(ClusterStatus::SyncNewHashRing),
+            304 => Ok(ClusterStatus::PreTransfer),
+            305 => Ok(ClusterStatus::Transferring),
+            306 => Ok(ClusterStatus::PreFinish),
+            307 => Ok(ClusterStatus::Finishing),
+            308 => Ok(ClusterStatus::StatusError),
+            _ => Err(format!("Unkown value: {}", value)),
+        }
+    }
+}
+
+impl From<ClusterStatus> for u32 {
+    fn from(value: ClusterStatus) -> Self {
+        match value {
+            ClusterStatus::Initializing => 300,
+            ClusterStatus::Idle => 301,
+            ClusterStatus::NodesStarting => 302,
+            ClusterStatus::SyncNewHashRing => 303,
+            ClusterStatus::PreTransfer => 304,
+            ClusterStatus::Transferring => 305,
+            ClusterStatus::PreFinish => 306,
+            ClusterStatus::Finishing => 307,
+            ClusterStatus::StatusError => 308,
+        }
+    }
+}
+
+impl TryFrom<i32> for ClusterStatus {
+    type Error = String;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            300 => Ok(ClusterStatus::Initializing),
+            301 => Ok(ClusterStatus::Idle),
+            302 => Ok(ClusterStatus::NodesStarting),
+            303 => Ok(ClusterStatus::SyncNewHashRing),
+            304 => Ok(ClusterStatus::PreTransfer),
+            305 => Ok(ClusterStatus::Transferring),
+            306 => Ok(ClusterStatus::PreFinish),
+            307 => Ok(ClusterStatus::Finishing),
+            308 => Ok(ClusterStatus::StatusError),
+            _ => Err(format!("Unkown value: {}", value)),
+        }
+    }
+}
+
+impl From<ClusterStatus> for i32 {
+    fn from(value: ClusterStatus) -> Self {
+        match value {
+            ClusterStatus::Initializing => 300,
+            ClusterStatus::Idle => 301,
+            ClusterStatus::NodesStarting => 302,
+            ClusterStatus::SyncNewHashRing => 303,
+            ClusterStatus::PreTransfer => 304,
+            ClusterStatus::Transferring => 305,
+            ClusterStatus::PreFinish => 306,
+            ClusterStatus::Finishing => 307,
+            ClusterStatus::StatusError => 308,
+        }
+    }
+}
+
+impl Display for ClusterStatus {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Initializing => write!(f, "Init"),
+            Self::Idle => write!(f, "Idle"),
+            Self::NodesStarting => write!(f, "AddNodes"),
+            Self::SyncNewHashRing => write!(f, "SyncNewHashRing"),
+            Self::PreTransfer => write!(f, "PreTransfer"),
+            Self::Transferring => write!(f, "Transferring"),
+            Self::PreFinish => write!(f, "PreFinish"),
+            Self::Finishing => write!(f, "DeleteNodes"),
+            Self::StatusError => write!(f, "StatusError"),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FileTypeSimple {
+    RegularFile = 0,
+    NamedPipe = 1,
+    CharDevice = 2,
+    BlockDevice = 3,
+    Directory = 4,
+    Symlink = 5,
+    Socket = 6,
+}
+
+impl From<FileTypeSimple> for FileType {
+    fn from(value: FileTypeSimple) -> Self {
+        match value {
+            FileTypeSimple::RegularFile => FileType::RegularFile,
+            FileTypeSimple::NamedPipe => FileType::NamedPipe,
+            FileTypeSimple::CharDevice => FileType::CharDevice,
+            FileTypeSimple::BlockDevice => FileType::BlockDevice,
+            FileTypeSimple::Directory => FileType::Directory,
+            FileTypeSimple::Symlink => FileType::Symlink,
+            FileTypeSimple::Socket => FileType::Socket,
+        }
+    }
+}
+
+impl From<FileType> for FileTypeSimple {
+    fn from(value: FileType) -> Self {
+        match value {
+            FileType::RegularFile => FileTypeSimple::RegularFile,
+            FileType::NamedPipe => FileTypeSimple::NamedPipe,
+            FileType::CharDevice => FileTypeSimple::CharDevice,
+            FileType::BlockDevice => FileTypeSimple::BlockDevice,
+            FileType::Directory => FileTypeSimple::Directory,
+            FileType::Symlink => FileTypeSimple::Symlink,
+            FileType::Socket => FileTypeSimple::Socket,
+        }
+    }
+}
+
+impl TryFrom<u32> for FileTypeSimple {
+    type Error = String;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FileTypeSimple::RegularFile),
+            1 => Ok(FileTypeSimple::NamedPipe),
+            2 => Ok(FileTypeSimple::CharDevice),
+            3 => Ok(FileTypeSimple::BlockDevice),
+            4 => Ok(FileTypeSimple::Directory),
+            5 => Ok(FileTypeSimple::Symlink),
+            6 => Ok(FileTypeSimple::Socket),
+            _ => Err(format!("Unkown value: {}", value)),
+        }
+    }
+}
+
+impl From<FileTypeSimple> for u32 {
+    fn from(value: FileTypeSimple) -> Self {
+        match value {
+            FileTypeSimple::RegularFile => 0,
+            FileTypeSimple::NamedPipe => 1,
+            FileTypeSimple::CharDevice => 2,
+            FileTypeSimple::BlockDevice => 3,
+            FileTypeSimple::Directory => 4,
+            FileTypeSimple::Symlink => 5,
+            FileTypeSimple::Socket => 6,
+        }
+    }
+}
+
+impl TryFrom<u8> for FileTypeSimple {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FileTypeSimple::RegularFile),
+            1 => Ok(FileTypeSimple::NamedPipe),
+            2 => Ok(FileTypeSimple::CharDevice),
+            3 => Ok(FileTypeSimple::BlockDevice),
+            4 => Ok(FileTypeSimple::Directory),
+            5 => Ok(FileTypeSimple::Symlink),
+            6 => Ok(FileTypeSimple::Socket),
+            _ => Err(format!("Unkown value: {}", value)),
+        }
+    }
+}
+
+impl From<FileTypeSimple> for u8 {
+    fn from(value: FileTypeSimple) -> Self {
+        match value {
+            FileTypeSimple::RegularFile => 0,
+            FileTypeSimple::NamedPipe => 1,
+            FileTypeSimple::CharDevice => 2,
+            FileTypeSimple::BlockDevice => 3,
+            FileTypeSimple::Directory => 4,
+            FileTypeSimple::Symlink => 5,
+            FileTypeSimple::Socket => 6,
         }
     }
 }
@@ -129,23 +480,23 @@ pub struct FileAttrSimple {
 
 impl Default for FileAttrSimple {
     fn default() -> Self {
-        Self::new(fuser::FileType::RegularFile)
+        Self::new(FileTypeSimple::RegularFile)
     }
 }
 
 impl FileAttrSimple {
-    pub fn new(r#type: FileType) -> Self {
+    pub fn new(r#type: FileTypeSimple) -> Self {
         let kind = match r#type {
-            FileType::NamedPipe => 0,
-            FileType::CharDevice => 1,
-            FileType::BlockDevice => 2,
-            FileType::Directory => 3,
-            FileType::RegularFile => 4,
-            FileType::Symlink => 5,
-            FileType::Socket => 6,
+            FileTypeSimple::NamedPipe => 0,
+            FileTypeSimple::CharDevice => 1,
+            FileTypeSimple::BlockDevice => 2,
+            FileTypeSimple::Directory => 3,
+            FileTypeSimple::RegularFile => 4,
+            FileTypeSimple::Symlink => 5,
+            FileTypeSimple::Socket => 6,
         };
         let size = match r#type {
-            FileType::Directory => 4096,
+            FileTypeSimple::Directory => 4096,
             _ => 0,
         };
         FileAttrSimple {
@@ -364,9 +715,62 @@ pub struct CreateFileSendMetaData {
     pub mode: u32,
     pub umask: u32,
     pub flags: i32,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct DeleteFileSendMetaData {
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct CreateDirSendMetaData {
     pub mode: u32,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct DeleteDirSendMetaData {
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct UpdateServerStatusSendMetaData {
+    pub status: ServerStatus,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct GetClusterStatusRecvMetaData {
+    pub status: ClusterStatus,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct GetHashRingInfoRecvMetaData {
+    pub hash_ring_info: Vec<(String, usize)>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct AddNodesSendMetaData {
+    pub new_servers_info: Vec<(String, usize)>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct DeleteNodesSendMetaData {
+    pub deleted_servers_info: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct CheckFileSendMetaData {
+    pub file_attr: FileAttrSimple,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct CheckDirSendMetaData {
+    pub file_attr: FileAttrSimple,
+}
+
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct CreateVolumeSendMetaData {
+    pub name: String,
+    pub size: u64,
 }

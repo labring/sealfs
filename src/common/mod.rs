@@ -4,5 +4,7 @@
 
 pub mod byte;
 pub mod cache;
-pub mod distribute_hash_table;
+pub mod hash_ring;
+pub mod sender;
 pub mod serialization;
+pub mod util;
