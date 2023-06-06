@@ -19,7 +19,7 @@ use lazy_static::lazy_static;
 use libc::{mode_t, DT_DIR, DT_LNK, DT_REG};
 use log::{debug, error, info, warn};
 use spin::RwLock;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -426,14 +426,14 @@ impl Client {
             .await
     }
 
-    pub fn lookup_remote(&self, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    pub async fn lookup_remote(&self, parent: u64, name: OsString, reply: ReplyEntry) {
         info!(
             "lookup_remote, parent: {}, name: {}",
             parent,
             name.to_str().unwrap()
         );
         let path = match self.inodes_reverse.get(&parent) {
-            Some(parent_path) => self.get_full_path(parent_path.deref(), name),
+            Some(parent_path) => self.get_full_path(parent_path.deref(), &name),
             None => {
                 reply.error(libc::ENOENT);
                 info!("lookup_remote error");
@@ -449,20 +449,23 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::GetFileAttr.into(),
-            0,
-            &path,
-            &[],
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut recv_meta_data,
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::GetFileAttr.into(),
+                0,
+                &path,
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
         match result {
             Ok(_) => {
                 debug!("lookup_remote status: {}", status);
@@ -496,10 +499,10 @@ impl Client {
         }
     }
 
-    pub fn create_remote(
+    pub async fn create_remote(
         &self,
         parent: u64,
-        name: &OsStr,
+        name: OsString,
         mode: u32,
         umask: u32,
         flags: i32,
@@ -531,20 +534,23 @@ impl Client {
         })
         .unwrap();
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::CreateFile.into(),
-            0,
-            &path,
-            &send_meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut recv_meta_data,
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::CreateFile.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -563,7 +569,7 @@ impl Client {
 
                 file_attr.ino = self.get_new_inode();
 
-                let path = self.get_full_path(&path, name);
+                let path = self.get_full_path(&path, &name);
                 self.inodes.insert(path.clone(), file_attr.ino);
                 self.inodes_reverse.insert(file_attr.ino, path);
 
@@ -575,7 +581,7 @@ impl Client {
         }
     }
 
-    pub fn getattr_remote(&self, ino: u64, reply: ReplyAttr) {
+    pub async fn getattr_remote(&self, ino: u64, reply: ReplyAttr) {
         info!("getattr_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
@@ -595,20 +601,23 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 1024];
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::GetFileAttr.into(),
-            0,
-            &path,
-            &[],
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut recv_meta_data,
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::GetFileAttr.into(),
+                0,
+                &path,
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -642,7 +651,7 @@ impl Client {
         }
     }
 
-    pub fn readdir_remote(&self, ino: u64, offset: i64, mut reply: ReplyDirectory) {
+    pub async fn readdir_remote(&self, ino: u64, offset: i64, mut reply: ReplyDirectory) {
         info!("readdir_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
@@ -669,20 +678,23 @@ impl Client {
 
         let mut recv_data = vec![0u8; size];
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::ReadDir.into(),
-            0,
-            &path,
-            &send_meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut [],
-            &mut recv_data,
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::ReadDir.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut recv_data,
+            )
+            .await;
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -729,7 +741,7 @@ impl Client {
         }
     }
 
-    pub fn read_remote(&self, ino: u64, offset: i64, size: u32, reply: ReplyData) {
+    pub async fn read_remote(&self, ino: u64, offset: i64, size: u32, reply: ReplyData) {
         info!("read_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
@@ -751,20 +763,23 @@ impl Client {
 
         let mut recv_data = vec![0u8; size as usize];
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::ReadFile.into(),
-            0,
-            &path,
-            &meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut [],
-            &mut recv_data,
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::ReadFile.into(),
+                0,
+                &path,
+                &meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut recv_data,
+            )
+            .await;
         match result {
             Ok(()) => {
                 if status != 0 {
@@ -784,7 +799,7 @@ impl Client {
         }
     }
 
-    pub fn write_remote(&self, ino: u64, offset: i64, data: &[u8], reply: ReplyWrite) {
+    pub async fn write_remote(&self, ino: u64, offset: i64, data: Vec<u8>, reply: ReplyWrite) {
         info!("write_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
@@ -805,20 +820,23 @@ impl Client {
 
         let mut recv_meta_data = vec![0u8; 4];
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::WriteFile.into(),
-            0,
-            &path,
-            &send_meta_data,
-            data,
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut recv_meta_data,
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::WriteFile.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &data,
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
         match result {
             Ok(()) => {
                 let size: u32 =
@@ -833,7 +851,7 @@ impl Client {
         }
     }
 
-    pub fn mkdir_remote(&self, parent: u64, name: &OsStr, _mode: u32, reply: ReplyEntry) {
+    pub async fn mkdir_remote(&self, parent: u64, name: OsString, _mode: u32, reply: ReplyEntry) {
         info!("mkdir_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
@@ -860,20 +878,23 @@ impl Client {
         })
         .unwrap();
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::CreateDir.into(),
-            0,
-            &path,
-            &send_meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut recv_meta_data,
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::CreateDir.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
         match result {
             Ok(_) => {
                 if status != 0 {
@@ -894,7 +915,7 @@ impl Client {
 
                 reply.entry(&TTL, &file_attr, 0);
 
-                let path = self.get_full_path(&path, name);
+                let path = self.get_full_path(&path, &name);
                 self.inodes.insert(path.clone(), file_attr.ino);
                 self.inodes_reverse.insert(file_attr.ino, path);
             }
@@ -904,7 +925,7 @@ impl Client {
         }
     }
 
-    pub fn open_remote(&self, ino: u64, flags: i32, reply: ReplyOpen) {
+    pub async fn open_remote(&self, ino: u64, flags: i32, reply: ReplyOpen) {
         info!("open_remote");
         if flags & libc::O_CREAT != 0 {
             todo!("open_remote O_CREAT")
@@ -934,20 +955,23 @@ impl Client {
 
         let send_meta_data = bincode::serialize(&OpenFileSendMetaData { flags, mode }).unwrap();
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::OpenFile.into(),
-            0,
-            &path,
-            &send_meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut [],
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::OpenFile.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut [],
+            )
+            .await;
         match result {
             Ok(()) => {
                 reply.opened(self.get_new_fd(), 0);
@@ -959,7 +983,7 @@ impl Client {
         }
     }
 
-    pub fn unlink_remote(&self, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    pub async fn unlink_remote(&self, parent: u64, name: OsString, reply: ReplyEmpty) {
         info!("unlink_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
@@ -981,23 +1005,26 @@ impl Client {
         })
         .unwrap();
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::DeleteFile.into(),
-            0,
-            &path,
-            &send_meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut [],
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::DeleteFile.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut [],
+            )
+            .await;
         match result {
             Ok(_) => {
-                let path = self.get_full_path(&path, name);
+                let path = self.get_full_path(&path, &name);
                 self.inodes_reverse
                     .remove(self.inodes.get(&path).as_deref().unwrap());
                 self.inodes.remove(&path);
@@ -1009,7 +1036,7 @@ impl Client {
         }
     }
 
-    pub fn rmdir_remote(&self, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    pub async fn rmdir_remote(&self, parent: u64, name: OsString, reply: ReplyEmpty) {
         info!("rmdir_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
@@ -1031,23 +1058,26 @@ impl Client {
         })
         .unwrap();
 
-        let result = self.handle.block_on(self.client.call_remote(
-            &server_address,
-            OperationType::DeleteDir.into(),
-            0,
-            &path,
-            &send_meta_data,
-            &[],
-            &mut status,
-            &mut rsp_flags,
-            &mut recv_meta_data_length,
-            &mut recv_data_length,
-            &mut [],
-            &mut [],
-        ));
+        let result = self
+            .client
+            .call_remote(
+                &server_address,
+                OperationType::DeleteDir.into(),
+                0,
+                &path,
+                &send_meta_data,
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut [],
+            )
+            .await;
         match result {
             Ok(_) => {
-                let path = self.get_full_path(&path, name);
+                let path = self.get_full_path(&path, &name);
                 self.inodes_reverse
                     .remove(self.inodes.get(&path).as_deref().unwrap());
                 self.inodes.remove(&path);
