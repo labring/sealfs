@@ -2,8 +2,8 @@ use super::storage_engine::meta_engine::MetaEngine;
 use super::storage_engine::StorageEngine;
 use super::transfer_manager::TransferManager;
 use super::volume::Volume;
-use super::EngineError;
 use crate::common::byte::CHUNK_SIZE;
+use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
 use crate::common::sender::Sender;
 use crate::common::serialization::{
@@ -112,12 +112,12 @@ where
     pub fn lock_file(
         &self,
         path: &str,
-    ) -> Result<Ref<String, HashMap<std::string::String, u32>>, EngineError> {
+    ) -> Result<Ref<String, HashMap<std::string::String, u32>>, i32> {
         match self.file_locks.get(path) {
             Some(lock) => Ok(lock),
             None => {
                 info!("lock file error: {}", path);
-                Err(EngineError::NoEntry)
+                Err(libc::ENOENT)
             }
         }
     }
@@ -125,12 +125,12 @@ where
     pub fn lock_file_mut(
         &self,
         path: &str,
-    ) -> Result<RefMut<String, HashMap<std::string::String, u32>>, EngineError> {
+    ) -> Result<RefMut<String, HashMap<std::string::String, u32>>, i32> {
         match self.file_locks.get_mut(path) {
             Some(lock) => Ok(lock),
             None => {
                 error!("lock file error: {}", path);
-                Err(EngineError::NoEntry)
+                Err(libc::ENOENT)
             }
         }
     }
@@ -152,7 +152,7 @@ where
         file_map
     }
 
-    pub async fn create_file_remote(&self, path: &str) -> Result<(), EngineError> {
+    pub async fn create_file_remote(&self, path: &str) -> Result<(), i32> {
         let address = self.get_new_address(path);
         let send_meta_data = bincode::serialize(&CreateFileSendMetaData {
             mode: 0o777,
@@ -173,7 +173,7 @@ where
         Ok(())
     }
 
-    pub async fn write_file_remote(&self, path: &str) -> Result<(), EngineError> {
+    pub async fn write_file_remote(&self, path: &str) -> Result<(), i32> {
         let address = self.get_new_address(path);
 
         let file_attr = self.meta_engine.get_file_attr(path).unwrap();
@@ -218,11 +218,10 @@ where
                 .await
             {
                 error!("write file failed with error: {}", e);
-                return Err(EngineError::IO);
+                return Err(CONNECTION_ERROR);
             }
             if status != 0 {
-                error!("write file failed, status: {}", status);
-                return Err(EngineError::IO);
+                return Err(status);
             }
             let size = isize::from_le_bytes(recv_meta_data);
             idx += 1;
@@ -233,7 +232,7 @@ where
         Ok(())
     }
 
-    pub async fn check_file_remote(&self, path: &str) -> Result<(), EngineError> {
+    pub async fn check_file_remote(&self, path: &str) -> Result<(), i32> {
         let file_attr = self.meta_engine.get_file_attr(path).unwrap();
         let server_address = self.get_new_address(path);
         // println!("check: {} {}", file_path, server_address);
@@ -262,18 +261,17 @@ where
             )
             .await
         {
-            error!("check file failed with error: {}", e);
-            return Err(EngineError::IO);
+            error!("write file failed with error: {}", e);
+            return Err(CONNECTION_ERROR);
         }
         if status != 0 {
-            error!("check file failed, status: {}", status);
-            return Err(EngineError::IO);
+            return Err(status);
         }
 
         self.delete_file_no_parent(path)
     }
 
-    pub async fn create_dir_remote(&self, path: &str) -> Result<(), EngineError> {
+    pub async fn create_dir_remote(&self, path: &str) -> Result<(), i32> {
         let address = self.get_new_address(path);
 
         let send_meta_data = bincode::serialize(&CreateDirSendMetaData {
@@ -293,7 +291,7 @@ where
         Ok(())
     }
 
-    pub async fn add_subdirs_remote(&self, path: &str) -> Result<(), EngineError> {
+    pub async fn add_subdirs_remote(&self, path: &str) -> Result<(), i32> {
         if !path.contains('/') {
             // root directory of a volume
             return Ok(());
@@ -324,7 +322,7 @@ where
         Ok(())
     }
 
-    pub async fn check_dir_remote(&self, path: &str) -> Result<(), EngineError> {
+    pub async fn check_dir_remote(&self, path: &str) -> Result<(), i32> {
         let file_attr = self.meta_engine.get_file_attr(path).unwrap();
         let server_address = self.get_new_address(path);
         // println!("check: {} {}", file_path, server_address);
@@ -353,18 +351,17 @@ where
             )
             .await
         {
-            error!("check dir failed with error: {}", e);
-            return Err(EngineError::IO);
+            error!("write file failed with error: {}", e);
+            return Err(CONNECTION_ERROR);
         }
         if status != 0 {
-            error!("check dir failed, status: {}", status);
-            return Err(EngineError::IO);
+            return Err(status);
         }
 
         self.delete_dir_no_parent_force(path)
     }
 
-    pub async fn transfer_files(&self, file_map: Vec<String>) -> Result<(), EngineError> {
+    pub async fn transfer_files(&self, file_map: Vec<String>) -> Result<(), i32> {
         // transfer all files ,and set the flag as true
         info!("transfer_files: {:?}", file_map);
         for k in file_map {
@@ -383,7 +380,7 @@ where
                     self.write_file_remote(&k).await?;
                     self.check_file_remote(&k).await?;
                 }
-                Err(EngineError::NoEntry) => {
+                Err(libc::ENOENT) => {
                     // file has been deleted before transfering
                     continue;
                 }
@@ -554,10 +551,7 @@ where
         }
     }
 
-    pub async fn update_server_status(
-        &self,
-        server_status: ServerStatus,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn update_server_status(&self, server_status: ServerStatus) -> Result<(), i32> {
         let send_meta_data = bincode::serialize(&server_status).unwrap();
 
         let mut status = 0i32;
@@ -586,33 +580,31 @@ where
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(format!("get cluster status failed, status: {}", status).into());
+                    Err(status)
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("update server status failed, error: {}", e);
+                Err(CONNECTION_ERROR)
+            }
         }
     }
 
-    pub async fn get_cluster_status(&self) -> Result<ClusterStatus, Box<dyn std::error::Error>> {
-        Ok(self
-            .sender
+    pub async fn get_cluster_status(&self) -> Result<ClusterStatus, i32> {
+        self.sender
             .get_cluster_status(&self.manager_address.lock().await)
-            .await?
-            .try_into()?)
+            .await
     }
 
-    pub async fn get_hash_ring_info(
-        &self,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    pub async fn get_hash_ring_info(&self) -> Result<Vec<(String, usize)>, i32> {
         self.sender
             .get_hash_ring_info(&self.manager_address.lock().await)
             .await
     }
 
-    pub async fn get_new_hash_ring_info(
-        &self,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    pub async fn get_new_hash_ring_info(&self) -> Result<Vec<(String, usize)>, i32> {
         self.sender
             .get_new_hash_ring_info(&self.manager_address.lock().await)
             .await
@@ -627,7 +619,7 @@ where
         path: &str,
         data: Vec<u8>,
         metadata: Vec<u8>,
-    ) -> Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>), EngineError> {
+    ) -> Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>), i32> {
         let (
             mut status,
             mut rsp_flags,
@@ -641,7 +633,7 @@ where
             OperationType::CreateFile => (0, 0, 0, 0, vec![0; 1024], vec![]),
             OperationType::CreateDir => (0, 0, 0, 0, vec![0; 1024], vec![]),
             OperationType::GetFileAttr => (0, 0, 0, 0, vec![0; 1024], vec![]),
-            OperationType::ReadDir => (0, 0, 0, 0, vec![0; 2048], vec![]),
+            OperationType::ReadDir => (0, 0, 0, 0, vec![], vec![0; 2048]),
             OperationType::OpenFile => (0, 0, 0, 0, vec![], vec![]),
             OperationType::ReadFile => {
                 let unwraped_meta_data =
@@ -691,14 +683,12 @@ where
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(status.into());
+                    return Err(status);
                 }
             }
             Err(e) => {
                 error!("forward request failed: {:?}", e);
-                return Err(EngineError::StdIo(std::io::Error::from(
-                    std::io::ErrorKind::NotConnected,
-                )));
+                return Err(CONNECTION_ERROR);
             }
         };
         Ok((
@@ -711,9 +701,9 @@ where
         ))
     }
 
-    pub fn create_dir_no_parent(&self, path: &str, mode: u32) -> Result<Vec<u8>, EngineError> {
+    pub fn create_dir_no_parent(&self, path: &str, mode: u32) -> Result<Vec<u8>, i32> {
         match self.file_locks.insert(path.to_owned(), HashMap::new()) {
-            Some(_) => Err(EngineError::Exist),
+            Some(_) => Err(libc::EEXIST),
             None => self.meta_engine.create_directory(path, mode),
         }
     }
@@ -724,11 +714,11 @@ where
         parent: &str,
         name: &str,
         mode: u32,
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<Vec<u8>, i32> {
         {
             let mut file_lock = self.lock_file_mut(parent)?;
             if file_lock.contains_key(name) {
-                return Err(EngineError::Exist); // this may indicate that the file is being created or deleted
+                return Err(libc::EEXIST); // this may indicate that the file is being created or deleted
             }
             file_lock.insert(name.to_owned(), 0);
         }
@@ -767,7 +757,7 @@ where
         }
     }
 
-    pub fn delete_dir_no_parent(&self, path: &str) -> Result<(), EngineError> {
+    pub fn delete_dir_no_parent(&self, path: &str) -> Result<(), i32> {
         match self.file_locks.get_mut(path) {
             Some(value) => {
                 self.meta_engine.delete_directory(path)?;
@@ -775,11 +765,11 @@ where
                 self.file_locks.remove(path);
                 Ok(())
             }
-            None => Err(EngineError::NoEntry),
+            None => Err(libc::ENOENT),
         }
     }
 
-    pub fn delete_dir_no_parent_force(&self, path: &str) -> Result<(), EngineError> {
+    pub fn delete_dir_no_parent_force(&self, path: &str) -> Result<(), i32> {
         match self.file_locks.get_mut(path) {
             Some(value) => {
                 self.meta_engine.delete_directory_force(path)?;
@@ -787,7 +777,7 @@ where
                 self.file_locks.remove(path);
                 Ok(())
             }
-            None => Err(EngineError::NoEntry),
+            None => Err(libc::ENOENT),
         }
     }
 
@@ -796,11 +786,11 @@ where
         send_meta_data: Vec<u8>,
         parent: &str,
         name: &str,
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         {
             let mut file_lock = self.lock_file_mut(parent)?;
             if file_lock.contains_key(name) {
-                return Err(EngineError::NoEntry); // this may indicate that the file is being created or deleted
+                return Err(libc::ENOENT); // this may indicate that the file is being created or deleted
             }
             file_lock.insert(name.to_owned(), 0);
         }
@@ -845,12 +835,7 @@ where
         }
     }
 
-    pub async fn read_dir(
-        &self,
-        path: &str,
-        size: u32,
-        offset: i64,
-    ) -> Result<Vec<u8>, EngineError> {
+    pub async fn read_dir(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         let _file_lock = self.lock_file(path)?;
         self.meta_engine.read_directory(path, size, offset)
     }
@@ -861,9 +846,9 @@ where
         oflag: i32,
         umask: u32,
         mode: u32,
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<Vec<u8>, i32> {
         match self.file_locks.insert(path.to_owned(), HashMap::new()) {
-            Some(_) => Err(EngineError::Exist),
+            Some(_) => Err(libc::EEXIST),
             None => {
                 info!("local create file, path: {}", path);
                 self.storage_engine.create_file(path, oflag, umask, mode)
@@ -871,7 +856,7 @@ where
         }
     }
 
-    pub async fn call_get_attr_remote_or_local(&self, path: &str) -> Result<Vec<u8>, EngineError> {
+    pub async fn call_get_attr_remote_or_local(&self, path: &str) -> Result<Vec<u8>, i32> {
         let (address, _lock) = self.get_server_address(path);
         if self.address == address {
             info!("local get attr, path: {}", path);
@@ -900,14 +885,14 @@ where
             {
                 Ok(_) => {
                     if status != 0 {
-                        Err(status.into())
+                        Err(status)
                     } else {
                         Ok(recv_meta_data)
                     }
                 }
                 Err(e) => {
                     error!("Get attr failed: {} ,{:?}", path, e);
-                    Err(EngineError::IO)
+                    Err(CONNECTION_ERROR)
                 }
             }
         }
@@ -921,18 +906,18 @@ where
         oflag: i32,
         umask: u32,
         mode: u32,
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<Vec<u8>, i32> {
         let path = get_full_path(parent, name);
         {
             let mut file_lock = self.lock_file_mut(parent)?;
             if file_lock.contains_key(name) {
                 if (oflag & O_EXCL) != 0 {
-                    return Err(EngineError::Exist); // this may indicate that the file is being created or deleted
+                    return Err(libc::EEXIST); // this may indicate that the file is being created or deleted
                 } else {
                     drop(file_lock);
                     match self.call_get_attr_remote_or_local(&path).await {
                         Ok(attr) => return Ok(attr),
-                        Err(EngineError::NoEntry) => {
+                        Err(libc::ENOENT) => {
                             return Ok(bincode::serialize(&FileAttrSimple::new(
                                 FileTypeSimple::RegularFile,
                             ))
@@ -955,9 +940,9 @@ where
             );
             match self.create_file_no_parent(&path, oflag, umask, mode) {
                 Ok(attr) => Ok(attr),
-                Err(EngineError::Exist) => {
+                Err(libc::EEXIST) => {
                     if (oflag & O_EXCL) != 0 {
-                        return Err(EngineError::Exist); // this may indicate that the file is being created or deleted
+                        return Err(libc::EEXIST); // this may indicate that the file is being created or deleted
                     } else {
                         return self.call_get_attr_remote_or_local(&path).await;
                     }
@@ -995,7 +980,7 @@ where
         }
     }
 
-    pub fn delete_file_no_parent(&self, path: &str) -> Result<(), EngineError> {
+    pub fn delete_file_no_parent(&self, path: &str) -> Result<(), i32> {
         match self.file_locks.get_mut(path) {
             Some(value) => {
                 self.storage_engine.delete_file(path)?;
@@ -1003,7 +988,7 @@ where
                 self.file_locks.remove(path);
                 Ok(())
             }
-            None => Err(EngineError::NoEntry),
+            None => Err(libc::ENOENT),
         }
     }
 
@@ -1012,11 +997,11 @@ where
         send_meta_data: Vec<u8>,
         parent: &str,
         name: &str,
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         {
             let mut file_lock = self.lock_file_mut(parent)?;
             if file_lock.contains_key(name) {
-                return Err(EngineError::NoEntry); // this may indicate that the file is being created or deleted
+                return Err(libc::ENOENT); // this may indicate that the file is being created or deleted
             }
             file_lock.insert(name.to_owned(), 0);
         }
@@ -1060,38 +1045,28 @@ where
         }
     }
 
-    pub async fn truncate_file(&self, path: &str, length: i64) -> Result<(), EngineError> {
+    pub async fn truncate_file(&self, path: &str, length: i64) -> Result<(), i32> {
         // a temporary implementation
         let _file_lock = self.lock_file(path)?;
         self.storage_engine.truncate_file(path, length)
     }
 
-    pub async fn read_file(
-        &self,
-        path: &str,
-        size: u32,
-        offset: i64,
-    ) -> Result<Vec<u8>, EngineError> {
+    pub async fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         let _file_lock = self.lock_file(path)?;
         self.storage_engine.read_file(path, size, offset)
     }
 
-    pub async fn write_file(
-        &self,
-        path: &str,
-        data: &[u8],
-        offset: i64,
-    ) -> Result<usize, EngineError> {
+    pub async fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, i32> {
         let _file_lock = self.lock_file(path)?;
         self.storage_engine.write_file(path, data, offset)
     }
 
-    pub async fn get_file_attr(&self, path: &str) -> Result<Vec<u8>, EngineError> {
+    pub async fn get_file_attr(&self, path: &str) -> Result<Vec<u8>, i32> {
         let _file_lock = self.lock_file(path)?;
         self.meta_engine.get_file_attr_raw(path)
     }
 
-    pub async fn open_file(&self, path: &str, flag: i32, mode: u32) -> Result<(), EngineError> {
+    pub async fn open_file(&self, path: &str, flag: i32, mode: u32) -> Result<(), i32> {
         if (flag & O_CREAT) != 0 {
             todo!("create file should be converted at client side")
         } else if (flag & O_DIRECTORY) != 0 {
@@ -1107,7 +1082,7 @@ where
             Ok(lock) => lock,
             Err(e) => {
                 error!("directory add entry, lock file failed: {:?}", e);
-                return e.into();
+                return e;
             }
         };
         match self
@@ -1120,24 +1095,16 @@ where
             }
             Err(value) => {
                 debug!("{} Directory Add Entry error: {:?}", self.address, value);
-                value.into()
+                value
             }
         }
     }
 
-    pub async fn check_file(
-        &self,
-        path: &str,
-        file_attr: FileAttrSimple,
-    ) -> Result<(), EngineError> {
+    pub async fn check_file(&self, path: &str, file_attr: FileAttrSimple) -> Result<(), i32> {
         self.meta_engine.complete_transfer_file(path, file_attr)
     }
 
-    pub async fn check_dir(
-        &self,
-        path: &str,
-        file_attr: FileAttrSimple,
-    ) -> Result<(), EngineError> {
+    pub async fn check_dir(&self, path: &str, file_attr: FileAttrSimple) -> Result<(), i32> {
         self.meta_engine.complete_transfer_file(path, file_attr)
     }
 
@@ -1151,7 +1118,7 @@ where
             Ok(lock) => lock,
             Err(e) => {
                 error!("directory delete entry, lock file failed: {:?}", e);
-                return e.into();
+                return e;
             }
         };
         match self
@@ -1161,16 +1128,16 @@ where
             Ok(()) => 0,
             Err(value) => {
                 debug!("{} Directory Delete Entry error: {:?}", self.address, value);
-                value.into()
+                value
             }
         }
     }
 
-    pub fn create_volume(&self, name: &str) -> Result<(), EngineError> {
+    pub fn create_volume(&self, name: &str) -> Result<(), i32> {
         let _vlock = {
             let _lock = self.volume_lock.lock();
             if self.volumes.contains_key(name) {
-                return Err(EngineError::Exist);
+                return Err(libc::EEXIST);
             }
             self.volumes.insert(
                 name.to_owned(),

@@ -8,7 +8,6 @@ use std::{
 
 use crate::rpc::protocol::REQUEST_POOL_SIZE;
 use kanal;
-use log::debug;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     time::timeout,
@@ -110,7 +109,7 @@ impl CallbackPool {
         &self,
         rsp_meta_data: &mut [u8],
         rsp_data: &mut [u8],
-    ) -> Result<(u32, u32), Box<dyn std::error::Error>> {
+    ) -> Result<(u32, u32), String> {
         match self.ids.1.clone().recv().await {
             Ok(id) => {
                 let callback =
@@ -125,19 +124,14 @@ impl CallbackPool {
                 self.callback_status[id as usize].store(1, Ordering::Release);
                 Ok((batch + 1, id))
             }
-            Err(e) => Err(format!("register callback failed: {}", e).into()),
+            Err(e) => Err(format!("register callback failed: {}", e)),
         }
     }
 
-    pub fn lock_if_not_timeout(
-        &self,
-        batch: u32,
-        id: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn lock_if_not_timeout(&self, batch: u32, id: u32) -> Result<(), String> {
         let now_batch = self.batch[id as usize].load(std::sync::atomic::Ordering::Acquire);
         if batch != now_batch {
-            debug!("uid not match: {}, {}", batch, now_batch);
-            return Err("already timed out")?;
+            return Err("wrong batch, already timed out".into());
         }
         if self.callback_status[id as usize]
             .compare_exchange(
@@ -150,35 +144,21 @@ impl CallbackPool {
         {
             Ok(())
         } else {
-            Err("lock failed, already timed out")?
+            Err("lock failed, already timed out".into())
         }
     }
 
-    pub fn get_data_ref(
-        &self,
-        id: u32,
-        data_length: usize,
-    ) -> Result<&mut [u8], Box<dyn std::error::Error>> {
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_data_ref(&self, id: u32, data_length: usize) -> &mut [u8] {
         let callback = self.callbacks[id as usize];
-        unsafe {
-            Ok(std::slice::from_raw_parts_mut(
-                (*callback).data as *mut u8,
-                data_length,
-            ))
-        }
+        unsafe { std::slice::from_raw_parts_mut((*callback).data as *mut u8, data_length) }
     }
 
-    pub fn get_meta_data_ref(
-        &self,
-        id: u32,
-        meta_data_length: usize,
-    ) -> Result<&mut [u8], Box<dyn std::error::Error>> {
+    #[allow(clippy::mut_from_ref)]
+    pub fn get_meta_data_ref(&self, id: u32, meta_data_length: usize) -> &mut [u8] {
         let callback = self.callbacks[id as usize];
         unsafe {
-            Ok(std::slice::from_raw_parts_mut(
-                (*callback).meta_data as *mut u8,
-                meta_data_length,
-            ))
+            std::slice::from_raw_parts_mut((*callback).meta_data as *mut u8, meta_data_length)
         }
     }
 
@@ -189,7 +169,7 @@ impl CallbackPool {
         flags: u32,
         meta_data_length: usize,
         data_lenght: usize,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         {
             let callback = unsafe { &mut *(self.callbacks[id as usize] as *mut OperationCallback) };
             callback.request_status = status;
@@ -197,17 +177,15 @@ impl CallbackPool {
             callback.meta_data_length = meta_data_length;
             callback.data_length = data_lenght;
         }
-        self.senders[id as usize].send(()).await?;
-        debug!("Response success");
-        Ok(())
+        match self.senders[id as usize].send(()).await {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("send callback failed: {}", e)),
+        }
     }
 
     // wait_for_callback
     // return: (status, flags, meta_data_length, data_length)
-    pub async fn wait_for_callback(
-        &self,
-        id: u32,
-    ) -> Result<(i32, u32, usize, usize), Box<dyn std::error::Error>> {
+    pub async fn wait_for_callback(&self, id: u32) -> Result<(i32, u32, usize, usize), String> {
         let receiver =
             unsafe { (*(self.callbacks[id as usize] as *mut OperationCallback)).get_receiver() };
         let result = timeout(CLIENT_REQUEST_TIMEOUT, receiver.recv()).await;
@@ -251,13 +229,15 @@ impl CallbackPool {
                         callback.data_length,
                     )
                 };
-                self.ids.0.clone().send(id).await?;
-                Ok((status, flags, meta_data_length, data_length))
+                match self.ids.0.clone().send(id).await {
+                    Ok(_) => Ok((status, flags, meta_data_length, data_length)),
+                    Err(e) => Err(format!("send callback failed: {}", e)),
+                }
             }
-            false => {
-                self.ids.0.clone().send(id).await?;
-                Err(format!("wait_for_callback timeout, id: {}", id))?
-            }
+            false => match self.ids.0.clone().send(id).await {
+                Ok(_) => Err(format!("wait_for_callback timeout, id: {}", id)),
+                Err(e) => Err(format!("send callback failed: {}", e)),
+            },
         }
     }
 }
@@ -295,12 +275,10 @@ mod tests {
             .register_callback(&mut recv_meta_data, &mut recv_data)
             .await;
         match result {
-            Ok((batch, id)) => match pool.get_meta_data_ref(id, recv_meta_data.len()) {
-                Ok(recv_meta_data_ref) => {
-                    assert_eq!(recv_meta_data_ref, &mut recv_meta_data);
-                }
-                Err(_) => assert!(false),
-            },
+            Ok((batch, id)) => assert_eq!(
+                pool.get_meta_data_ref(id, recv_meta_data.len()),
+                &mut recv_meta_data
+            ),
             Err(_) => assert!(false),
         }
     }
@@ -315,12 +293,7 @@ mod tests {
             .register_callback(&mut recv_meta_data, &mut recv_data)
             .await;
         match result {
-            Ok((batch, id)) => match pool.get_data_ref(id, recv_data.len()) {
-                Ok(recv_data_ref) => {
-                    assert_eq!(recv_data_ref, &mut recv_data);
-                }
-                Err(_) => assert!(false),
-            },
+            Ok((batch, id)) => assert_eq!(pool.get_data_ref(id, recv_data.len()), &mut recv_data),
             Err(_) => assert!(false),
         }
     }

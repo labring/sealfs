@@ -5,7 +5,8 @@
 use sealfs::client;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let result = client::run_command();
-    println!("client stopped. success = {:?}", result.is_ok());
+    if let Err(e) = client::run_command() {
+        println!("Error: {}", e);
+    }
     Ok(())
 }

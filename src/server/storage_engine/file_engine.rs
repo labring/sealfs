@@ -2,22 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::common::errors::status_to_string;
 use crate::common::serialization::FileAttrSimple;
 use crate::common::{cache::LRUCache, serialization::FileTypeSimple};
-
-use super::EngineError;
 
 use super::meta_engine::MetaEngine;
 use super::StorageEngine;
 use log::{debug, error};
+use nix::errno::errno;
 use nix::{
-    fcntl::{self, OFlag},
-    sys::{
-        stat::Mode,
-        uio::{pread, pwrite},
-    },
+    fcntl::OFlag,
+    sys::stat::Mode,
     unistd::{self, mkdir},
 };
+use std::ffi::CString;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -68,9 +66,9 @@ impl StorageEngine for FileEngine {
         self.fsck().unwrap();
     }
 
-    fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
+    fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         if self.meta_engine.is_dir(path)? {
-            return Err(EngineError::IsDir);
+            return Err(libc::EISDIR);
         }
 
         let local_file_name = generate_local_file_name(&self.root, path);
@@ -84,25 +82,39 @@ impl StorageEngine for FileEngine {
         let fd = match self.cache.get(local_file_name.as_bytes()) {
             Some(value) => value.fd,
             None => {
-                let fd = match fcntl::open(local_file_name.as_str(), oflag, mode) {
-                    Ok(fd) => fd,
-                    Err(err) => {
-                        error!("open file error: {:?}", err);
-                        return Err(EngineError::IO);
-                    }
+                let fd = unsafe {
+                    libc::open(
+                        CString::new(local_file_name.clone())
+                            .unwrap()
+                            .as_c_str()
+                            .as_ptr() as *const i8,
+                        oflag.bits(),
+                        mode.bits(),
+                    )
                 };
+                if fd < 0 {
+                    let f_errno = errno();
+                    error!("read file error: {:?}", status_to_string(f_errno));
+                    return Err(f_errno);
+                }
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
                 fd
             }
         };
         let mut data = vec![0; size as usize];
-        let real_size = match pread(fd, data.as_mut_slice(), offset) {
-            Ok(size) => size,
-            Err(err) => {
-                error!("read file error: {:?}", err);
-                return Err(EngineError::IO);
-            }
+        let real_size = unsafe {
+            libc::pread(
+                fd,
+                data.as_mut_slice().as_mut_ptr() as *mut libc::c_void,
+                size as usize,
+                offset,
+            )
+        };
+        if real_size < 0 {
+            let f_errno = errno();
+            error!("read file error: {:?}", status_to_string(f_errno));
+            return Err(f_errno);
         };
         debug!(
             "read_file path: {}, size: {}, offset: {}, data: {:?}",
@@ -111,16 +123,16 @@ impl StorageEngine for FileEngine {
 
         // this is a temporary solution, which results in an extra memory copy.
         // TODO: optimize it by return the hole data vector and the real size both.
-        Ok(data[..real_size].to_vec())
+        Ok(data[..real_size as usize].to_vec())
     }
 
-    fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, EngineError> {
+    fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, i32> {
         if self.meta_engine.is_dir(path)? {
-            return Err(EngineError::IsDir);
+            return Err(libc::EISDIR);
         }
 
         let local_file_name = generate_local_file_name(&self.root, path);
-        let oflags = OFlag::O_RDWR;
+        let oflag = OFlag::O_RDWR;
         let mode = Mode::S_IRUSR
             | Mode::S_IWUSR
             | Mode::S_IRGRP
@@ -130,25 +142,34 @@ impl StorageEngine for FileEngine {
         let fd = match self.cache.get(local_file_name.as_bytes()) {
             Some(value) => value.fd,
             None => {
-                let fd = match fcntl::open(local_file_name.as_str(), oflags, mode) {
-                    Ok(fd) => fd,
-                    Err(err) => {
-                        error!("open file error: {:?}", err);
-                        return Err(EngineError::IO);
-                    }
+                let fd = unsafe {
+                    libc::open(
+                        CString::new(local_file_name.clone())
+                            .unwrap()
+                            .as_c_str()
+                            .as_ptr() as *const i8,
+                        oflag.bits(),
+                        mode.bits(),
+                    )
                 };
+                if fd < 0 {
+                    let f_errno = errno();
+                    error!("read file error: {:?}", status_to_string(f_errno));
+                    return Err(f_errno);
+                }
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
                 fd
             }
         };
-        let write_size = match pwrite(fd, data, offset) {
-            Ok(size) => size,
-            Err(err) => {
-                error!("write file error: {:?}", err);
-                return Err(EngineError::IO);
-            }
-        };
+        let write_size =
+            unsafe { libc::pwrite(fd, data.as_ptr() as *const libc::c_void, data.len(), offset) };
+        if write_size < 0 {
+            let f_errno = errno();
+            error!("write file error: {:?}", status_to_string(f_errno));
+            return Err(f_errno);
+        }
+
         debug!(
             "write_file path: {}, write_size: {}, data_len: {}",
             path,
@@ -160,31 +181,30 @@ impl StorageEngine for FileEngine {
         file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
         self.meta_engine.put_file_attr(path, file_attr)?;
 
-        Ok(write_size)
+        Ok(write_size as usize)
     }
 
-    fn create_file(
-        &self,
-        path: &str,
-        _oflag: i32,
-        _umask: u32,
-        mode: u32,
-    ) -> Result<Vec<u8>, EngineError> {
+    fn create_file(&self, path: &str, _oflag: i32, _umask: u32, mode: u32) -> Result<Vec<u8>, i32> {
         let local_file_name = generate_local_file_name(&self.root, path);
+        let oflag = OFlag::O_CREAT | OFlag::O_RDWR;
         match self.cache.get(local_file_name.as_bytes()) {
             Some(_) => {}
             None => {
-                let fd = match fcntl::open(
-                    local_file_name.as_str(),
-                    OFlag::from_bits_truncate(OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits()),
-                    Mode::from_bits_truncate(mode),
-                ) {
-                    Ok(fd) => fd,
-                    Err(err) => {
-                        error!("open file error: {:?}", err);
-                        return Err(EngineError::IO);
-                    }
+                let fd = unsafe {
+                    libc::open(
+                        CString::new(local_file_name.clone())
+                            .unwrap()
+                            .as_c_str()
+                            .as_ptr() as *const i8,
+                        oflag.bits(),
+                        mode,
+                    )
                 };
+                if fd < 0 {
+                    let f_errno = errno();
+                    error!("read file error: {:?}", status_to_string(f_errno));
+                    return Err(f_errno);
+                }
                 self.cache
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
             }
@@ -194,64 +214,83 @@ impl StorageEngine for FileEngine {
         self.meta_engine.put_file_attr(path, attr)
     }
 
-    fn delete_file(&self, path: &str) -> Result<(), EngineError> {
+    fn delete_file(&self, path: &str) -> Result<(), i32> {
         let local_file_name = generate_local_file_name(&self.root, path);
         self.cache.remove(local_file_name.as_bytes());
-        match unistd::unlink(local_file_name.as_str()) {
-            Ok(_) => {}
-            Err(err) => {
-                error!("delete file error: {:?}", err);
-                return Err(EngineError::IO);
-            }
+        let status = unsafe {
+            libc::unlink(
+                CString::new(local_file_name.clone())
+                    .unwrap()
+                    .as_c_str()
+                    .as_ptr() as *const i8,
+            )
+        };
+        if status < 0 {
+            let f_errno = errno();
+            error!("delete file error: {:?}", status_to_string(f_errno));
+            return Err(f_errno);
         };
         self.meta_engine.delete_file_attr(path)?;
         self.meta_engine.delete_file(&local_file_name)?;
         Ok(())
     }
 
-    fn truncate_file(&self, path: &str, length: i64) -> Result<(), EngineError> {
+    fn truncate_file(&self, path: &str, length: i64) -> Result<(), i32> {
         let local_file_name = generate_local_file_name(&self.root, path);
-        match unistd::truncate(local_file_name.as_str(), length) {
-            Ok(_) => {}
-            Err(err) => {
-                error!("truncate file error: {:?}", err);
-                return Err(EngineError::IO);
-            }
+        let status = unsafe {
+            libc::truncate(
+                CString::new(local_file_name).unwrap().as_c_str().as_ptr() as *const i8,
+                length,
+            )
         };
+        if status < 0 {
+            let f_errno = errno();
+            error!("truncate file error: {:?}", status_to_string(f_errno));
+            return Err(f_errno);
+        };
+        // TODO: update file attr
         Ok(())
     }
 
-    fn open_file(&self, path: &str, _flags: i32, mode: u32) -> Result<(), EngineError> {
+    fn open_file(&self, path: &str, _flags: i32, mode: u32) -> Result<(), i32> {
         let local_file_name = generate_local_file_name(&self.root, path);
-        match fcntl::open(
-            local_file_name.as_str(),
-            OFlag::from_bits_truncate(OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits()),
-            Mode::from_bits_truncate(mode),
-        ) {
-            Ok(fd) => {
-                self.cache
-                    .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
-            }
-            Err(err) => {
-                error!("open file error: {:?}", err);
-                return Err(EngineError::IO);
-            }
+
+        let oflag = OFlag::O_RDWR;
+        let fd = unsafe {
+            libc::open(
+                CString::new(local_file_name.clone())
+                    .unwrap()
+                    .as_c_str()
+                    .as_ptr() as *const i8,
+                oflag.bits(),
+                mode,
+            )
         };
+        if fd < 0 {
+            let f_errno = errno();
+            error!("read file error: {:?}", status_to_string(f_errno));
+            return Err(f_errno);
+        }
+        self.cache
+            .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
         Ok(())
     }
 }
 
 impl FileEngine {
-    fn fsck(&self) -> Result<(), EngineError> {
+    fn fsck(&self) -> Result<(), i32> {
         let entries = match std::fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(err) => {
                 error!("read dir error: {:?}", err);
-                return Err(EngineError::IO);
+                return Err(libc::EIO); // I'm not sure how to replace read_dir by libc, so I can't translate the error code
             }
         };
         for entry in entries {
-            let entry = entry?;
+            let entry = entry.map_err(|err| {
+                error!("read dir error: {:?}", err);
+                libc::EIO
+            })?;
             let file_name = format!("{}/{}", self.root, entry.file_name().to_str().unwrap());
             if self.meta_engine.check_file(&file_name) {
                 continue;
@@ -333,14 +372,15 @@ mod tests {
             let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
+            meta_engine.create_directory("test1", 0o777).unwrap();
             let mode: mode_t = 0o777;
             let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
-            engine.create_file("/a.txt", oflag, 0, mode).unwrap();
-            let file_attr = meta_engine.get_file_attr("/a.txt").unwrap();
+            engine.create_file("test1/a.txt", oflag, 0, mode).unwrap();
+            let file_attr = meta_engine.get_file_attr("test1/a.txt").unwrap();
             assert_eq!(file_attr.kind, 4); // 4 is RegularFile
-            let local_file_name = generate_local_file_name(root, "/a.txt");
+            let local_file_name = generate_local_file_name(root, "test1/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
-            engine.delete_file("/a.txt").unwrap();
+            engine.delete_file("test1/a.txt").unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
 
@@ -348,16 +388,19 @@ mod tests {
             let meta_engine = Arc::new(MetaEngine::new(db_path, 128 << 20, 128 * 1024 * 1024));
             let engine = FileEngine::new(root, meta_engine.clone());
             engine.init();
+            meta_engine.create_directory("test1", 0o777).unwrap();
             let mode: mode_t = 0o777;
             let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
-            meta_engine.create_directory("/test_a", mode).unwrap();
-            meta_engine.create_directory("/test_a/a", mode).unwrap();
-            engine
-                .create_file("/test_a/a/a.txt", oflag, 0, mode)
+            meta_engine.create_directory("test1/test_a", mode).unwrap();
+            meta_engine
+                .create_directory("test1/test_a/a", mode)
                 .unwrap();
-            let local_file_name = generate_local_file_name(root, "/test_a/a/a.txt");
+            engine
+                .create_file("test1/test_a/a/a.txt", oflag, 0, mode)
+                .unwrap();
+            let local_file_name = generate_local_file_name(root, "test1/test_a/a/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
-            engine.delete_file("/test_a/a/a.txt").unwrap();
+            engine.delete_file("test1/test_a/a/a.txt").unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
@@ -379,13 +422,13 @@ mod tests {
             engine.init();
             let mode: mode_t = 0o777;
             let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
-            engine.create_file("/b.txt", oflag, 0, mode).unwrap();
+            engine.create_file("test1/b.txt", oflag, 0, mode).unwrap();
             engine
-                .write_file("/b.txt", "hello world".as_bytes(), 0)
+                .write_file("test1/b.txt", "hello world".as_bytes(), 0)
                 .unwrap();
-            let value = engine.read_file("/b.txt", 11, 0).unwrap();
+            let value = engine.read_file("test1/b.txt", 11, 0).unwrap();
             assert_eq!("hello world", String::from_utf8(value).unwrap());
-            let file_attr = meta_engine.get_file_attr("/b.txt").unwrap();
+            let file_attr = meta_engine.get_file_attr("test1/b.txt").unwrap();
             assert_eq!(file_attr.size, 11);
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();

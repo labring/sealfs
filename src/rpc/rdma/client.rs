@@ -145,39 +145,26 @@ pub async fn parse_response(conn: Arc<Conn>, pool: Arc<CallbackPool>) {
             continue;
         }
         debug!("parse_response: lock success");
-        let meta_data_result = {
-            match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
-                Ok(meta_data_result) => Ok(meta_data_result),
-                Err(_) => Err("meta_data_result error"),
-            }
-        };
-        let data_result = {
-            match pool.get_data_ref(id, header.data_length as usize) {
-                Ok(data_result) => Ok(data_result),
-                Err(_) => Err("data_result error"),
-            }
-        };
 
-        if let (Ok(data), Ok(meta_data)) = (data_result, meta_data_result) {
-            parse_response_body(response, meta_data, data);
-            conn.release(response).await;
-            if let Err(e) = pool
-                .response(
-                    id,
-                    header.status,
-                    header.flags,
-                    header.meta_data_length as usize,
-                    header.data_length as usize,
-                )
-                .await
-            {
-                error!("Error writing response back: {}", e);
-                break;
-            };
-        } else {
-            error!("Error getting data or meta_data");
+        parse_response_body(
+            response,
+            pool.get_meta_data_ref(id, header.meta_data_length as usize),
+            pool.get_data_ref(id, header.data_length as usize),
+        );
+        conn.release(response).await;
+        if let Err(e) = pool
+            .response(
+                id,
+                header.status,
+                header.flags,
+                header.meta_data_length as usize,
+                header.data_length as usize,
+            )
+            .await
+        {
+            error!("Error writing response back: {}", e);
             break;
-        }
+        };
         // todo: realease the buf in response
     }
 }

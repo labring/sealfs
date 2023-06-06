@@ -9,8 +9,11 @@ use rocksdb::BlockBasedOptions;
 use rocksdb::{Cache, IteratorMode, Options, DB};
 
 use crate::{
-    common::serialization::{FileAttrSimple, FileTypeSimple},
-    server::{path_split, EngineError},
+    common::{
+        errors::{DATABASE_ERROR, SERIALIZATION_ERROR},
+        serialization::{FileAttrSimple, FileTypeSimple},
+    },
+    server::path_split,
 };
 
 #[cfg(feature = "disk-db")]
@@ -112,7 +115,7 @@ impl MetaEngine {
 
     pub fn init(&self) {}
 
-    pub fn get_file_map(&self) -> Result<Vec<String>, EngineError> {
+    pub fn get_file_map(&self) -> Result<Vec<String>, i32> {
         let mut file_map = Vec::new();
         self.file_attr_db
             .db
@@ -125,41 +128,41 @@ impl MetaEngine {
         Ok(file_map)
     }
 
-    pub fn put_file(&self, loacl_file_name: &str, path: &str) -> Result<(), EngineError> {
+    pub fn put_file(&self, loacl_file_name: &str, path: &str) -> Result<(), i32> {
         match self.file_db.db.put(loacl_file_name, path) {
             Ok(_) => Ok(()),
             Err(e) => {
                 error!("put file error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
-    pub fn delete_file(&self, local_file_name: &str) -> Result<(), EngineError> {
+    pub fn delete_file(&self, local_file_name: &str) -> Result<(), i32> {
         match self.file_db.db.delete(local_file_name) {
             Ok(_) => Ok(()),
             Err(e) => {
                 error!("delete file error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
-    pub fn is_exist(&self, path: &str) -> Result<bool, EngineError> {
+    pub fn is_exist(&self, path: &str) -> Result<bool, i32> {
         match self.file_attr_db.db.get(path.as_bytes()) {
             Ok(Some(_value)) => Ok(true),
             Ok(None) => Ok(false),
             Err(e) => {
                 error!("is exist error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
     // this function does not need to be thread safe
-    pub fn create_directory(&self, path: &str, _mode: u32) -> Result<Vec<u8>, EngineError> {
+    pub fn create_directory(&self, path: &str, _mode: u32) -> Result<Vec<u8>, i32> {
         match self.file_indexs.get_mut(path) {
-            Some(_) => Err(EngineError::Exist),
+            Some(_) => Err(libc::EEXIST),
             None => {
                 self.file_indexs.insert(path.to_owned(), 2);
                 let attr = FileAttrSimple::new(FileTypeSimple::Directory);
@@ -169,53 +172,48 @@ impl MetaEngine {
     }
 
     // this function does not need to be thread safe
-    pub fn delete_directory(&self, path: &str) -> Result<(), EngineError> {
+    pub fn delete_directory(&self, path: &str) -> Result<(), i32> {
         match self.file_indexs.get_mut(path) {
             Some(value) => {
                 if *value > 2 {
-                    Err(EngineError::NotEmpty)
+                    Err(libc::ENOTEMPTY)
                 } else {
                     drop(value);
                     self.file_indexs.remove(path).unwrap();
                     self.delete_file_attr(path)
                 }
             }
-            None => Err(EngineError::NoEntry),
+            None => Err(libc::ENOENT),
         }
     }
 
-    pub fn delete_directory_force(&self, path: &str) -> Result<(), EngineError> {
+    pub fn delete_directory_force(&self, path: &str) -> Result<(), i32> {
         if self.file_indexs.remove(path).is_none() {
-            return Err(EngineError::NoEntry);
+            return Err(libc::ENOENT);
         }
         self.delete_file_attr(path)
     }
 
-    pub fn read_directory(
-        &self,
-        path: &str,
-        size: u32,
-        offset: i64,
-    ) -> Result<Vec<u8>, EngineError> {
+    pub fn read_directory(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         match self.file_attr_db.db.get(path.as_bytes()) {
             Ok(Some(value)) => {
                 match bincode::deserialize::<FileAttrSimple>(&value) {
                     Ok(file_attr) => {
                         // fuser::FileType::Directory
                         if file_attr.kind != 3 {
-                            return Err(EngineError::NotDir);
+                            return Err(libc::ENOTDIR);
                         }
                     }
                     Err(e) => {
                         error!("read directory error: {}", e);
-                        return Err(EngineError::IO);
+                        return Err(SERIALIZATION_ERROR);
                     }
                 }
             }
-            Ok(None) => return Err(EngineError::NoEntry),
+            Ok(None) => return Err(libc::ENOENT),
             Err(e) => {
                 error!("read directory error: {}", e);
-                return Err(EngineError::IO);
+                return Err(DATABASE_ERROR);
             }
         }
 
@@ -226,7 +224,7 @@ impl MetaEngine {
         let mut index_num = match self.file_indexs.get(path) {
             Some(value) => *value,
             None => {
-                return Err(EngineError::NoEntry);
+                return Err(libc::ENOENT);
             }
         };
 
@@ -258,7 +256,7 @@ impl MetaEngine {
                             path,
                             String::from_utf8(key.to_vec()).unwrap()
                         );
-                        return Err(EngineError::IO);
+                        return Err(SERIALIZATION_ERROR);
                     }
                 }
             };
@@ -280,7 +278,7 @@ impl MetaEngine {
         parent_dir: &str,
         file_name: &str,
         file_type: u8,
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         match self.file_indexs.get_mut(parent_dir) {
             Some(mut value) => {
                 match self.dir_db.db.put(
@@ -290,15 +288,15 @@ impl MetaEngine {
                     Ok(_) => {}
                     Err(e) => {
                         error!("directory add entry error: {}", e);
-                        return Err(EngineError::IO);
+                        return Err(DATABASE_ERROR);
                     }
                 }
                 *value += 1;
                 Ok(())
             }
             None => {
-                error!("directory add entry error: {}", EngineError::NoEntry);
-                Err(EngineError::NoEntry)
+                error!("directory add entry error: {}", libc::ENOENT);
+                Err(libc::ENOENT)
             }
         }
     }
@@ -308,7 +306,7 @@ impl MetaEngine {
         parent_dir: &str,
         file_name: &str,
         file_type: u8,
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         match self.file_indexs.get_mut(parent_dir) {
             Some(mut value) => {
                 match self.dir_db.db.delete(format!(
@@ -318,20 +316,20 @@ impl MetaEngine {
                     Ok(_) => {}
                     Err(e) => {
                         error!("directory delete entry error: {}", e);
-                        return Err(EngineError::IO);
+                        return Err(DATABASE_ERROR);
                     }
                 }
                 *value -= 1;
                 Ok(())
             }
             None => {
-                error!("directory delete entry error: {}", EngineError::NoEntry);
-                Err(EngineError::NoEntry)
+                error!("directory delete entry error: {}", libc::ENOENT);
+                Err(libc::ENOENT)
             }
         }
     }
 
-    pub fn delete_from_parent(&self, path: &str, file_type: u8) -> Result<(), EngineError> {
+    pub fn delete_from_parent(&self, path: &str, file_type: u8) -> Result<(), i32> {
         let (parent, name) = path_split(path).unwrap();
         match self.file_indexs.get_mut(&parent) {
             Some(mut value) => {
@@ -341,102 +339,87 @@ impl MetaEngine {
                     .delete(format!("{}-{}-{}", parent, name, file_type as char))
                 {
                     error!("delete from parent error: {}", e);
-                    return Err(EngineError::IO);
+                    return Err(DATABASE_ERROR);
                 }
                 *value -= 1;
                 Ok(())
             }
-            None => Err(EngineError::NoEntry),
+            None => Err(libc::ENOENT),
         }
     }
 
-    pub fn put_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, EngineError> {
-        let value = match bincode::serialize(&attr).map_err(|e| {
-            error!("put_file_attr error: {}", e);
-            EngineError::IO
-        }) {
+    pub fn put_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, i32> {
+        let value = match bincode::serialize(&attr) {
             Ok(v) => v,
             Err(e) => {
                 error!("put_file_attr error: {}", e);
-                return Err(EngineError::IO);
+                return Err(SERIALIZATION_ERROR);
             }
         };
         match self.file_attr_db.db.put(path, &value) {
             Ok(_) => Ok(value),
             Err(e) => {
                 error!("put_file_attr error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
-    pub fn get_file_attr(&self, path: &str) -> Result<FileAttrSimple, EngineError> {
+    pub fn get_file_attr(&self, path: &str) -> Result<FileAttrSimple, i32> {
         match self.file_attr_db.db.get(path) {
             Ok(Some(value)) => bincode::deserialize::<FileAttrSimple>(&value).map_err(|e| {
                 error!("get_file_attr error: {}", e);
-                EngineError::IO
+                SERIALIZATION_ERROR
             }),
-            Ok(None) => Err(EngineError::NoEntry),
+            Ok(None) => Err(libc::ENOENT),
             Err(e) => {
                 error!("get_file_attr error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
-    pub fn get_file_attr_raw(&self, path: &str) -> Result<Vec<u8>, EngineError> {
-        match self
-            .file_attr_db
-            .db
-            .get(path)
-            .map_err(|_e| EngineError::IO)
-            .map(|v| match v {
-                Some(v) => Ok(v),
-                None => Err(EngineError::NoEntry),
-            }) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("get_file_attr_raw error: {}", e);
-                Err(EngineError::IO)
-            }
-        }
-    }
-
-    pub fn complete_transfer_file(
-        &self,
-        path: &str,
-        file_attr: FileAttrSimple,
-    ) -> Result<(), EngineError> {
-        let value = match bincode::serialize(&file_attr).map_err(|e| {
-            error!("complete_transfer_file error: {}", e);
-            EngineError::IO
+    pub fn get_file_attr_raw(&self, path: &str) -> Result<Vec<u8>, i32> {
+        match self.file_attr_db.db.get(path).map(|v| match v {
+            Some(v) => Ok(v),
+            None => Err(libc::ENOENT),
         }) {
             Ok(v) => v,
             Err(e) => {
+                error!("get_file_attr_raw error: {}", e);
+                Err(DATABASE_ERROR)
+            }
+        }
+    }
+
+    pub fn complete_transfer_file(&self, path: &str, file_attr: FileAttrSimple) -> Result<(), i32> {
+        let value = match bincode::serialize(&file_attr) {
+            Ok(v) => v,
+            Err(e) => {
                 error!("complete_transfer_file error: {}", e);
-                return Err(EngineError::IO);
+                return Err(SERIALIZATION_ERROR);
             }
         };
         match self.file_attr_db.db.put(path, value) {
             Ok(_) => Ok(()),
             Err(e) => {
                 error!("complete_transfer_file error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
-    pub fn delete_file_attr(&self, path: &str) -> Result<(), EngineError> {
+    pub fn delete_file_attr(&self, path: &str) -> Result<(), i32> {
         match self.file_attr_db.db.delete(path.as_bytes()) {
             Ok(_) => Ok(()),
             Err(e) => {
                 error!("delete_file_attr error: {}", e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }
 
-    pub fn is_dir(&self, path: &str) -> Result<bool, EngineError> {
+    pub fn is_dir(&self, path: &str) -> Result<bool, i32> {
         match self.file_attr_db.db.get(path.as_bytes()) {
             Ok(Some(value)) => {
                 match bincode::deserialize::<FileAttrSimple>(&value) {
@@ -450,17 +433,17 @@ impl MetaEngine {
                     }
                     Err(e) => {
                         error!("deserialize error: {:?}", e);
-                        Err(EngineError::IO)
+                        Err(SERIALIZATION_ERROR)
                     }
                 }
             }
             Ok(None) => {
                 debug!("read_file path: {}, no entry", path);
-                Err(EngineError::NoEntry)
+                Err(libc::ENOENT)
             }
             Err(e) => {
                 error!("read_file path: {}, io error: {:?}", path, e);
-                Err(EngineError::IO)
+                Err(DATABASE_ERROR)
             }
         }
     }

@@ -109,7 +109,7 @@ impl Client {
         }
     }
 
-    pub async fn init(&'static self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn init(&'static self) -> Result<(), String> {
         debug!("temp init");
 
         self.inodes_reverse.insert(1, "/".to_string());
@@ -175,7 +175,7 @@ impl Client {
         }
     }
 
-    pub async fn get_cluster_status(&self) -> Result<i32, Box<dyn std::error::Error>> {
+    pub async fn get_cluster_status(&self) -> Result<i32, String> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -214,9 +214,7 @@ impl Client {
         }
     }
 
-    pub async fn get_hash_ring_info(
-        &self,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    pub async fn get_hash_ring_info(&self) -> Result<Vec<(String, usize)>, String> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -255,9 +253,7 @@ impl Client {
         }
     }
 
-    pub async fn get_new_hash_ring_info(
-        &self,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    pub async fn get_new_hash_ring_info(&self) -> Result<Vec<(String, usize)>, String> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 

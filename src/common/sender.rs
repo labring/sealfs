@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use log::error;
 
-use crate::{rpc::client::Client, server::EngineError};
+use crate::{common::errors::CONNECTION_ERROR, rpc::client::Client};
 
 use super::serialization::{
-    AddNodesSendMetaData, CreateVolumeSendMetaData, DeleteNodesSendMetaData,
+    AddNodesSendMetaData, ClusterStatus, CreateVolumeSendMetaData, DeleteNodesSendMetaData,
     GetClusterStatusRecvMetaData, GetHashRingInfoRecvMetaData, ManagerOperationType, OperationType,
 };
 
@@ -22,7 +22,7 @@ impl Sender {
         &self,
         manager_address: &str,
         new_servers_info: Vec<(String, usize)>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -52,11 +52,15 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(format!("get cluster status failed: status {}", status).into());
+                    Err(status)
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("add new servers failed: {}", e);
+                Err(CONNECTION_ERROR)
+            }
         }
     }
 
@@ -64,7 +68,7 @@ impl Sender {
         &self,
         manager_address: &str,
         deleted_servers_info: Vec<String>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -96,18 +100,19 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(format!("get cluster status failed: status {}", status).into());
+                    Err(status)
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("delete servers failed: {}", e);
+                Err(CONNECTION_ERROR)
+            }
         }
     }
 
-    pub async fn get_cluster_status(
-        &self,
-        manager_address: &str,
-    ) -> Result<i32, Box<dyn std::error::Error>> {
+    pub async fn get_cluster_status(&self, manager_address: &str) -> Result<ClusterStatus, i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -136,20 +141,24 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(format!("get cluster status failed: status {}", status).into());
+                    Err(status)
+                } else {
+                    let cluster_status_meta_data: GetClusterStatusRecvMetaData =
+                        bincode::deserialize(&recv_meta_data).unwrap();
+                    Ok(cluster_status_meta_data.status)
                 }
-                let cluster_status_meta_data: GetClusterStatusRecvMetaData =
-                    bincode::deserialize(&recv_meta_data).unwrap();
-                Ok(cluster_status_meta_data.status as i32)
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("get cluster status failed: {}", e);
+                Err(CONNECTION_ERROR)
+            }
         }
     }
 
     pub async fn get_hash_ring_info(
         &self,
         manager_address: &str,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<(String, usize)>, i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -178,20 +187,23 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(format!("get hash ring failed: status {}", status).into());
+                    return Err(status);
                 }
                 let hash_ring_meta_data: GetHashRingInfoRecvMetaData =
                     bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
                 Ok(hash_ring_meta_data.hash_ring_info)
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("get hash ring info failed: {}", e);
+                Err(CONNECTION_ERROR)
+            }
         }
     }
 
     pub async fn get_new_hash_ring_info(
         &self,
         manager_address: &str,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<(String, usize)>, i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -220,22 +232,20 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    return Err(format!("get new hash ring failed: status {}", status).into());
+                    return Err(status);
                 }
                 let hash_ring_meta_data: GetHashRingInfoRecvMetaData =
                     bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
                 Ok(hash_ring_meta_data.hash_ring_info)
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                error!("get new hash ring info failed: {}", e);
+                Err(CONNECTION_ERROR)
+            }
         }
     }
 
-    pub async fn create_volume(
-        &self,
-        address: &str,
-        name: &str,
-        size: u64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn create_volume(&self, address: &str, name: &str, size: u64) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -268,23 +278,18 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    error!("create volume failed: status {}", status);
-                    return Err(format!("create volume failed: status {}", status).into());
+                    return Err(status);
                 }
                 Ok(())
             }
             Err(e) => {
                 error!("create volume failed: {:?}", e);
-                Err(e)
+                Err(CONNECTION_ERROR)
             }
         }
     }
 
-    pub async fn init_volume(
-        &self,
-        address: &str,
-        name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn init_volume(&self, address: &str, name: &str) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -311,14 +316,13 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    error!("init volume failed: status {}", status);
-                    return Err(format!("init volume failed: status {}", status).into());
+                    return Err(status);
                 }
                 Ok(())
             }
             Err(e) => {
                 error!("init volume failed: {:?}", e);
-                Err(e)
+                Err(CONNECTION_ERROR)
             }
         }
     }
@@ -329,7 +333,7 @@ impl Sender {
         operation_type: OperationType,
         parent: &str,
         send_meta_data: &[u8],
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<Vec<u8>, i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -358,15 +362,14 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    error!("create file failed, status: {}", status);
-                    Err(EngineError::IO)
+                    Err(status)
                 } else {
                     Ok(recv_meta_data[..recv_meta_data_length].to_vec())
                 }
             }
             Err(e) => {
                 error!("create file failed with error: {}", e);
-                Err(EngineError::IO)
+                Err(CONNECTION_ERROR)
             }
         }
     }
@@ -377,7 +380,7 @@ impl Sender {
         operation_type: OperationType,
         parent: &str,
         send_meta_data: &[u8],
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
@@ -406,15 +409,14 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    error!("create file failed, status: {}", status);
-                    Err(EngineError::IO)
+                    Err(status)
                 } else {
                     Ok(())
                 }
             }
             Err(e) => {
                 error!("create file failed with error: {}", e);
-                Err(EngineError::IO)
+                Err(CONNECTION_ERROR)
             }
         }
     }
@@ -424,7 +426,7 @@ impl Sender {
         address: &str,
         path: &str,
         send_meta_data: &[u8],
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
             (0, 0, 0, 0);
         let result = self
@@ -447,16 +449,14 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    Err(status.into())
+                    Err(status)
                 } else {
                     Ok(())
                 }
             }
             e => {
                 error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                Err(EngineError::StdIo(std::io::Error::from(
-                    std::io::ErrorKind::NotConnected,
-                )))
+                Err(CONNECTION_ERROR)
             }
         }
     }
@@ -466,7 +466,7 @@ impl Sender {
         address: &str,
         path: &str,
         send_meta_data: &[u8],
-    ) -> Result<(), EngineError> {
+    ) -> Result<(), i32> {
         let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
             (0, 0, 0, 0);
         let result = self
@@ -489,16 +489,14 @@ impl Sender {
         match result {
             Ok(_) => {
                 if status != 0 {
-                    Err(status.into())
+                    Err(status)
                 } else {
                     Ok(())
                 }
             }
             e => {
                 error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                Err(EngineError::StdIo(std::io::Error::from(
-                    std::io::ErrorKind::NotConnected,
-                )))
+                Err(CONNECTION_ERROR)
             }
         }
     }

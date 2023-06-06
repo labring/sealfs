@@ -4,6 +4,7 @@
 
 pub mod byte;
 pub mod cache;
+pub mod errors;
 pub mod hash_ring;
 pub mod sender;
 pub mod serialization;
