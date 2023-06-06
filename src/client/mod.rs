@@ -114,7 +114,9 @@ struct SealFS;
 impl Filesystem for SealFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         info!("lookup, parent = {}, name = {:?}", parent, name);
-        CLIENT.lookup_remote(parent, name, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.lookup_remote(parent, name.to_owned(), reply));
     }
 
     fn create(
@@ -131,17 +133,26 @@ impl Filesystem for SealFS {
             "create, parent = {}, name = {:?}, mode = {}, umask = {}, flags = {}",
             parent, name, mode, umask, flags
         );
-        CLIENT.create_remote(parent, name, mode, umask, flags, reply);
+        CLIENT.handle.spawn(CLIENT.create_remote(
+            parent,
+            name.to_owned(),
+            mode,
+            umask,
+            flags,
+            reply,
+        ));
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         info!("getattr, ino = {}", ino);
-        CLIENT.getattr_remote(ino, reply);
+        CLIENT.handle.spawn(CLIENT.getattr_remote(ino, reply));
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, reply: ReplyDirectory) {
         info!("readdir, ino = {}, offset = {}", ino, offset);
-        CLIENT.readdir_remote(ino, offset, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.readdir_remote(ino, offset, reply));
     }
 
     fn read(
@@ -156,7 +167,9 @@ impl Filesystem for SealFS {
         reply: ReplyData,
     ) {
         info!("read, ino = {}, offset = {}, size = {}", ino, offset, size);
-        CLIENT.read_remote(ino, offset, size, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.read_remote(ino, offset, size, reply));
     }
 
     fn write(
@@ -177,7 +190,9 @@ impl Filesystem for SealFS {
             offset,
             data.len()
         );
-        CLIENT.write_remote(ino, offset, data, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.write_remote(ino, offset, data.to_owned(), reply));
     }
 
     fn mkdir(
@@ -193,27 +208,27 @@ impl Filesystem for SealFS {
             "mkdir, parent = {}, name = {:?}, mode = {}",
             parent, name, mode
         );
-        CLIENT.mkdir_remote(parent, name, mode, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.mkdir_remote(parent, name.to_owned(), mode, reply));
     }
 
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
-        CLIENT.open_remote(ino, flags, reply);
+        CLIENT.handle.spawn(CLIENT.open_remote(ino, flags, reply));
     }
 
-    fn unlink(
-        &mut self,
-        _req: &Request<'_>,
-        _parent: u64,
-        _name: &OsStr,
-        reply: fuser::ReplyEmpty,
-    ) {
+    fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
         info!("unlink");
-        CLIENT.unlink_remote(_parent, _name, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.unlink_remote(parent, name.to_owned(), reply));
     }
 
-    fn rmdir(&mut self, _req: &Request<'_>, _parent: u64, _name: &OsStr, reply: fuser::ReplyEmpty) {
+    fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
         info!("rmdir");
-        CLIENT.rmdir_remote(_parent, _name, reply);
+        CLIENT
+            .handle
+            .spawn(CLIENT.rmdir_remote(parent, name.to_owned(), reply));
     }
 }
 
