@@ -4,7 +4,7 @@
 
 use super::{callback::CallbackPool, connection::ClientConnection};
 use dashmap::DashMap;
-use log::{debug, error, warn};
+use log::{error, warn};
 use std::sync::Arc;
 use tokio::net::tcp::OwnedReadHalf;
 
@@ -38,7 +38,6 @@ impl Client {
         let result = tokio::net::TcpStream::connect(server_address).await;
         let connection = match result {
             Ok(stream) => {
-                debug!("connect {:?} success", server_address);
                 let (read_stream, write_stream) = stream.into_split();
                 let connection = Arc::new(ClientConnection::new(
                     server_address,
@@ -52,7 +51,7 @@ impl Client {
                 connection
             }
             Err(e) => {
-                debug!("connect error: {}", e);
+                warn!("connect to {} failed: {}", server_address, e);
                 return false;
             }
         };
@@ -80,7 +79,7 @@ impl Client {
         recv_data_length: &mut usize,
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), String> {
         let connection = match self.connections.get(server_address) {
             Some(connection) => connection,
             None => {
@@ -92,10 +91,6 @@ impl Client {
             .pool
             .register_callback(recv_meta_data, recv_data)
             .await?;
-        debug!(
-            "call_remote on {:?}, batch {}, id: {}",
-            server_address, batch, id
-        );
         connection
             .send_request(
                 batch,
@@ -108,10 +103,6 @@ impl Client {
             )
             .await?;
         let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
-        debug!(
-            "call_remote success, id: {}, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
-            id, s, f, meta_data_length, data_length
-        );
         *status = s;
         *rsp_flags = f;
         *recv_meta_data_length = meta_data_length;
@@ -129,27 +120,15 @@ pub async fn parse_response(
 ) {
     loop {
         if !connection.is_connected().await {
-            debug!(
-                "parse_response: connection to {:?} closed",
-                connection.server_address
-            );
             break;
         }
-        debug!("parse_response: {:?}", connection.server_address);
         let header = match connection.receive_response_header(&mut read_stream).await {
             Ok(header) => header,
             Err(e) => {
-                if e.to_string() == "early eof" {
-                    warn!(
-                        "connection to {:?} is closed abnormally.",
-                        connection.server_address
-                    );
-                } else {
-                    error!(
-                        "parse_response header from {:?} error: {}",
-                        connection.server_address, e
-                    );
-                }
+                error!(
+                    "parse_response header from {:?} error: {}",
+                    connection.server_address, e
+                );
                 break;
             }
         };
@@ -159,27 +138,21 @@ pub async fn parse_response(
 
         let result = {
             match pool.lock_if_not_timeout(batch, id) {
-                Ok(_) => {
-                    debug!("parse_response: lock success");
-                    Ok(())
-                }
-                Err(_) => {
-                    debug!("parse_response: lock timeout");
-                    Err("lock timeout")
-                }
+                Ok(_) => Ok(()),
+                Err(_) => Err("lock timeout"),
             }
         };
         match result {
             Ok(_) => {}
             Err(e) => {
-                debug!("Error locking callback: {}", e);
+                error!("parse_response lock timeout: {}", e);
                 let result = connection
                     .clean_response(&mut read_stream, total_length)
                     .await;
                 match result {
                     Ok(_) => {}
                     Err(e) => {
-                        debug!("Error cleaning up response: {}", e);
+                        error!("parse_response clean_response error: {}", e);
                         break;
                     }
                 }
@@ -187,45 +160,29 @@ pub async fn parse_response(
             }
         }
 
-        let meta_data_result = {
-            match pool.get_meta_data_ref(id, header.meta_data_length as usize) {
-                Ok(meta_data_result) => Ok(meta_data_result),
-                Err(_) => Err("meta_data_result error"),
-            }
-        };
-        let data_result = {
-            match pool.get_data_ref(id, header.data_length as usize) {
-                Ok(data_result) => Ok(data_result),
-                Err(_) => Err("data_result error"),
-            }
-        };
-        if let (Ok(data), Ok(meta_data)) = (data_result, meta_data_result) {
-            if let Err(e) = connection
-                .receive_response(&mut read_stream, meta_data, data)
-                .await
-            {
-                error!("Error receiving response: {}", e);
-                break;
-            };
-            if let Err(e) = pool
-                .response(
-                    id,
-                    header.status,
-                    header.flags,
-                    header.meta_data_length as usize,
-                    header.data_length as usize,
-                )
-                .await
-            {
-                error!("Error writing response back: {}", e);
-                break;
-            };
-        } else if let Err(e) = connection
-            .clean_response(&mut read_stream, total_length)
+        if let Err(e) = connection
+            .receive_response(
+                &mut read_stream,
+                pool.get_meta_data_ref(id, header.meta_data_length as usize),
+                pool.get_data_ref(id, header.data_length as usize),
+            )
             .await
         {
-            error!("Error cleaning up response: {}", e);
+            error!("Error receiving response: {}", e);
             break;
-        }
+        };
+        if let Err(e) = pool
+            .response(
+                id,
+                header.status,
+                header.flags,
+                header.meta_data_length as usize,
+                header.data_length as usize,
+            )
+            .await
+        {
+            error!("Error writing response back: {}", e);
+            break;
+        };
     }
 }

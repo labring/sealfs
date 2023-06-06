@@ -1,7 +1,9 @@
+use std::{sync::Arc, time::Duration};
+
 use crate::{
     common::serialization::{
-        AddNodesSendMetaData, DeleteNodesSendMetaData, GetClusterStatusRecvMetaData,
-        GetHashRingInfoRecvMetaData, ManagerOperationType,
+        AddNodesSendMetaData, ClusterStatus, DeleteNodesSendMetaData, GetClusterStatusRecvMetaData,
+        GetHashRingInfoRecvMetaData, ManagerOperationType, ServerStatus,
     },
     rpc::server::Handler,
 };
@@ -14,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 pub struct ManagerService {
     pub heart: Heart,
-    manager: Manager,
+    manager: Arc<Manager>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -34,10 +36,126 @@ pub struct MetadataResponse {
     pub instances: Vec<String>,
 }
 
+async fn update_server_status(manager: Arc<Manager>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let status = *manager.cluster_status.lock().unwrap();
+        match status {
+            ClusterStatus::Idle => {}
+            ClusterStatus::NodesStarting => {
+                // if all servers is ready, change the cluster status to SyncNewHashRing
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::Finished);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::SyncNewHashRing;
+                };
+            }
+            ClusterStatus::SyncNewHashRing => {
+                // if all servers is ready, change the cluster status to PreTransfer
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::PreTransfer);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::PreTransfer;
+                }
+            }
+            ClusterStatus::PreTransfer => {
+                // if all servers is ready, change the cluster status to Transferring
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::Transferring);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::Transferring;
+                }
+            }
+            ClusterStatus::Transferring => {
+                // if all servers is ready, change the cluster status to PreFinish
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::PreFinish);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::PreFinish;
+                }
+            }
+            ClusterStatus::PreFinish => {
+                // if all servers is ready, change the cluster status to Finishing
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::Finishing);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    let _ = manager
+                        .hashring
+                        .write()
+                        .unwrap()
+                        .replace(manager.new_hashring.read().unwrap().clone().unwrap());
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::Finishing;
+                }
+            }
+            ClusterStatus::Finishing => {
+                // if all servers is ready, change the cluster status to Idle
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::Finished);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    let mut new_hashring = manager.new_hashring.write().unwrap();
+                    manager
+                        .servers
+                        .lock()
+                        .unwrap()
+                        .retain(|k, _| new_hashring.as_ref().unwrap().contains(k));
+                    // move new_hashring to hashring
+                    let _ = new_hashring.take().unwrap();
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::Idle;
+                }
+            }
+            ClusterStatus::Initializing => {
+                // if all servers is ready, change the cluster status to Idle
+                let flag = manager
+                    .servers
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|kv| kv.1.status == ServerStatus::Finished);
+                if flag {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    *manager.cluster_status.lock().unwrap() = ClusterStatus::Idle;
+                }
+            }
+            s => panic!("get forward address failed, invalid cluster status: {}", s),
+        }
+    }
+}
+
 impl ManagerService {
     pub fn new(servers: Vec<(String, usize)>) -> Self {
         let heart = Heart::default();
-        let manager = Manager::new(servers);
+        let manager = Arc::new(Manager::new(servers));
+        tokio::spawn(update_server_status(manager.clone()));
         ManagerService { heart, manager }
     }
 }

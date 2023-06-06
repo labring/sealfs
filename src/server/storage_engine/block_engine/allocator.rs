@@ -8,8 +8,6 @@ use libc::ioctl;
 use nix::fcntl::{open, OFlag};
 use parking_lot::Mutex;
 
-use crate::server::EngineError;
-
 //#define BLKGETSIZE _IO(0x12,96)	/* return device size /512 (long *arg) */
 const BLOCKGETSIZE: u64 = 0x1260;
 
@@ -59,22 +57,25 @@ struct BlockDevice {
 }
 
 impl BlockDevice {
-    fn new(path: &str) -> Result<BlockDevice, EngineError> {
+    fn new(path: &str) -> Result<BlockDevice, i32> {
         let block_num = Self::get_block_info(path)?;
         let chunk_num = block_num / (CHUNK / SECTOR);
         Ok(BlockDevice { chunk_num })
     }
 
-    fn get_block_info(path: &str) -> Result<u64, EngineError> {
-        let fd = open(path, OFlag::O_DIRECT, nix::sys::stat::Mode::S_IRWXU);
-        if fd? < 0 {
-            return Err(EngineError::Exist);
+    fn get_block_info(path: &str) -> Result<u64, i32> {
+        let fd = open(path, OFlag::O_DIRECT, nix::sys::stat::Mode::S_IRWXU).map_err(|_| {
+            println!("open block device error");
+            libc::EIO
+        })?;
+        if fd < 0 {
+            return Err(libc::EEXIST);
         }
         let block_num = 0;
         unsafe {
-            let result = ioctl(fd?, BLOCKGETSIZE, &block_num);
+            let result = ioctl(fd, BLOCKGETSIZE, &block_num);
             if result < 0 {
-                return Err(EngineError::BlockInfo);
+                return Err(libc::EIO);
             }
         }
         Ok(block_num)

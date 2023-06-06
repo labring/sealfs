@@ -10,10 +10,8 @@ use nix::{
     },
 };
 
-use crate::server::EngineError;
-
 pub(crate) struct Storage {
-    fd: i32,
+    _fd: i32,
 }
 
 impl Storage {
@@ -27,21 +25,21 @@ impl Storage {
             | Mode::S_IWOTH;
         let fd = fcntl::open(path, oflags, mode);
         match fd {
-            Ok(fd) => Self { fd },
+            Ok(fd) => Self { _fd: fd },
             Err(_) => panic!("No Raw blockdevice"),
         }
     }
 
-    pub(crate) fn write(&self, data: &[u8], offset: i64) -> Result<usize, EngineError> {
-        match pwrite(self.fd, data, offset) {
+    pub(crate) fn _write(&self, data: &[u8], offset: i64) -> Result<usize, i32> {
+        match pwrite(self._fd, data, offset) {
             Ok(size) => Ok(size),
-            Err(_) => Err(EngineError::IO),
+            Err(_) => Err(libc::EIO),
         }
     }
 
-    pub(crate) fn read(&self, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
+    pub(crate) fn _read(&self, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         let mut data = vec![0; size as usize];
-        let length = pread(self.fd, data.as_mut_slice(), offset)?;
+        let length = pread(self._fd, data.as_mut_slice(), offset).map_err(|_| libc::EIO)?;
         Ok(data[..length].to_vec())
     }
 }

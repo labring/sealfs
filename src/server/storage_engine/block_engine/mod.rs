@@ -12,7 +12,6 @@ pub mod io;
 use std::sync::Arc;
 
 use crate::server::storage_engine::StorageEngine;
-use crate::server::EngineError;
 
 use allocator::{Allocator, BitmapAllocator, CHUNK};
 use index::FileIndex;
@@ -41,21 +40,21 @@ impl StorageEngine for BlockEngine {
 
     fn init(&self) {}
 
-    fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, EngineError> {
+    fn read_file(&self, path: &str, _size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         let index_vec = self.index.search(path);
         let real_offset_index = offset as u64 / CHUNK;
         let real_offset = index_vec.get(real_offset_index as usize);
         match real_offset {
-            Some(real_offset) => self.storage.read(size, *real_offset as i64),
-            None => Err(EngineError::IO),
+            Some(_real_offset) => todo!(), // self.storage.read(size, *real_offset as i64),
+            None => todo!(),               // Err(libc::EIO),
         }
     }
 
-    fn open_file(&self, _path: &str, _flag: i32, _mode: u32) -> Result<(), EngineError> {
+    fn open_file(&self, _path: &str, _flag: i32, _mode: u32) -> Result<(), i32> {
         todo!()
     }
 
-    fn write_file(&self, path: &str, data: &[u8], _offset: i64) -> Result<usize, EngineError> {
+    fn write_file(&self, path: &str, data: &[u8], _offset: i64) -> Result<usize, i32> {
         let pos = self.allocator.allocator_space(data.len() as u64);
         let index_value_vec = self.index.search(path);
         let mut vec = Vec::new();
@@ -68,8 +67,8 @@ impl StorageEngine for BlockEngine {
         }
         self.index.update_index(path, vec);
         match index_value_vec.last() {
-            Some(last) => self.storage.write(data, (last + pos) as i64),
-            None => self.storage.write(data, pos as i64),
+            Some(_last) => todo!(), // self.storage.write(data, (last + pos) as i64),
+            None => todo!(),        // self.storage.write(data, pos as i64),
         }
     }
 
@@ -79,15 +78,15 @@ impl StorageEngine for BlockEngine {
         _oflag: i32,
         _umask: u32,
         _mode: u32,
-    ) -> Result<Vec<u8>, EngineError> {
+    ) -> Result<Vec<u8>, i32> {
         todo!()
     }
 
-    fn delete_file(&self, _path: &str) -> Result<(), EngineError> {
+    fn delete_file(&self, _path: &str) -> Result<(), i32> {
         todo!()
     }
 
-    fn truncate_file(&self, _path: &str, _length: i64) -> Result<(), EngineError> {
+    fn truncate_file(&self, _path: &str, _length: i64) -> Result<(), i32> {
         todo!()
     }
 }

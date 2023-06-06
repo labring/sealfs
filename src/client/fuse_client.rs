@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::common::hash_ring::HashRing;
-use crate::common::sender;
 use crate::common::serialization::{
     ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
     DeleteFileSendMetaData, FileAttrSimple, OpenFileSendMetaData, OperationType,
     ReadDirSendMetaData, ReadFileSendMetaData, WriteFileSendMetaData,
 };
+use crate::common::{errors, sender};
 use crate::rpc;
 use dashmap::DashMap;
 use fuser::{
@@ -17,7 +17,7 @@ use fuser::{
 };
 use lazy_static::lazy_static;
 use libc::{mode_t, DT_DIR, DT_LNK, DT_REG};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use spin::RwLock;
 use std::ffi::OsStr;
 use std::ops::Deref;
@@ -152,6 +152,7 @@ impl Client {
                 let result = self.get_cluster_status().await;
                 match result {
                     Ok(status) => {
+                        let status = status.into();
                         if self.cluster_status.load(Ordering::Relaxed) != status {
                             self.cluster_status.store(status, Ordering::Relaxed);
                         }
@@ -327,7 +328,7 @@ impl Client {
         }
     }
 
-    pub async fn connect_servers(&'static self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn connect_servers(&'static self) -> Result<(), i32> {
         debug!("init");
 
         let result = async {
@@ -350,7 +351,8 @@ impl Client {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                     s => {
-                        return Err(format!("invalid cluster status: {}", s).into());
+                        error!("invalid cluster status: {}", s);
+                        return Err(errors::INVALID_CLUSTER_STATUS);
                     }
                 }
             }
@@ -371,7 +373,7 @@ impl Client {
         }
     }
 
-    pub async fn init_volume(&self, volume_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn init_volume(&self, volume_name: &str) -> Result<(), i32> {
         self.inodes_reverse.insert(1, volume_name.to_string());
         self.inodes.insert(volume_name.to_string(), 1);
 
@@ -383,41 +385,31 @@ impl Client {
         Ok(())
     }
 
-    pub async fn add_new_servers(
-        &self,
-        new_servers_info: Vec<(String, usize)>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn add_new_servers(&self, new_servers_info: Vec<(String, usize)>) -> Result<(), i32> {
         self.sender
             .add_new_servers(&self.manager_address.lock().await, new_servers_info)
             .await
     }
 
-    pub async fn delete_servers(
-        &self,
-        servers_info: Vec<String>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn delete_servers(&self, servers_info: Vec<String>) -> Result<(), i32> {
         self.sender
             .delete_servers(&self.manager_address.lock().await, servers_info)
             .await
     }
 
-    pub async fn get_cluster_status(&self) -> Result<i32, Box<dyn std::error::Error>> {
+    pub async fn get_cluster_status(&self) -> Result<ClusterStatus, i32> {
         self.sender
             .get_cluster_status(&self.manager_address.lock().await)
             .await
     }
 
-    pub async fn get_hash_ring_info(
-        &self,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    pub async fn get_hash_ring_info(&self) -> Result<Vec<(String, usize)>, i32> {
         self.sender
             .get_hash_ring_info(&self.manager_address.lock().await)
             .await
     }
 
-    pub async fn get_new_hash_ring_info(
-        &self,
-    ) -> Result<Vec<(String, usize)>, Box<dyn std::error::Error>> {
+    pub async fn get_new_hash_ring_info(&self) -> Result<Vec<(String, usize)>, i32> {
         self.sender
             .get_new_hash_ring_info(&self.manager_address.lock().await)
             .await
@@ -428,11 +420,7 @@ impl Client {
         path
     }
 
-    pub async fn create_volume(
-        &self,
-        name: &str,
-        size: u64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn create_volume(&self, name: &str, size: u64) -> Result<(), i32> {
         self.sender
             .create_volume(&self.get_connection_address(name), name, size)
             .await

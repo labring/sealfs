@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use tokio::net::{tcp::OwnedReadHalf, TcpListener};
 
 use super::{connection::ServerConnection, protocol::RequestHeader};
@@ -31,7 +31,6 @@ pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static
     data: Vec<u8>,
     metadata: Vec<u8>,
 ) {
-    debug!("handle, id: {}", header.id);
     let response = handler
         .dispatch(
             connection.id,
@@ -42,10 +41,9 @@ pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static
             metadata,
         )
         .await;
-    debug!("handle, response: {:?}", response);
     match response {
         Ok(response) => {
-            let result = connection
+            if let Err(e) = connection
                 .send_response(
                     header.batch,
                     header.id,
@@ -54,24 +52,15 @@ pub async fn handle<H: Handler + std::marker::Sync + std::marker::Send + 'static
                     &response.4[0..response.2],
                     &response.5[0..response.3],
                 )
-                .await;
-            match result {
-                Ok(_) => {
-                    debug!("handle, send response success");
-                }
-                Err(e) => {
-                    debug!("handle, send response error: {}", e);
-                }
+                .await
+            {
+                error!("handle, send response error: {}", e);
             }
         }
         Err(e) => {
-            debug!("handle, dispatch error: {}", e);
+            error!("handle, dispatch error: {}", e);
         }
     }
-}
-
-pub async fn test() {
-    info!("test");
 }
 
 // receive(): handle the connection
@@ -87,28 +76,23 @@ pub async fn receive<H: Handler + std::marker::Sync + std::marker::Send + 'stati
     loop {
         {
             let id = connection.name_id();
-            debug!("{:?} parse_request, start", id);
             let header = match connection.receive_request_header(&mut read_stream).await {
                 Ok(header) => header,
                 Err(e) => {
-                    if e.to_string() == "early eof" {
-                        warn!("connection {:?} is closed abnormally.", id);
-                    } else {
-                        error!("{:?} parse_request, header error: {}", id, e);
+                    if e == "early eof" || e == "Connection reset by peer (os error 104)" {
+                        warn!("{:?} receive, connection closed", id);
+                        break;
                     }
-                    break;
+                    panic!("{:?} parse_request, header error: {}", id, e);
                 }
             };
-            debug!("{:?} parse_request, header: {}", id, header.id);
             let data_result = connection.receive_request(&mut read_stream, &header).await;
             let (path, data, metadata) = match data_result {
                 Ok(data) => data,
                 Err(e) => {
-                    error!("{:?} parse_request, data error: {}", id, e);
-                    break;
+                    panic!("{:?} parse_request, data error: {}", id, e);
                 }
             };
-            debug!("{:?} parse_request, data: {}", id, header.id);
             let handler = handler.clone();
             let connection = connection.clone();
             tokio::spawn(handle(handler, connection, header, path, data, metadata));

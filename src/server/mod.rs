@@ -19,6 +19,7 @@ use tokio::time::sleep;
 
 use crate::{
     common::{
+        errors::status_to_string,
         hash_ring::HashRing,
         serialization::{
             CheckDirSendMetaData, CheckFileSendMetaData, ClusterStatus, CreateDirSendMetaData,
@@ -33,83 +34,6 @@ use crate::{
 };
 use distributed_engine::DistributedEngine;
 use storage_engine::file_engine::FileEngine;
-
-#[derive(Debug, thiserror::Error)]
-pub enum EngineError {
-    #[error("ENOENT")]
-    NoEntry,
-
-    #[error("ENOTDIR")]
-    NotDir,
-
-    #[error("EISDIR")]
-    IsDir,
-
-    #[error("EEXIST")]
-    Exist,
-
-    #[error("EIO")]
-    IO,
-
-    #[error("EPATH")]
-    Path,
-
-    #[error("EBLOCK")]
-    BlockInfo,
-
-    #[error("ENOTEMPTY")]
-    NotEmpty,
-
-    #[error(transparent)]
-    StdIo(#[from] std::io::Error),
-
-    #[error(transparent)]
-    Nix(#[from] nix::Error),
-
-    #[error(transparent)]
-    Rocksdb(#[from] rocksdb::Error),
-
-    #[error(transparent)]
-    Pegasusdb(#[from] pegasusdb::Error),
-}
-
-impl From<EngineError> for i32 {
-    fn from(e: EngineError) -> Self {
-        match e {
-            EngineError::IO => libc::EIO,
-            EngineError::NoEntry => libc::ENOENT,
-            EngineError::NotDir => libc::ENOTDIR,
-            EngineError::IsDir => libc::EISDIR,
-            EngineError::Exist => libc::EEXIST,
-            EngineError::NotEmpty => libc::ENOTEMPTY,
-            // todo
-            // other Error
-            _ => {
-                error!("Unknown EngineError: {:?}", e);
-                libc::EIO
-            }
-        }
-    }
-}
-
-impl From<i32> for EngineError {
-    fn from(e: i32) -> Self {
-        match e {
-            libc::EIO => EngineError::IO,
-            libc::ENOENT => EngineError::NoEntry,
-            libc::ENOTDIR => EngineError::NotDir,
-            libc::EISDIR => EngineError::IsDir,
-            libc::EEXIST => EngineError::Exist,
-            libc::ENOTEMPTY => EngineError::NotEmpty,
-            // todo
-            // other Error
-            _ => {
-                error!("Unknown errno: {:?}", e);
-                EngineError::IO
-            }
-        }
-    }
-}
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ServerError {
@@ -453,9 +377,9 @@ where
                         Err(e) => {
                             info!(
                                 "Create Volume Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                                e, std::str::from_utf8(path.as_slice()).unwrap(), operation_type, flags
+                                status_to_string(e), std::str::from_utf8(path.as_slice()).unwrap(), operation_type, flags
                             );
-                            e.into()
+                            e
                         }
                     };
                     return Ok((status, 0, 0, 0, Vec::new(), Vec::new()));
@@ -493,27 +417,28 @@ where
         let file_path = std::str::from_utf8(path.as_slice()).unwrap();
 
         // this is the lock for object file while transferring data, if the file is transferring, the lock will be hold until the request is finished
-        let _lock = match self.engine.get_forward_address(file_path) {
-            (Some(address), _) => {
-                match self
-                    .engine
-                    .forward_request(address, operation_type, flags, file_path, data, metadata)
-                    .await
-                {
-                    Ok(value) => {
-                        return Ok(value);
-                    }
-                    Err(e) => {
-                        error!(
+        let _lock =
+            match self.engine.get_forward_address(file_path) {
+                (Some(address), _) => {
+                    match self
+                        .engine
+                        .forward_request(address, operation_type, flags, file_path, data, metadata)
+                        .await
+                    {
+                        Ok(value) => {
+                            return Ok(value);
+                        }
+                        Err(e) => {
+                            info!(
                             "Forward Request Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e), file_path, operation_type, flags
                         );
-                        return Ok((e.into(), 0, 0, 0, Vec::new(), Vec::new()));
+                            return Ok((e, 0, 0, 0, Vec::new(), Vec::new()));
+                        }
                     }
                 }
-            }
-            (None, lock) => lock,
-        };
+                (None, lock) => lock,
+            };
 
         match r#type {
             OperationType::Unkown => {
@@ -544,9 +469,12 @@ where
                     Err(e) => {
                         info!(
                             "Create File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        (Vec::new(), e.into())
+                        (Vec::new(), e)
                     }
                 };
                 Ok((
@@ -578,7 +506,7 @@ where
                             "Create Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             e, file_path, operation_type, flags
                         );
-                        (Vec::new(), e.into())
+                        (Vec::new(), e)
                     }
                 };
                 Ok((
@@ -592,16 +520,17 @@ where
             }
             OperationType::GetFileAttr => {
                 info!("{} Get File Attr: path: {}", self.engine.address, file_path);
-                let (return_meta_data, status) = match self.engine.get_file_attr(file_path).await {
-                    Ok(value) => (value, 0),
-                    Err(e) => {
-                        info!(
+                let (return_meta_data, status) =
+                    match self.engine.get_file_attr(file_path).await {
+                        Ok(value) => (value, 0),
+                        Err(e) => {
+                            info!(
                             "Get File Attr Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e), file_path, operation_type, flags
                         );
-                        (Vec::new(), e.into())
-                    }
-                };
+                            (Vec::new(), e)
+                        }
+                    };
                 Ok((
                     status,
                     0,
@@ -624,9 +553,12 @@ where
                     Err(e) => {
                         info!(
                             "Open File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        e.into()
+                        e
                     }
                 };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
@@ -640,9 +572,12 @@ where
                     Err(e) => {
                         info!(
                             "Read Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        (Vec::new(), e.into())
+                        (Vec::new(), e)
                     }
                 };
                 Ok((status, 0, 0, data.len(), Vec::new(), data))
@@ -656,9 +591,12 @@ where
                         Err(e) => {
                             info!(
                                 "Read File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                                e, file_path, operation_type, flags
+                                status_to_string(e),
+                                file_path,
+                                operation_type,
+                                flags
                             );
-                            (Vec::new(), e.into())
+                            (Vec::new(), e)
                         }
                     };
                 Ok((status, 0, 0, data.len(), Vec::new(), data))
@@ -675,9 +613,12 @@ where
                     Err(e) => {
                         info!(
                             "Write File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        (e.into(), 0)
+                        (e, 0)
                     }
                 };
                 Ok((
@@ -702,9 +643,12 @@ where
                     Err(e) => {
                         info!(
                             "Delete File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        e.into()
+                        e
                     }
                 };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
@@ -722,9 +666,12 @@ where
                     Err(e) => {
                         info!(
                             "Delete Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        e.into()
+                        e
                     }
                 };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
@@ -763,46 +710,49 @@ where
             OperationType::TruncateFile => {
                 info!("{} Truncate File: {}", self.engine.address, file_path);
                 let md: TruncateFileSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let status = match self.engine.truncate_file(file_path, md.length).await {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        info!(
+                let status =
+                    match self.engine.truncate_file(file_path, md.length).await {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            info!(
                             "Truncate File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e), file_path, operation_type, flags
                         );
-                        e.into()
-                    }
-                };
+                            e
+                        }
+                    };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::CheckFile => {
                 info!("{} Checkout File: {}", self.engine.address, file_path);
                 let md: CheckFileSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let status = match self.engine.check_file(file_path, md.file_attr).await {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        info!(
+                let status =
+                    match self.engine.check_file(file_path, md.file_attr).await {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            info!(
                             "Checkout File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e), file_path, operation_type, flags
                         );
-                        e.into()
-                    }
-                };
+                            e
+                        }
+                    };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::CheckDir => {
                 info!("{} Checkout Dir: {}", self.engine.address, file_path);
                 let md: CheckDirSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let status = match self.engine.check_dir(file_path, md.file_attr).await {
-                    Ok(()) => 0,
-                    Err(e) => {
-                        info!(
+                let status =
+                    match self.engine.check_dir(file_path, md.file_attr).await {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            info!(
                             "Checkout Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e), file_path, operation_type, flags
                         );
-                        e.into()
-                    }
-                };
+                            e
+                        }
+                    };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::CreateDirNoParent => {
@@ -820,9 +770,12 @@ where
                     Err(e) => {
                         info!(
                             "Create Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        (Vec::new(), e.into())
+                        (Vec::new(), e)
                     }
                 };
                 Ok((
@@ -851,9 +804,12 @@ where
                     Err(e) => {
                         info!(
                             "Create File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        (Vec::new(), e.into())
+                        (Vec::new(), e)
                     }
                 };
                 Ok((
@@ -875,9 +831,12 @@ where
                     Err(e) => {
                         info!(
                             "Delete Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        e.into()
+                        e
                     }
                 };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
@@ -892,9 +851,12 @@ where
                     Err(e) => {
                         info!(
                             "Delete File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                            e, file_path, operation_type, flags
+                            status_to_string(e),
+                            file_path,
+                            operation_type,
+                            flags
                         );
-                        e.into()
+                        e
                     }
                 };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
@@ -906,19 +868,25 @@ where
 }
 
 //  path_split: the path should not be empty, and it does not end with a slash unless it is the root directory.
-pub fn path_split(path: &str) -> Result<(String, String), EngineError> {
+pub fn path_split(path: &str) -> Result<(String, String), i32> {
     if path.is_empty() {
-        return Err(EngineError::Path);
+        error!("path is empty");
+        return Err(libc::EINVAL);
     }
     if path == "/" {
-        return Err(EngineError::Path);
+        error!("path is root");
+        return Err(libc::EINVAL);
     }
     if path.ends_with('/') {
-        return Err(EngineError::Path);
+        error!("path ends with /");
+        return Err(libc::EINVAL);
     }
     let index = match path.rfind('/') {
         Some(value) => value,
-        None => return Err(EngineError::Path),
+        None => {
+            error!("path does not contain /");
+            return Err(libc::EINVAL);
+        }
     };
     match index {
         0 => Ok(("/".into(), path[1..].into())),

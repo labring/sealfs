@@ -72,8 +72,11 @@ async fn main() -> anyhow::Result<()> {
             match args.config_file {
                 Some(c) => {
                     let yaml_str = fs::read_to_string(c).expect("Couldn't read from file. The file is either missing or you don't have enough permissions!");
-                    let result: Properties =
+                    let mut result: Properties =
                         serde_yaml::from_str(&yaml_str).expect("manager.yaml read failed!");
+                    if args.log_level.is_some() {
+                        result.log_level = args.log_level.unwrap();
+                    }
                     result
                 }
                 _ => {

@@ -9,8 +9,10 @@ use fuser::{
     Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
     ReplyOpen, ReplyWrite, Request,
 };
-use log::info;
+use log::{error, info};
 use std::{ffi::OsStr, str::FromStr};
+
+use crate::common::errors::status_to_string;
 
 #[derive(Parser)]
 #[command(author = "Christopher Berner", version, about, long_about = None)]
@@ -101,12 +103,9 @@ enum Commands {
     },
     Status {
         /// Get the status of the cluster
-        #[arg(long = "status", name = "status")]
-        _status: bool,
-
         /// Address of the manager
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
-        _manager_address: Option<String>,
+        manager_address: Option<String>,
     },
 }
 
@@ -262,10 +261,24 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             runtime.block_on(connect_to_manager(manager_address))?;
 
             info!("connect_servers");
-            runtime.block_on(CLIENT.connect_servers())?;
+            if let Err(status) = runtime.block_on(CLIENT.connect_servers()) {
+                error!(
+                    "connect_servers failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
 
             info!("create_volume");
-            runtime.block_on(CLIENT.create_volume(&mountpoint, volume_size.unwrap()))?;
+            if let Err(status) =
+                runtime.block_on(CLIENT.create_volume(&mountpoint, volume_size.unwrap()))
+            {
+                error!(
+                    "create_volume failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
 
             Ok(())
         }
@@ -294,10 +307,22 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             runtime.block_on(connect_to_manager(manager_address))?;
 
             info!("init_volume");
-            runtime.block_on(CLIENT.init_volume(&volume_name.unwrap()))?;
+            if let Err(status) = runtime.block_on(CLIENT.init_volume(&volume_name.unwrap())) {
+                error!(
+                    "init_volume failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
 
             info!("connect_servers");
-            runtime.block_on(CLIENT.connect_servers())?;
+            if let Err(status) = runtime.block_on(CLIENT.connect_servers()) {
+                error!(
+                    "connect_servers failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
 
             info!("start fuse");
 
@@ -325,7 +350,7 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             match result {
                 Ok(_) => info!("init manager success"),
                 Err(e) => panic!("init manager failed, error = {}", e),
-            }
+            };
 
             let new_servers_info = vec![(server_address.unwrap(), weight.unwrap_or(100))];
             let result = runtime.block_on(CLIENT.add_new_servers(new_servers_info));
@@ -337,7 +362,7 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => {
                     info!("add server failed, error = {}", e);
                 }
-            }
+            };
             Ok(())
         }
         Commands::Delete {
@@ -354,7 +379,7 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             match result {
                 Ok(_) => info!("init manager success"),
                 Err(e) => panic!("init manager failed, error = {}", e),
-            }
+            };
 
             let new_servers_info = vec![server_address.unwrap()];
             let result = runtime.block_on(CLIENT.delete_servers(new_servers_info));
@@ -366,7 +391,7 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => {
                     info!("add server failed, error = {}", e);
                 }
-            }
+            };
             Ok(())
         }
         Commands::ListServers {
@@ -377,9 +402,29 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             _list,
             _manager_address,
         } => todo!(),
-        Commands::Status {
-            _status,
-            _manager_address,
-        } => todo!(),
+        Commands::Status { manager_address } => {
+            let manager_address = match manager_address {
+                Some(address) => address,
+                None => "127.0.0.1:8081".to_owned(),
+            };
+
+            info!("init client");
+            let result = runtime.block_on(connect_to_manager(manager_address));
+            match result {
+                Ok(_) => info!("init manager success"),
+                Err(e) => panic!("init manager failed, error = {}", e),
+            };
+            let result = runtime.block_on(CLIENT.get_cluster_status());
+            match result {
+                Ok(status) => {
+                    info!("get cluster status success");
+                    println!("{}", status);
+                }
+                Err(e) => {
+                    info!("get cluster status failed, error = {}", e);
+                }
+            };
+            Ok(())
+        }
     }
 }
