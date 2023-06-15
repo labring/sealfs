@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::sync::{Arc, Mutex, RwLock};
 
 use ahash::{HashMap, HashMapExt};

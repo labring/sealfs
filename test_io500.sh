@@ -11,6 +11,8 @@ function green_font() {
 
 function fuse_test() {
     ./target/debug/client --log-level warn create test1 100000
+    ./target/debug/client --log-level warn daemon&
+    sleep 3
     ./target/debug/client --log-level warn mount ~/fs test1 &
     sleep 3
     start_time=$[$(date +%s%N)/1000000]
@@ -21,7 +23,6 @@ function fuse_test() {
     end_time=$[$(date +%s%N)/1000000]
     result_time=$[ $end_time - $start_time ]
     echo -e "fuse tests finish, cost: $(green_font ${result_time}ms)"
-    sudo umount ~/fs
     sudo rm -rf ~/fs
     return $result
 }
@@ -50,6 +51,7 @@ fi
 set +e
 
 sudo umount ~/fs
+rm /tmp/sealfs.sock
 mkdir -p ~/fs
 
 sudo rm -rf io500

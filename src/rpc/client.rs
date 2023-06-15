@@ -4,22 +4,33 @@
 
 use super::{callback::CallbackPool, connection::ClientConnection};
 use dashmap::DashMap;
-use log::{error, warn};
-use std::sync::Arc;
-use tokio::net::tcp::OwnedReadHalf;
+use log::{error, info, warn};
+use std::{sync::Arc, time::Duration};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub struct Client {
-    connections: DashMap<String, Arc<ClientConnection>>,
+pub struct RpcClient<
+    W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+> {
+    connections: DashMap<String, Arc<ClientConnection<W, R>>>,
     pool: Arc<CallbackPool>,
 }
 
-impl Default for Client {
+impl<
+        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    > Default for RpcClient<W, R>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Client {
+impl<
+        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    > RpcClient<W, R>
+{
     pub fn new() -> Self {
         let mut pool = CallbackPool::new();
         pool.init();
@@ -34,27 +45,16 @@ impl Client {
         self.pool.free();
     }
 
-    pub async fn add_connection(&self, server_address: &str) -> bool {
-        let result = tokio::net::TcpStream::connect(server_address).await;
-        let connection = match result {
-            Ok(stream) => {
-                let (read_stream, write_stream) = stream.into_split();
-                let connection = Arc::new(ClientConnection::new(
-                    server_address,
-                    Some(tokio::sync::Mutex::new(write_stream)),
-                ));
-                tokio::spawn(parse_response(
-                    read_stream,
-                    connection.clone(),
-                    self.pool.clone(),
-                ));
-                connection
-            }
-            Err(e) => {
-                warn!("connect to {} failed: {}", server_address, e);
-                return false;
-            }
-        };
+    async fn add_connection(&self, read_stream: R, write_stream: W, server_address: &str) -> bool {
+        let connection = Arc::new(ClientConnection::new(
+            server_address,
+            Some(tokio::sync::Mutex::new(write_stream)),
+        ));
+        tokio::spawn(parse_response(
+            read_stream,
+            connection.clone(),
+            self.pool.clone(),
+        ));
         self.connections
             .insert(server_address.to_string(), connection);
         true
@@ -113,9 +113,9 @@ impl Client {
 
 // parse_response
 // try to get response from sequence of connections and write to callbacks
-pub async fn parse_response(
-    mut read_stream: OwnedReadHalf,
-    connection: Arc<ClientConnection>,
+pub async fn parse_response<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin>(
+    mut read_stream: R,
+    connection: Arc<ClientConnection<W, R>>,
     pool: Arc<CallbackPool>,
 ) {
     loop {
@@ -125,11 +125,14 @@ pub async fn parse_response(
         let header = match connection.receive_response_header(&mut read_stream).await {
             Ok(header) => header,
             Err(e) => {
-                error!(
+                if e == "early eof" || e == "Connection reset by peer (os error 104)" {
+                    warn!("{:?} disconnected: {}", connection.server_address, e);
+                    break;
+                }
+                panic!(
                     "parse_response header from {:?} error: {}",
                     connection.server_address, e
                 );
-                break;
             }
         };
         let batch = header.batch;
@@ -184,5 +187,67 @@ pub async fn parse_response(
             error!("Error writing response back: {}", e);
             break;
         };
+    }
+}
+
+pub async fn add_tcp_connection(
+    address: &str,
+    client: &RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>,
+) {
+    loop {
+        match tokio::net::TcpStream::connect(address.to_owned()).await {
+            Ok(stream) => {
+                let (read_stream, write_stream) = stream.into_split();
+                match client
+                    .add_connection(read_stream, write_stream, address)
+                    .await
+                {
+                    true => {
+                        break;
+                    }
+                    false => {
+                        warn!("add connection failed, wait for a while");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("connect to manager failed, wait for a while, {}", e);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        };
+        info!("add connection to {} failed, retrying...", address);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+pub async fn add_unix_connection(
+    address: &str,
+    client: &Arc<RpcClient<tokio::net::unix::OwnedWriteHalf, tokio::net::unix::OwnedReadHalf>>,
+) {
+    loop {
+        match tokio::net::UnixStream::connect(address.to_owned()).await {
+            Ok(stream) => {
+                let (read_stream, write_stream) = stream.into_split();
+                match client
+                    .add_connection(read_stream, write_stream, address)
+                    .await
+                {
+                    true => {
+                        break;
+                    }
+                    false => {
+                        warn!("add connection failed, wait for a while");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("connect to manager failed, wait for a while, {}", e);
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        };
+        info!("add connection to {} failed, retrying...", address);
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }

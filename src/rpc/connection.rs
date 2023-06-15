@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::IoSlice;
+use std::{io::IoSlice, marker::PhantomData};
 
 use crate::rpc::protocol::{
     RequestHeader, ResponseHeader, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH, MAX_METADATA_LENGTH,
@@ -10,7 +10,7 @@ use crate::rpc::protocol::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
+    //net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     sync::{Mutex, RwLock},
 };
 // use tokio::{
@@ -24,10 +24,13 @@ enum ConnectionStatus {
     Disconnected = 1,
 }
 
-pub struct ClientConnection {
+pub struct ClientConnection<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> {
     pub server_address: String,
-    write_stream: Option<Mutex<OwnedWriteHalf>>,
+    write_stream: Option<Mutex<W>>,
     status: RwLock<ConnectionStatus>,
+
+    phantom_data: PhantomData<R>,
+
     // lock for send_request
     // we need this lock because we will send multiple requests in parallel
     // and each request will be sent several data packets due to the partation of data and header.
@@ -36,15 +39,13 @@ pub struct ClientConnection {
     _send_lock: Mutex<()>,
 }
 
-impl ClientConnection {
-    pub fn new(
-        server_address: &str,
-        write_stream: Option<tokio::sync::Mutex<OwnedWriteHalf>>,
-    ) -> Self {
+impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
+    pub fn new(server_address: &str, write_stream: Option<tokio::sync::Mutex<W>>) -> Self {
         Self {
             server_address: server_address.to_string(),
             write_stream,
             status: RwLock::new(ConnectionStatus::Connected),
+            phantom_data: PhantomData,
             _send_lock: Mutex::new(()),
         }
     }
@@ -129,7 +130,7 @@ impl ClientConnection {
 
     pub async fn receive_response_header(
         &self,
-        read_stream: &mut OwnedReadHalf,
+        read_stream: &mut R,
     ) -> Result<ResponseHeader, String> {
         let mut header = [0; RESPONSE_HEADER_SIZE];
         self.receive(read_stream, &mut header).await?;
@@ -153,7 +154,7 @@ impl ClientConnection {
 
     pub async fn receive_response(
         &self,
-        read_stream: &mut OwnedReadHalf,
+        read_stream: &mut R,
         meta_data: &mut [u8],
         data: &mut [u8],
     ) -> Result<(), String> {
@@ -165,11 +166,7 @@ impl ClientConnection {
         Ok(())
     }
 
-    pub async fn receive(
-        &self,
-        read_stream: &mut OwnedReadHalf,
-        data: &mut [u8],
-    ) -> Result<(), String> {
+    pub async fn receive(&self, read_stream: &mut R, data: &mut [u8]) -> Result<(), String> {
         match read_stream.read_exact(data).await {
             Ok(_) => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -178,7 +175,7 @@ impl ClientConnection {
 
     pub async fn clean_response(
         &self,
-        read_stream: &mut OwnedReadHalf,
+        read_stream: &mut R,
         total_length: u32,
     ) -> Result<(), String> {
         let mut buffer = vec![0u8; total_length as usize];
@@ -187,20 +184,24 @@ impl ClientConnection {
     }
 }
 
-pub struct ServerConnection {
+pub struct ServerConnection<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> {
     pub id: u32,
     name_id: String,
-    write_stream: Mutex<OwnedWriteHalf>,
+    write_stream: Mutex<W>,
     status: ConnectionStatus,
+
+    phantom_data: PhantomData<R>,
 }
 
-impl ServerConnection {
-    pub fn new(write_stream: OwnedWriteHalf, name_id: String, id: u32) -> Self {
+impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ServerConnection<W, R> {
+    pub fn new(write_stream: W, name_id: String, id: u32) -> Self {
         ServerConnection {
             id,
             name_id,
             write_stream: Mutex::new(write_stream),
             status: ConnectionStatus::Connected,
+
+            phantom_data: PhantomData,
         }
     }
 
@@ -282,7 +283,7 @@ impl ServerConnection {
 
     pub async fn receive_request_header(
         &self,
-        read_stream: &mut OwnedReadHalf,
+        read_stream: &mut R,
     ) -> Result<RequestHeader, String> {
         let mut header = [0; REQUEST_HEADER_SIZE];
         self.receive(read_stream, &mut header).await?;
@@ -308,7 +309,7 @@ impl ServerConnection {
 
     pub async fn receive_request(
         &self,
-        read_stream: &mut OwnedReadHalf,
+        read_stream: &mut R,
         header: &RequestHeader,
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
         let path_length = u32::from_le_bytes(header.file_path_length.to_le_bytes());
@@ -334,11 +335,7 @@ impl ServerConnection {
         Ok((path, data, meta_data))
     }
 
-    pub async fn receive(
-        &self,
-        read_stream: &mut OwnedReadHalf,
-        data: &mut [u8],
-    ) -> Result<(), String> {
+    pub async fn receive(&self, read_stream: &mut R, data: &mut [u8]) -> Result<(), String> {
         match read_stream.read_exact(data).await {
             Ok(_) => Ok(()),
             Err(e) => Err(e.to_string()),

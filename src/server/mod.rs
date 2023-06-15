@@ -29,7 +29,10 @@ use crate::{
         },
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
-    rpc::server::{Handler, Server},
+    rpc::{
+        client::add_tcp_connection,
+        server::{Handler, RpcServer},
+    },
     server::storage_engine::meta_engine::MetaEngine,
 };
 use distributed_engine::DistributedEngine;
@@ -270,13 +273,13 @@ pub async fn run(
     ));
 
     info!("Init: Connect To Manager: {}", manager_address);
-    engine.client.add_connection(&manager_address).await;
+    add_tcp_connection(&manager_address, &engine.client).await;
     *engine.manager_address.lock().await = manager_address;
 
     tokio::spawn(sync_cluster_infos(Arc::clone(&engine)));
 
     let handler = Arc::new(FileRequestHandler::new(engine.clone()));
-    let server = Server::new(handler, &server_address);
+    let server = RpcServer::new(handler, &server_address);
 
     info!("Init: Add connections and update Server Status");
 
@@ -357,64 +360,42 @@ where
             }
         };
 
-        if !self.engine.volume_indexes.contains_key(&id) {
-            match r#type {
-                // TODO: CreateVolume request should be forward if transfering data
-                OperationType::CreateVolume => {
-                    info!("{} Create Volume", self.engine.address);
-                    let meta_data_unwraped: CreateVolumeSendMetaData =
-                        bincode::deserialize(&metadata).unwrap();
-                    info!("Create Volume: {:?}, id: {}", &meta_data_unwraped.name, id);
-                    if meta_data_unwraped.name.is_empty()
-                        || meta_data_unwraped.name.len() > 255
-                        || meta_data_unwraped.name.contains('\0')
-                        || meta_data_unwraped.name.contains('/')
-                    {
-                        return Ok((libc::EINVAL, 0, 0, 0, vec![], vec![]));
-                    }
-                    let status = match self.engine.create_volume(&meta_data_unwraped.name) {
-                        Ok(()) => 0,
-                        Err(e) => {
-                            info!(
-                                "Create Volume Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                                status_to_string(e), std::str::from_utf8(path.as_slice()).unwrap(), operation_type, flags
-                            );
-                            e
-                        }
-                    };
-                    return Ok((status, 0, 0, 0, Vec::new(), Vec::new()));
-                }
-                OperationType::InitVolume => {
-                    let file_path = String::from_utf8(path).unwrap();
-                    info!(
-                        "{} Init Volume: {}, id: {}",
-                        self.engine.address, file_path, id
-                    );
-                    if !file_path.is_empty()
-                        && self.engine.get_address(&file_path) == self.engine.address
-                        && !self.engine.volumes.contains_key(&file_path)
-                    {
-                        error!(
-                            "Volume not Exists: id: {}, file_path: {}, address {}, self_address {}",
-                            id,
-                            file_path,
-                            self.engine.get_address(&file_path),
-                            self.engine.address
-                        );
-                        return Ok((libc::ENOENT, 0, 0, 0, vec![], vec![]));
-                    }
-                    self.engine.volume_indexes.insert(id, file_path);
-                    return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
-                }
-                _ => {
-                    error!("Volume Index Not Found, id: {}", id);
-                    return Ok((libc::EPERM, 0, 0, 0, vec![], vec![]));
-                }
-            }
-        }
+        // if !self.engine.volume_indexes.contains_key(&id) {
+        //     match r#type {
+        //         // TODO: CreateVolume request should be forward if transfering data
+        //         OperationType::CreateVolume => {
+        //         }
+        //         OperationType::InitVolume => {
+        //             let file_path = String::from_utf8(path).unwrap();
+        //             info!(
+        //                 "{} Init Volume: {}, id: {}",
+        //                 self.engine.address, file_path, id
+        //             );
+        //             if !file_path.is_empty()
+        //                 && self.engine.get_address(&file_path) == self.engine.address
+        //                 && !self.engine.volumes.contains_key(&file_path)
+        //             {
+        //                 error!(
+        //                     "Volume not Exists: id: {}, file_path: {}, address {}, self_address {}",
+        //                     id,
+        //                     file_path,
+        //                     self.engine.get_address(&file_path),
+        //                     self.engine.address
+        //                 );
+        //                 return Ok((libc::ENOENT, 0, 0, 0, vec![], vec![]));
+        //             }
+        //             self.engine.volume_indexes.insert(id, file_path);
+        //             return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
+        //         }
+        //         _ => {
+        //             error!("Volume Index Not Found, id: {}", id);
+        //             return Ok((libc::EPERM, 0, 0, 0, vec![], vec![]));
+        //         }
+        //     }
+        // }
 
         // let file_path = '/' + volume_name + path
-        let file_path = std::str::from_utf8(path.as_slice()).unwrap();
+        let file_path = unsafe { std::str::from_utf8_unchecked(&path) };
 
         // this is the lock for object file while transferring data, if the file is transferring, the lock will be hold until the request is finished
         let _lock =
@@ -861,8 +842,55 @@ where
                 };
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
-            OperationType::CreateVolume => todo!(),
-            OperationType::InitVolume => todo!(),
+            OperationType::CreateVolume => {
+                info!("{} Create Volume", self.engine.address);
+                let meta_data_unwraped: CreateVolumeSendMetaData =
+                    bincode::deserialize(&metadata).unwrap();
+                info!("Create Volume: {:?}, id: {}", &meta_data_unwraped.name, id);
+                if meta_data_unwraped.name.is_empty()
+                    || meta_data_unwraped.name.len() > 255
+                    || meta_data_unwraped.name.contains('\0')
+                    || meta_data_unwraped.name.contains('/')
+                {
+                    return Ok((libc::EINVAL, 0, 0, 0, vec![], vec![]));
+                }
+                let status = match self.engine.create_volume(&meta_data_unwraped.name) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        info!(
+                            "Create Volume Failed: {:?}, path: {}, operation_type: {}, flags: {}",
+                            status_to_string(e),
+                            std::str::from_utf8(path.as_slice()).unwrap(),
+                            operation_type,
+                            flags
+                        );
+                        e
+                    }
+                };
+                return Ok((status, 0, 0, 0, Vec::new(), Vec::new()));
+            }
+            OperationType::InitVolume => {
+                let file_path = String::from_utf8(path).unwrap();
+                info!(
+                    "{} Init Volume: {}, id: {}",
+                    self.engine.address, file_path, id
+                );
+                if !file_path.is_empty()
+                    && self.engine.get_address(&file_path) == self.engine.address
+                    && !self.engine.volumes.contains_key(&file_path)
+                {
+                    error!(
+                        "Volume not Exists: id: {}, file_path: {}, address {}, self_address {}",
+                        id,
+                        file_path,
+                        self.engine.get_address(&file_path),
+                        self.engine.address
+                    );
+                    return Ok((libc::ENOENT, 0, 0, 0, vec![], vec![]));
+                }
+                //self.engine.volume_indexes.insert(id, file_path);
+                return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
+            }
         }
     }
 }

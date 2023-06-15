@@ -1,7 +1,6 @@
 #!/bin/bash
 
 function finish() {
-    sudo umount ~/fs
     sudo rm -rf ~/fs
     trap 'kill $(jobs -p)' EXIT
     exit $1
@@ -27,6 +26,7 @@ fi
 
 set +e
 
+rm /tmp/sealfs.sock
 sudo umount ~/fs
 mkdir -p ~/fs
 
@@ -51,8 +51,9 @@ done
 
 sleep 3
 
-./target/debug/client --log-level $log_level create test1 100000 &
+./target/debug/client --log-level $log_level create test1 100000
 
+./target/debug/client --log-level $log_level daemon&
 sleep 3
 
 ./target/debug/client --log-level $log_level mount ~/fs test1 &

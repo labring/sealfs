@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use dashmap::DashMap;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};

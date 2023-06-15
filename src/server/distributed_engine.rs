@@ -14,7 +14,7 @@ use crate::common::serialization::{
 use crate::common::serialization::{DirectoryEntrySendMetaData, OperationType};
 
 use crate::common::util::get_full_path;
-use crate::rpc::client::Client;
+use crate::rpc::client::{add_tcp_connection, RpcClient};
 use dashmap::mapref::one::{Ref, RefMut};
 use dashmap::DashMap;
 use libc::{O_CREAT, O_DIRECTORY, O_EXCL};
@@ -26,13 +26,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{sync::Arc, vec};
 use tokio::sync::Mutex;
-use tokio::time::Duration;
 
 pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub storage_engine: Arc<Storage>,
     pub meta_engine: Arc<MetaEngine>,
-    pub client: Arc<Client>,
+    pub client: Arc<RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>>,
     pub sender: Sender,
 
     pub cluster_status: AtomicI32,
@@ -59,7 +58,7 @@ where
         meta_engine: Arc<MetaEngine>,
     ) -> Self {
         let file_locks = DashMap::new();
-        let client = Arc::new(Client::new());
+        let client = Arc::new(RpcClient::new());
         Self {
             address,
             storage_engine,
@@ -79,34 +78,8 @@ where
     }
 
     pub async fn add_connection(&self, address: String) {
-        loop {
-            if self.client.add_connection(&address).await {
-                info!("add connection to {}", address);
-                break;
-            }
-            info!("add connection to {} failed, retrying...", address);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        self.sender.init_volume(&address, "").await.unwrap();
-    }
-
-    pub async fn add_server_connection(&self, address: String) {
-        loop {
-            if self.client.add_connection(&address).await {
-                info!("add server connection to {}", address);
-                match self.sender.init_volume(&address, "").await {
-                    Ok(_) => {
-                        info!("init volume success");
-                        break;
-                    }
-                    Err(_) => {
-                        info!("init volume failed, retrying...");
-                    }
-                }
-            }
-            info!("add server connection to {} failed, retrying...", address);
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        add_tcp_connection(&address, &self.client).await;
+        //self.sender.init_volume(&address, "").await.unwrap();
     }
 
     pub fn lock_file(

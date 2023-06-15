@@ -1,8 +1,14 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+// sender is used to send requests to the other sealfs servers
+
 use std::sync::Arc;
 
 use log::error;
 
-use crate::{common::errors::CONNECTION_ERROR, rpc::client::Client};
+use crate::{common::errors::CONNECTION_ERROR, rpc::client::RpcClient};
 
 use super::serialization::{
     AddNodesSendMetaData, ClusterStatus, CreateVolumeSendMetaData, DeleteNodesSendMetaData,
@@ -10,11 +16,13 @@ use super::serialization::{
 };
 
 pub struct Sender {
-    pub client: Arc<Client>,
+    pub client: Arc<RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>>,
 }
 
 impl Sender {
-    pub fn new(client: Arc<Client>) -> Self {
+    pub fn new(
+        client: Arc<RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>>,
+    ) -> Self {
         Sender { client }
     }
 

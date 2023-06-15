@@ -1,18 +1,26 @@
 // Copyright 2022 labring. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
+pub mod daemon;
 pub mod fuse_client;
 
 use clap::{Parser, Subcommand};
-use fuse_client::CLIENT;
 use fuser::{
-    Filesystem, MountOption, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry,
-    ReplyOpen, ReplyWrite, Request,
+    Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
+    ReplyWrite, Request,
 };
 use log::{error, info};
-use std::{ffi::OsStr, str::FromStr};
+use std::{ffi::OsStr, str::FromStr, sync::Arc};
 
-use crate::common::errors::status_to_string;
+use crate::{
+    client::daemon::{LocalCli, SealfsFused},
+    common::errors::status_to_string,
+    rpc::server::RpcServer,
+};
+
+use self::fuse_client::{client_sync_cluster_infos, client_watch_status, Client};
+
+const LOCAL_PATH: &str = "/tmp/sealfs.sock";
 
 #[derive(Parser)]
 #[command(author = "Christopher Berner", version, about, long_about = None)]
@@ -40,6 +48,16 @@ enum Commands {
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
         manager_address: Option<String>,
     },
+    Daemon {
+        /// Start a daemon that hosts volumes
+        /// index file
+        #[arg(name = "INDEX_FILE")]
+        _index_file: Option<String>,
+
+        /// Address of the manager
+        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        manager_address: Option<String>,
+    },
     Mount {
         /// Act as a client, and mount FUSE at given path
         #[arg(required = true, name = "MOUNT_POINT")]
@@ -48,18 +66,6 @@ enum Commands {
         /// Remote volume name
         #[arg(required = true, name = "volume_NAME")]
         volume_name: Option<String>,
-
-        /// Automatically unmount on process exit
-        #[arg(long = "auto_unmount", name = "auto_unmount")]
-        auto_unmount: bool,
-
-        /// Allow root user to access filesystem
-        #[arg(long = "allow-root", name = "allow-root")]
-        allow_root: bool,
-
-        /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
-        manager_address: Option<String>,
     },
     Add {
         /// Add a server to the cluster
@@ -102,21 +108,42 @@ enum Commands {
         _manager_address: Option<String>,
     },
     Status {
-        /// Get the status of the cluster
         /// Address of the manager
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
         manager_address: Option<String>,
     },
+    Probe {
+        // Probe the local client
+    },
 }
 
-struct SealFS;
+struct SealFS {
+    client: Arc<Client>,
+    volume_root_inode: u64,
+}
+
+impl SealFS {
+    fn new(client: Arc<Client>, volume_root_inode: u64) -> Self {
+        Self {
+            client,
+            volume_root_inode,
+        }
+    }
+}
 
 impl Filesystem for SealFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         info!("lookup, parent = {}, name = {:?}", parent, name);
-        CLIENT
+        let client = self.client.clone();
+        let name = name.to_owned();
+        let parent = if parent == 1 {
+            self.volume_root_inode
+        } else {
+            parent
+        };
+        self.client
             .handle
-            .spawn(CLIENT.lookup_remote(parent, name.to_owned(), reply));
+            .spawn(async move { client.lookup_remote(parent, name, reply).await });
     }
 
     fn create(
@@ -133,26 +160,44 @@ impl Filesystem for SealFS {
             "create, parent = {}, name = {:?}, mode = {}, umask = {}, flags = {}",
             parent, name, mode, umask, flags
         );
-        CLIENT.handle.spawn(CLIENT.create_remote(
-            parent,
-            name.to_owned(),
-            mode,
-            umask,
-            flags,
-            reply,
-        ));
+        let parent = if parent == 1 {
+            self.volume_root_inode
+        } else {
+            parent
+        };
+        let client = self.client.clone();
+        let name = name.to_owned();
+        self.client.handle.spawn(async move {
+            client
+                .create_remote(parent, name, mode, umask, flags, reply)
+                .await
+        });
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         info!("getattr, ino = {}", ino);
-        CLIENT.handle.spawn(CLIENT.getattr_remote(ino, reply));
+        let client = self.client.clone();
+        let ino = if ino == 1 {
+            self.volume_root_inode
+        } else {
+            ino
+        };
+        self.client
+            .handle
+            .spawn(async move { client.getattr_remote(ino, reply).await });
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, reply: ReplyDirectory) {
         info!("readdir, ino = {}, offset = {}", ino, offset);
-        CLIENT
+        let client = self.client.clone();
+        let ino = if ino == 1 {
+            self.volume_root_inode
+        } else {
+            ino
+        };
+        self.client
             .handle
-            .spawn(CLIENT.readdir_remote(ino, offset, reply));
+            .spawn(async move { client.readdir_remote(ino, offset, reply).await });
     }
 
     fn read(
@@ -167,9 +212,15 @@ impl Filesystem for SealFS {
         reply: ReplyData,
     ) {
         info!("read, ino = {}, offset = {}, size = {}", ino, offset, size);
-        CLIENT
+        let client = self.client.clone();
+        let ino = if ino == 1 {
+            self.volume_root_inode
+        } else {
+            ino
+        };
+        self.client
             .handle
-            .spawn(CLIENT.read_remote(ino, offset, size, reply));
+            .spawn(async move { client.read_remote(ino, offset, size, reply).await });
     }
 
     fn write(
@@ -190,9 +241,18 @@ impl Filesystem for SealFS {
             offset,
             data.len()
         );
-        CLIENT
-            .handle
-            .spawn(CLIENT.write_remote(ino, offset, data.to_owned(), reply));
+        let client = self.client.clone();
+        let data = data.to_owned();
+        let ino = if ino == 1 {
+            self.volume_root_inode
+        } else {
+            ino
+        };
+        self.client.handle.spawn(async move {
+            client
+                .write_remote(ino, offset, data.to_owned(), reply)
+                .await
+        });
     }
 
     fn mkdir(
@@ -208,38 +268,72 @@ impl Filesystem for SealFS {
             "mkdir, parent = {}, name = {:?}, mode = {}",
             parent, name, mode
         );
-        CLIENT
-            .handle
-            .spawn(CLIENT.mkdir_remote(parent, name.to_owned(), mode, reply));
+        let client = self.client.clone();
+        let name = name.to_owned();
+        let parent = if parent == 1 {
+            self.volume_root_inode
+        } else {
+            parent
+        };
+        self.client.handle.spawn(async move {
+            client
+                .mkdir_remote(parent, name.to_owned(), mode, reply)
+                .await
+        });
     }
 
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
-        CLIENT.handle.spawn(CLIENT.open_remote(ino, flags, reply));
+        let client = self.client.clone();
+        let ino = if ino == 1 {
+            self.volume_root_inode
+        } else {
+            ino
+        };
+        self.client
+            .handle
+            .spawn(async move { client.open_remote(ino, flags, reply).await });
     }
 
     fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
         info!("unlink");
-        CLIENT
+        let client = self.client.clone();
+        let name = name.to_owned();
+        let parent = if parent == 1 {
+            self.volume_root_inode
+        } else {
+            parent
+        };
+        self.client
             .handle
-            .spawn(CLIENT.unlink_remote(parent, name.to_owned(), reply));
+            .spawn(async move { client.unlink_remote(parent, name.to_owned(), reply).await });
     }
 
     fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
         info!("rmdir");
-        CLIENT
+        let client = self.client.clone();
+        let name = name.to_owned();
+        let parent = if parent == 1 {
+            self.volume_root_inode
+        } else {
+            parent
+        };
+        self.client
             .handle
-            .spawn(CLIENT.rmdir_remote(parent, name.to_owned(), reply));
+            .spawn(async move { client.rmdir_remote(parent, name.to_owned(), reply).await });
     }
 }
 
-pub async fn connect_to_manager(manager_address: String) -> Result<(), Box<dyn std::error::Error>> {
-    CLIENT.connect_to_manager(&manager_address).await;
-    tokio::spawn(CLIENT.sync_cluster_infos());
-    tokio::spawn(CLIENT.watch_status());
+pub async fn connect_to_manager(
+    manager_address: String,
+    client: Arc<Client>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    client.connect_to_manager(&manager_address).await;
+    tokio::spawn(client_sync_cluster_infos(client.clone()));
+    tokio::spawn(client_watch_status(client));
     Ok(())
 }
 
-pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let log_level = match cli.log_level {
@@ -254,10 +348,7 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("spawn client");
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let client = Arc::new(Client::new());
 
     match cli.command {
         Commands::Create {
@@ -273,10 +364,10 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            runtime.block_on(connect_to_manager(manager_address))?;
+            connect_to_manager(manager_address, client.clone()).await?;
 
             info!("connect_servers");
-            if let Err(status) = runtime.block_on(CLIENT.connect_servers()) {
+            if let Err(status) = client.connect_servers().await {
                 error!(
                     "connect_servers failed, status = {:?}",
                     status_to_string(status)
@@ -285,8 +376,9 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             info!("create_volume");
-            if let Err(status) =
-                runtime.block_on(CLIENT.create_volume(&mountpoint, volume_size.unwrap()))
+            if let Err(status) = client
+                .create_volume(&mountpoint, volume_size.unwrap())
+                .await
             {
                 error!(
                     "create_volume failed, status = {:?}",
@@ -297,41 +389,21 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
 
             Ok(())
         }
-        Commands::Mount {
-            mount_point,
-            auto_unmount,
-            allow_root,
+        Commands::Daemon {
+            _index_file,
             manager_address,
-            volume_name,
         } => {
-            let mountpoint = mount_point.unwrap();
-            let mut options = vec![MountOption::RW, MountOption::FSName("seal".to_string())];
-            if auto_unmount {
-                options.push(MountOption::AutoUnmount);
-            }
-            if allow_root {
-                options.push(MountOption::AllowRoot);
-            }
+            // TODO: check index_file for existence
 
             let manager_address = match manager_address {
                 Some(address) => address,
                 None => "127.0.0.1:8081".to_owned(),
             };
-
             info!("init client");
-            runtime.block_on(connect_to_manager(manager_address))?;
-
-            info!("init_volume");
-            if let Err(status) = runtime.block_on(CLIENT.init_volume(&volume_name.unwrap())) {
-                error!(
-                    "init_volume failed, status = {:?}",
-                    status_to_string(status)
-                );
-                return Ok(());
-            }
+            connect_to_manager(manager_address, client.clone()).await?;
 
             info!("connect_servers");
-            if let Err(status) = runtime.block_on(CLIENT.connect_servers()) {
+            if let Err(status) = client.connect_servers().await {
                 error!(
                     "connect_servers failed, status = {:?}",
                     status_to_string(status)
@@ -339,14 +411,31 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            info!("start fuse");
+            let sealfsd = SealfsFused::new(client);
 
-            fuser::mount2(SealFS, mountpoint, &options).unwrap();
-            /* TODO
-            thread 'main' panicked at 'called `Result::unwrap()` on an `Err` value: Os { code: 107, kind: NotConnected, message: "Transport endpoint is not connected" }', sealfs-rust/client/src/lib.rs:162:49
+            let server = RpcServer::new(Arc::new(sealfsd), LOCAL_PATH);
+            let result = server.run_unix_stream().await;
+            match result {
+                Ok(_) => info!("server run success"),
+                Err(e) => panic!("server run failed, error = {}", e),
+            };
+            Ok(())
+        }
+        Commands::Mount {
+            mount_point,
+            volume_name,
+        } => {
+            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
 
-            should be fixed by checking if the mountpoint is valid
-            */
+            local_client.add_connection(LOCAL_PATH).await;
+
+            let result = local_client
+                .mount(&volume_name.unwrap(), &mount_point.unwrap())
+                .await;
+            match result {
+                Ok(_) => info!("mount success"),
+                Err(e) => panic!("mount failed, error = {}", e),
+            };
 
             Ok(())
         }
@@ -361,14 +450,14 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            let result = runtime.block_on(connect_to_manager(manager_address));
+            let result = connect_to_manager(manager_address, client.clone()).await;
             match result {
                 Ok(_) => info!("init manager success"),
                 Err(e) => panic!("init manager failed, error = {}", e),
             };
 
             let new_servers_info = vec![(server_address.unwrap(), weight.unwrap_or(100))];
-            let result = runtime.block_on(CLIENT.add_new_servers(new_servers_info));
+            let result = client.add_new_servers(new_servers_info).await;
 
             match result {
                 Ok(_) => {
@@ -390,14 +479,14 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            let result = runtime.block_on(connect_to_manager(manager_address));
+            let result = connect_to_manager(manager_address, client.clone()).await;
             match result {
                 Ok(_) => info!("init manager success"),
                 Err(e) => panic!("init manager failed, error = {}", e),
             };
 
             let new_servers_info = vec![server_address.unwrap()];
-            let result = runtime.block_on(CLIENT.delete_servers(new_servers_info));
+            let result = client.delete_servers(new_servers_info).await;
 
             match result {
                 Ok(_) => {
@@ -424,12 +513,12 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            let result = runtime.block_on(connect_to_manager(manager_address));
+            let result = connect_to_manager(manager_address, client.clone()).await;
             match result {
                 Ok(_) => info!("init manager success"),
                 Err(e) => panic!("init manager failed, error = {}", e),
             };
-            let result = runtime.block_on(CLIENT.get_cluster_status());
+            let result = client.get_cluster_status().await;
             match result {
                 Ok(status) => {
                     info!("get cluster status success");
@@ -439,6 +528,24 @@ pub fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                     info!("get cluster status failed, error = {}", e);
                 }
             };
+            Ok(())
+        }
+        Commands::Probe {} => {
+            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+
+            local_client.add_connection(LOCAL_PATH).await;
+
+            let result = local_client.probe().await;
+            match result {
+                Ok(_) => info!("probe success"),
+                Err(e) => {
+                    return Err(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("probe failed, error = {}", e),
+                    )))
+                }
+            };
+
             Ok(())
         }
     }
