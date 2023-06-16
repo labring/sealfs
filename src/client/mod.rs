@@ -67,6 +67,11 @@ enum Commands {
         #[arg(required = true, name = "volume_NAME")]
         volume_name: Option<String>,
     },
+    Umount {
+        /// Unmount FUSE at given path
+        #[arg(required = true, name = "MOUNT_POINT")]
+        mount_point: Option<String>,
+    },
     Add {
         /// Add a server to the cluster
         #[arg(required = true, name = "SERVER_ADDRESS")]
@@ -435,6 +440,19 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             match result {
                 Ok(_) => info!("mount success"),
                 Err(e) => panic!("mount failed, error = {}", e),
+            };
+
+            Ok(())
+        }
+        Commands::Umount { mount_point } => {
+            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+
+            local_client.add_connection(LOCAL_PATH).await;
+
+            let result = local_client.umount(&mount_point.unwrap()).await;
+            match result {
+                Ok(_) => info!("umount success"),
+                Err(e) => panic!("umount failed, error = {}", e),
             };
 
             Ok(())
