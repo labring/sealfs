@@ -9,7 +9,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use libc::{dirent64, iovec, O_CREAT};
-use log::{debug, info, warn};
+use log::{debug, info};
 use sealfs::common::byte::CHUNK_SIZE;
 use sealfs::common::hash_ring::HashRing;
 use sealfs::common::serialization::{
@@ -18,11 +18,16 @@ use sealfs::common::serialization::{
     GetHashRingInfoRecvMetaData, LinuxDirent, ManagerOperationType, OpenFileSendMetaData,
     OperationType, ReadDirSendMetaData, ReadFileSendMetaData, TruncateFileSendMetaData,
 };
+use sealfs::rpc::client::TcpStreamCreator;
 use sealfs::server::path_split;
 use sealfs::{offset_of, rpc};
 pub struct Client {
     // TODO replace with a thread safe data structure
-    pub client: rpc::client::Client,
+    pub client: rpc::client::RpcClient<
+        tokio::net::tcp::OwnedReadHalf,
+        tokio::net::tcp::OwnedWriteHalf,
+        TcpStreamCreator,
+    >,
     pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
     handle: tokio::runtime::Handle,
@@ -44,7 +49,7 @@ impl Client {
     pub fn new() -> Self {
         let handle = tokio::runtime::Handle::current();
         Self {
-            client: rpc::client::Client::default(),
+            client: rpc::client::RpcClient::default(),
             inodes: DashMap::new(),
             inodes_reverse: DashMap::new(),
             handle,
@@ -55,12 +60,8 @@ impl Client {
         }
     }
 
-    pub async fn add_connection(&self, server_address: &str) {
-        loop {
-            if self.client.add_connection(server_address).await {
-                break;
-            }
-        }
+    pub async fn add_connection(&self, server_address: &str) -> Result<(), String> {
+        self.client.add_connection(&server_address).await
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -117,21 +118,9 @@ impl Client {
 
         debug!("add connection");
 
-        loop {
-            match self
-                .client
-                .add_connection(&self.manager_address.lock().await)
-                .await
-            {
-                true => {
-                    break;
-                }
-                false => {
-                    warn!("add connection failed, wait for a while");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-        }
+        self.client
+            .add_connection(&self.manager_address.lock().await)
+            .await?;
 
         let result = async {
             loop {
@@ -163,7 +152,9 @@ impl Client {
         match result {
             Ok(all_servers_address) => {
                 for server_address in &all_servers_address {
-                    self.add_connection(&server_address.0).await;
+                    if let Err(e) = self.add_connection(&server_address.0).await {
+                        panic!("add connection failed: {}", e);
+                    }
                 }
                 self.hash_ring
                     .write()

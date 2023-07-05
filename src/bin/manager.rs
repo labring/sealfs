@@ -4,7 +4,7 @@
 
 use clap::Parser;
 use log::warn;
-use sealfs::{manager::manager_service::ManagerService, rpc::server::Server};
+use sealfs::{manager::manager_service::ManagerService, rpc::server::RpcServer};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
         .map(|s| (s.to_string(), properties.virtual_nodes))
         .collect::<Vec<(String, usize)>>();
 
-    let server = Server::new(Arc::new(ManagerService::new(servers_address)), &address);
+    let server = RpcServer::new(Arc::new(ManagerService::new(servers_address)), &address);
     server.run().await?;
     Ok(())
 }

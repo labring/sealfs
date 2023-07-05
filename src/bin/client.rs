@@ -4,9 +4,11 @@
 
 use sealfs::client;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = client::run_command() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = client::run_command().await {
         println!("Error: {}", e);
+        return Err(e);
     }
     Ok(())
 }

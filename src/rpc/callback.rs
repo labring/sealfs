@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::{
     ptr::drop_in_place,
     sync::{
@@ -6,14 +10,13 @@ use std::{
     },
 };
 
-use crate::rpc::protocol::REQUEST_POOL_SIZE;
 use kanal;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     time::timeout,
 };
 
-use super::protocol::CLIENT_REQUEST_TIMEOUT;
+use super::protocol::{CLIENT_REQUEST_TIMEOUT, REQUEST_POOL_SIZE};
 
 pub struct OperationCallback {
     pub data: *const u8,

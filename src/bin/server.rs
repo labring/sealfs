@@ -4,15 +4,10 @@
 
 use clap::Parser;
 use log::{info, warn};
-use sealfs::common::serialization::ManagerOperationType;
-use sealfs::manager::manager_service::SendHeartRequest;
-use sealfs::rpc::client::Client;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::str::FromStr;
-use tokio::time;
-use tokio::time::MissedTickBehavior;
 
 const _SERVER_FLAG: u32 = 1;
 
@@ -84,24 +79,7 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
     //connect to manager
 
     info!("server_address: {}", server_address.clone());
-    // if properties.heartbeat {
 
-    //     //begin scheduled task
-    //     tokio::spawn(begin_heartbeat_report(
-    //         client,
-    //         manager_address,
-    //         server_address.clone(),
-    //         properties.lifetime.clone(),
-    //     ));
-    // }
-
-    //todo
-    //start server
-    // let fs_service = FsService::default();
-    // let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    // health_reporter
-    //     .set_serving::<RemoteFsServer<FsService>>()
-    //     .await;
     info!("Start Server");
     server::run(
         properties.database_path,
@@ -112,53 +90,5 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         properties.write_buffer_size,
     )
     .await?;
-    // Server::builder()
-    //     .add_service(health_service)
-    //     .add_service(service::new_fs_service(fs_service))
-    //     .serve(properties.server_address.parse().unwrap())
-    //     .await?;
     Ok(())
-}
-
-async fn _begin_heartbeat_report(
-    client: Client,
-    manager_address: String,
-    server_address: String,
-    lifetime: String,
-) {
-    let mut interval = time::interval(time::Duration::from_secs(5));
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    loop {
-        let request = SendHeartRequest {
-            address: server_address.clone(),
-            flags: _SERVER_FLAG,
-            lifetime: lifetime.clone(),
-        };
-        let mut status = 0i32;
-        let mut rsp_flags = 0u32;
-        let mut recv_meta_data_length = 0usize;
-        let mut recv_data_length = 0usize;
-        {
-            let result = client
-                .call_remote(
-                    &manager_address,
-                    ManagerOperationType::SendHeart.into(),
-                    0,
-                    &server_address,
-                    &bincode::serialize(&request).unwrap(),
-                    &[],
-                    &mut status,
-                    &mut rsp_flags,
-                    &mut recv_meta_data_length,
-                    &mut recv_data_length,
-                    &mut [],
-                    &mut [],
-                )
-                .await;
-            if result.is_err() {
-                panic!("send heartbeat error. {:?}", result);
-            }
-        }
-        interval.tick().await;
-    }
 }

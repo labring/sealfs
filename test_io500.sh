@@ -11,8 +11,10 @@ function green_font() {
 
 function fuse_test() {
     ./target/debug/client --log-level warn create test1 100000
-    ./target/debug/client --log-level warn mount ~/fs test1 &
+    ./target/debug/client --log-level warn daemon&
     sleep 3
+    ./target/debug/client --log-level warn mount ~/fs test1
+
     start_time=$[$(date +%s%N)/1000000]
     cd io500
     timeout -s SIGKILL 200 mpirun -np 2 ./io500 config-minimal.ini
@@ -21,7 +23,6 @@ function fuse_test() {
     end_time=$[$(date +%s%N)/1000000]
     result_time=$[ $end_time - $start_time ]
     echo -e "fuse tests finish, cost: $(green_font ${result_time}ms)"
-    sudo umount ~/fs
     sudo rm -rf ~/fs
     return $result
 }
@@ -50,6 +51,8 @@ fi
 set +e
 
 sudo umount ~/fs
+rm /tmp/sealfs.sock
+rm /tmp/sealfs.index
 mkdir -p ~/fs
 
 sudo rm -rf io500
@@ -84,10 +87,10 @@ else
 fi
 
 echo "[global]" > config-minimal.ini
-echo "datadir = /home/luan/fs" >> config-minimal.ini
+echo "datadir = /home/sealos/fs" >> config-minimal.ini
 echo "" >> config-minimal.ini
 echo "[debug]" >> config-minimal.ini
-echo "stonewall-time = 1" >> config-minimal.ini
+echo "stonewall-time = 10" >> config-minimal.ini
 
 cd ..
 

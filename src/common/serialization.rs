@@ -1,3 +1,7 @@
+// Copyright 2022 labring. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use fuser::FileType;
 use libc::{
     stat, statx, statx_timestamp, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,

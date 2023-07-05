@@ -2,24 +2,103 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{callback::CallbackPool, connection::ClientConnection};
+use super::{
+    callback::CallbackPool,
+    connection::ClientConnection,
+    protocol::{CONNECTION_RETRY_TIMES, SEND_RETRY_TIMES},
+};
+use async_trait::async_trait;
 use dashmap::DashMap;
-use log::{error, warn};
-use std::sync::Arc;
-use tokio::net::tcp::OwnedReadHalf;
+use log::{error, info, warn};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub struct Client {
-    connections: DashMap<String, Arc<ClientConnection>>,
-    pool: Arc<CallbackPool>,
+#[async_trait]
+pub trait StreamCreator<
+    R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+>
+{
+    async fn create_stream(server_address: &str) -> Result<(R, W), String>;
 }
 
-impl Default for Client {
+pub struct TcpStreamCreator;
+
+#[async_trait]
+impl StreamCreator<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>
+    for TcpStreamCreator
+{
+    async fn create_stream(
+        server_address: &str,
+    ) -> Result<
+        (
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+        ),
+        String,
+    > {
+        let stream = match tokio::net::TcpStream::connect(server_address).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(format!("connect to {} error: {}", server_address, e));
+            }
+        };
+        Ok(stream.into_split())
+    }
+}
+
+pub struct UnixStreamCreator;
+
+#[async_trait]
+impl StreamCreator<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf>
+    for UnixStreamCreator
+{
+    async fn create_stream(
+        server_address: &str,
+    ) -> Result<
+        (
+            tokio::net::unix::OwnedReadHalf,
+            tokio::net::unix::OwnedWriteHalf,
+        ),
+        String,
+    > {
+        let stream = match tokio::net::UnixStream::connect(server_address).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(format!("connect to {} error: {}", server_address, e));
+            }
+        };
+        Ok(stream.into_split())
+    }
+}
+
+pub struct RpcClient<
+    R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    S: StreamCreator<R, W>,
+> {
+    connections: DashMap<String, Arc<ClientConnection<W, R>>>,
+    pool: Arc<CallbackPool>,
+    stream_creator: PhantomData<S>,
+}
+
+impl<
+        R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        S: StreamCreator<R, W>,
+    > Default for RpcClient<R, W, S>
+{
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Client {
+impl<
+        R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        S: StreamCreator<R, W>,
+    > RpcClient<R, W, S>
+{
     pub fn new() -> Self {
         let mut pool = CallbackPool::new();
         pool.init();
@@ -27,6 +106,7 @@ impl Client {
         Self {
             connections: DashMap::new(),
             pool,
+            stream_creator: PhantomData,
         }
     }
 
@@ -34,30 +114,71 @@ impl Client {
         self.pool.free();
     }
 
-    pub async fn add_connection(&self, server_address: &str) -> bool {
-        let result = tokio::net::TcpStream::connect(server_address).await;
-        let connection = match result {
-            Ok(stream) => {
-                let (read_stream, write_stream) = stream.into_split();
-                let connection = Arc::new(ClientConnection::new(
-                    server_address,
-                    Some(tokio::sync::Mutex::new(write_stream)),
-                ));
-                tokio::spawn(parse_response(
-                    read_stream,
-                    connection.clone(),
-                    self.pool.clone(),
-                ));
-                connection
+    pub async fn add_connection(&self, server_address: &str) -> Result<(), String> {
+        for _ in 0..CONNECTION_RETRY_TIMES {
+            match S::create_stream(server_address).await {
+                Ok((read_stream, write_stream)) => {
+                    if self.connections.contains_key(server_address) {
+                        warn!("connection already exists: {}", server_address);
+                        return Ok(());
+                    }
+                    let connection = Arc::new(ClientConnection::new(server_address, write_stream));
+                    tokio::spawn(parse_response(
+                        read_stream,
+                        connection.clone(),
+                        self.pool.clone(),
+                    ));
+                    self.connections
+                        .insert(server_address.to_string(), connection);
+                    info!("add connection to {} success", server_address);
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        "connect to {} failed: {}, wait for a while",
+                        server_address, e
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             }
-            Err(e) => {
-                warn!("connect to {} failed: {}", server_address, e);
-                return false;
+        }
+        Err(format!(
+            "connect to {} error: connection retry times exceed",
+            server_address
+        ))
+    }
+
+    async fn reconnect(&self, server_address: &str) -> Result<(), String> {
+        match self.connections.get(server_address) {
+            Some(connection) => {
+                if connection.value().reconnect() {
+                    match S::create_stream(server_address).await {
+                        Ok((read_stream, write_stream)) => {
+                            tokio::spawn(parse_response(
+                                read_stream,
+                                connection.clone(),
+                                self.pool.clone(),
+                            ));
+                            connection.value().reset_connection(write_stream).await;
+                            info!("reconnect to {} success", server_address);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!(
+                                "reconnect to {} failed: {}, wait for a while",
+                                server_address, e
+                            );
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            connection.value().reconnect_failed();
+                        }
+                    }
+                }
+                Ok(())
             }
-        };
-        self.connections
-            .insert(server_address.to_string(), connection);
-        true
+            None => {
+                panic!("connection not exists: {}", server_address);
+            }
+        }
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -80,56 +201,73 @@ impl Client {
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), String> {
-        let connection = match self.connections.get(server_address) {
-            Some(connection) => connection,
-            None => {
-                error!("connection not found: {}", server_address);
-                return Err("connection not found".into());
+        for _ in 0..SEND_RETRY_TIMES {
+            let connection = match self.connections.get(server_address) {
+                Some(connection) => connection,
+                None => {
+                    error!("connection not exists: {}", server_address);
+                    return Err(format!("connection not exists: {}", server_address));
+                }
+            };
+            let (batch, id) = self
+                .pool
+                .register_callback(recv_meta_data, recv_data)
+                .await?;
+
+            if let Err(e) = connection
+                .send_request(
+                    batch,
+                    id,
+                    operation_type,
+                    req_flags,
+                    path,
+                    send_meta_data,
+                    send_data,
+                )
+                .await
+            {
+                error!("send request to {} failed: {}", server_address, e);
+                if connection.disconnect() {
+                    self.reconnect(server_address).await?;
+                }
+                continue;
             }
-        };
-        let (batch, id) = self
-            .pool
-            .register_callback(recv_meta_data, recv_data)
-            .await?;
-        connection
-            .send_request(
-                batch,
-                id,
-                operation_type,
-                req_flags,
-                path,
-                send_meta_data,
-                send_data,
-            )
-            .await?;
-        let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
-        *status = s;
-        *rsp_flags = f;
-        *recv_meta_data_length = meta_data_length;
-        *recv_data_length = data_length;
-        Ok(())
+            let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?; // TODO: retry the request
+            *status = s;
+            *rsp_flags = f;
+            *recv_meta_data_length = meta_data_length;
+            *recv_data_length = data_length;
+            return Ok(());
+        }
+        Err(format!(
+            "send request to {} error: send retry times exceed",
+            server_address
+        ))
     }
 }
 
 // parse_response
 // try to get response from sequence of connections and write to callbacks
-pub async fn parse_response(
-    mut read_stream: OwnedReadHalf,
-    connection: Arc<ClientConnection>,
+pub async fn parse_response<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin>(
+    mut read_stream: R,
+    connection: Arc<ClientConnection<W, R>>,
     pool: Arc<CallbackPool>,
 ) {
     loop {
-        if !connection.is_connected().await {
+        if !connection.is_connected() {
             break;
         }
         let header = match connection.receive_response_header(&mut read_stream).await {
             Ok(header) => header,
             Err(e) => {
-                error!(
+                if e == "early eof" || e == "Connection reset by peer (os error 104)" {
+                    warn!("{:?} disconnected: {}", connection.server_address, e);
+                    break;
+                }
+                panic!(
                     "parse_response header from {:?} error: {}",
                     connection.server_address, e
                 );
-                break;
             }
         };
         let batch = header.batch;

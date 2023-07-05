@@ -12,7 +12,7 @@
 #![allow(unused)]
 use async_trait::async_trait;
 use log::debug;
-use sealfs::rpc::server::{Handler, Server};
+use sealfs::rpc::server::{Handler, RpcServer};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 pub struct HelloHandler {}
@@ -62,7 +62,7 @@ pub async fn main() -> anyhow::Result<()> {
         .format_timestamp(None)
         .filter(None, log::LevelFilter::Info);
     builder.init();
-    let server = Server::new(Arc::new(HelloHandler::new()), "127.0.0.1:50051");
+    let server = RpcServer::new(Arc::new(HelloHandler::new()), "127.0.0.1:50051");
     server.run().await?;
     Ok(())
 }
