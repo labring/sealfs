@@ -21,6 +21,7 @@ use crate::{
 use self::fuse_client::{client_sync_cluster_infos, client_watch_status, Client};
 
 const LOCAL_PATH: &str = "/tmp/sealfs.sock";
+const LOCAL_INDEX_PATH: &str = "/tmp/sealfs.index";
 
 #[derive(Parser)]
 #[command(author = "Christopher Berner", version, about, long_about = None)]
@@ -52,7 +53,7 @@ enum Commands {
         /// Start a daemon that hosts volumes
         /// index file
         #[arg(name = "INDEX_FILE")]
-        _index_file: Option<String>,
+        index_file: Option<String>,
 
         /// Address of the manager
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
@@ -96,22 +97,17 @@ enum Commands {
     },
     ListServers {
         /// List all servers in the cluster
-        #[arg(long = "list", name = "list")]
-        _list: bool,
-
         /// Address of the manager
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
         _manager_address: Option<String>,
     },
     ListVolumes {
         /// List all servers in the cluster
-        #[arg(long = "list", name = "list")]
-        _list: bool,
-
         /// Address of the manager
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
         _manager_address: Option<String>,
     },
+    ListMountpoints {},
     Status {
         /// Address of the manager
         #[arg(short = 'm', long = "manager_address", name = "manager_address")]
@@ -328,14 +324,12 @@ impl Filesystem for SealFS {
     }
 }
 
-pub async fn connect_to_manager(
-    manager_address: String,
-    client: Arc<Client>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    client.connect_to_manager(&manager_address).await;
+pub async fn connect_to_manager(manager_address: String, client: Arc<Client>) {
+    if let Err(e) = client.connect_to_manager(&manager_address).await {
+        panic!("connect to manager failed, err = {}", status_to_string(e));
+    }
     tokio::spawn(client_sync_cluster_infos(client.clone()));
     tokio::spawn(client_watch_status(client));
-    Ok(())
 }
 
 pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
@@ -369,7 +363,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await?;
+            connect_to_manager(manager_address, client.clone()).await;
 
             info!("connect_servers");
             if let Err(status) = client.connect_servers().await {
@@ -395,17 +389,20 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Commands::Daemon {
-            _index_file,
+            index_file,
             manager_address,
         } => {
-            // TODO: check index_file for existence
+            let index_file = match index_file {
+                Some(file) => file,
+                None => LOCAL_INDEX_PATH.to_owned(),
+            };
 
             let manager_address = match manager_address {
                 Some(address) => address,
                 None => "127.0.0.1:8081".to_owned(),
             };
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await?;
+            connect_to_manager(manager_address, client.clone()).await;
 
             info!("connect_servers");
             if let Err(status) = client.connect_servers().await {
@@ -416,13 +413,19 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
 
-            let sealfsd = SealfsFused::new(client);
+            let sealfsd = SealfsFused::new(index_file, client);
+            match sealfsd.init().await {
+                Ok(_) => info!("sealfsd init success"),
+                Err(e) => panic!("sealfsd init failed, error = {}", e),
+            }
 
             let server = RpcServer::new(Arc::new(sealfsd), LOCAL_PATH);
             let result = server.run_unix_stream().await;
             match result {
                 Ok(_) => info!("server run success"),
-                Err(e) => panic!("server run failed, error = {}", e),
+                Err(e) => {
+                    panic!("server run failed, error = {}", e)
+                }
             };
             Ok(())
         }
@@ -432,14 +435,16 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let local_client = LocalCli::new(LOCAL_PATH.to_owned());
 
-            local_client.add_connection(LOCAL_PATH).await;
+            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+                panic!("add connection failed, error = {}", status_to_string(e))
+            }
 
             let result = local_client
                 .mount(&volume_name.unwrap(), &mount_point.unwrap())
                 .await;
             match result {
                 Ok(_) => info!("mount success"),
-                Err(e) => panic!("mount failed, error = {}", e),
+                Err(e) => panic!("mount failed, error = {}", status_to_string(e)),
             };
 
             Ok(())
@@ -447,12 +452,14 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Umount { mount_point } => {
             let local_client = LocalCli::new(LOCAL_PATH.to_owned());
 
-            local_client.add_connection(LOCAL_PATH).await;
+            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+                panic!("add connection failed, error = {}", status_to_string(e))
+            }
 
             let result = local_client.umount(&mount_point.unwrap()).await;
             match result {
                 Ok(_) => info!("umount success"),
-                Err(e) => panic!("umount failed, error = {}", e),
+                Err(e) => panic!("umount failed, error = {}", status_to_string(e)),
             };
 
             Ok(())
@@ -468,11 +475,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            let result = connect_to_manager(manager_address, client.clone()).await;
-            match result {
-                Ok(_) => info!("init manager success"),
-                Err(e) => panic!("init manager failed, error = {}", e),
-            };
+            connect_to_manager(manager_address, client.clone()).await;
 
             let new_servers_info = vec![(server_address.unwrap(), weight.unwrap_or(100))];
             let result = client.add_new_servers(new_servers_info).await;
@@ -482,7 +485,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                     info!("add server success");
                 }
                 Err(e) => {
-                    info!("add server failed, error = {}", e);
+                    info!("add server failed, error = {}", status_to_string(e))
                 }
             };
             Ok(())
@@ -497,11 +500,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            let result = connect_to_manager(manager_address, client.clone()).await;
-            match result {
-                Ok(_) => info!("init manager success"),
-                Err(e) => panic!("init manager failed, error = {}", e),
-            };
+            connect_to_manager(manager_address, client.clone()).await;
 
             let new_servers_info = vec![server_address.unwrap()];
             let result = client.delete_servers(new_servers_info).await;
@@ -511,19 +510,34 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                     info!("add server success");
                 }
                 Err(e) => {
-                    info!("add server failed, error = {}", e);
+                    info!("add server failed, error = {}", status_to_string(e))
                 }
             };
             Ok(())
         }
-        Commands::ListServers {
-            _list,
-            _manager_address,
-        } => todo!(),
-        Commands::ListVolumes {
-            _list,
-            _manager_address,
-        } => todo!(),
+        Commands::ListServers { _manager_address } => todo!(),
+        Commands::ListVolumes { _manager_address } => todo!(),
+        Commands::ListMountpoints {} => {
+            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+
+            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+                panic!("add connection failed, error = {}", status_to_string(e))
+            }
+
+            let result = local_client.list_mountpoints().await;
+            match result {
+                Ok(mountpoints) => {
+                    info!("list mountpoints success");
+                    for mountpoint in mountpoints {
+                        println!("{}, {}", mountpoint.0, mountpoint.1);
+                    }
+                }
+                Err(e) => {
+                    info!("list mountpoints failed, error = {}", status_to_string(e))
+                }
+            };
+            Ok(())
+        }
         Commands::Status { manager_address } => {
             let manager_address = match manager_address {
                 Some(address) => address,
@@ -531,11 +545,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            let result = connect_to_manager(manager_address, client.clone()).await;
-            match result {
-                Ok(_) => info!("init manager success"),
-                Err(e) => panic!("init manager failed, error = {}", e),
-            };
+            connect_to_manager(manager_address, client.clone()).await;
             let result = client.get_cluster_status().await;
             match result {
                 Ok(status) => {
@@ -543,7 +553,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                     println!("{}", status);
                 }
                 Err(e) => {
-                    info!("get cluster status failed, error = {}", e);
+                    info!("get cluster status failed, error = {}", status_to_string(e))
                 }
             };
             Ok(())
@@ -551,7 +561,9 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Probe {} => {
             let local_client = LocalCli::new(LOCAL_PATH.to_owned());
 
-            local_client.add_connection(LOCAL_PATH).await;
+            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+                panic!("add connection failed, error = {}", status_to_string(e))
+            }
 
             let result = local_client.probe().await;
             match result {
@@ -559,7 +571,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("probe failed, error = {}", e),
+                        format!("probe failed, error = {}", status_to_string(e)),
                     )))
                 }
             };

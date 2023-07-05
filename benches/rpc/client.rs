@@ -1,6 +1,6 @@
 #![allow(unused)]
 
-use sealfs::rpc::client::{add_tcp_connection, RpcClient};
+use sealfs::rpc::client::{RpcClient, TcpStreamCreator};
 use std::sync::Arc;
 
 pub fn cli(total: u32) {
@@ -24,8 +24,14 @@ pub async fn run_cli_without_data(total: u32) {
     let mut handles = Vec::with_capacity(total as usize);
 
     let server_address = "127.0.0.1:50052";
-    let client = Arc::new(RpcClient::new());
-    add_tcp_connection(server_address, &client).await;
+    let client: Arc<
+        RpcClient<
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+            TcpStreamCreator,
+        >,
+    > = Arc::new(RpcClient::new());
+    client.add_connection(server_address).await;
 
     for i in 0..total {
         let new_client = client.clone();
@@ -79,8 +85,14 @@ async fn run_cli_with_data_size(total: u32, size: usize) {
     let mut handles = Vec::with_capacity(total as usize);
 
     let server_address = "127.0.0.1:50052";
-    let client = Arc::new(RpcClient::new());
-    add_tcp_connection(server_address, &client).await;
+    let client: Arc<
+        RpcClient<
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+            TcpStreamCreator,
+        >,
+    > = Arc::new(RpcClient::new());
+    client.add_connection(server_address).await;
     let data = vec![0u8; size];
     for i in 0..total {
         let new_client = client.clone();

@@ -2,32 +2,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{io::IoSlice, marker::PhantomData};
+use std::{io::IoSlice, marker::PhantomData, sync::atomic::AtomicU32};
 
-use crate::rpc::protocol::{
+use super::protocol::{
     RequestHeader, ResponseHeader, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH, MAX_METADATA_LENGTH,
     REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
 };
+use log::error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    //net::tcp::{OwnedReadHalf, OwnedWriteHalf},
-    sync::{Mutex, RwLock},
+    sync::Mutex,
 };
-// use tokio::{
-//     io::{AsyncReadExt, AsyncWriteExt},
-//     net::TcpStream,
-// };
-use anyhow::Result;
 
-enum ConnectionStatus {
-    Connected = 0,
-    Disconnected = 1,
-}
+const CONNECTED: u32 = 0;
+const DISCONNECTED: u32 = 1;
+const RECONNECTING: u32 = 2;
 
 pub struct ClientConnection<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> {
     pub server_address: String,
-    write_stream: Option<Mutex<W>>,
-    status: RwLock<ConnectionStatus>,
+    write_stream: Mutex<Option<W>>,
+    status: AtomicU32,
 
     phantom_data: PhantomData<R>,
 
@@ -40,25 +34,59 @@ pub struct ClientConnection<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> {
 }
 
 impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
-    pub fn new(server_address: &str, write_stream: Option<tokio::sync::Mutex<W>>) -> Self {
+    pub fn new(server_address: &str, write_stream: W) -> Self {
         Self {
             server_address: server_address.to_string(),
-            write_stream,
-            status: RwLock::new(ConnectionStatus::Connected),
+            write_stream: Mutex::new(Some(write_stream)),
+            status: AtomicU32::new(CONNECTED),
             phantom_data: PhantomData,
             _send_lock: Mutex::new(()),
         }
     }
 
-    pub async fn disconnect(&mut self) {
-        self.write_stream = None;
-        *self.status.write().await = ConnectionStatus::Disconnected;
+    pub fn disconnect(&self) -> bool {
+        self.status
+            .compare_exchange(
+                CONNECTED,
+                DISCONNECTED,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
     }
 
-    pub async fn is_connected(&self) -> bool {
-        match *self.status.read().await {
-            ConnectionStatus::Connected => true,
-            ConnectionStatus::Disconnected => false,
+    pub fn is_connected(&self) -> bool {
+        self.status.load(std::sync::atomic::Ordering::Acquire) == CONNECTED
+    }
+
+    pub fn reconnect(&self) -> bool {
+        self.status
+            .compare_exchange(
+                DISCONNECTED,
+                RECONNECTING,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+
+    pub async fn reset_connection(&self, write_stream: W) {
+        self.write_stream.lock().await.replace(write_stream);
+        self.status
+            .store(CONNECTED, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub fn reconnect_failed(&self) {
+        match self.status.compare_exchange(
+            RECONNECTING,
+            DISCONNECTED,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        ) {
+            Ok(_) => {}
+            Err(_) => {
+                error!("wrong status while roll back connection status")
+            }
         }
     }
 
@@ -76,6 +104,9 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
         meta_data: &[u8],
         data: &[u8],
     ) -> Result<(), String> {
+        if !self.is_connected() {
+            return Err("connection is not connected".to_string());
+        }
         let filename_length = filename.len();
         let meta_data_length = meta_data.len();
         let data_length = data.len();
@@ -90,7 +121,7 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
         request.extend_from_slice(&(meta_data_length as u32).to_le_bytes());
         request.extend_from_slice(&(data_length as u32).to_le_bytes());
         request.extend_from_slice(filename.as_bytes());
-        let mut stream = self.write_stream.as_ref().unwrap().lock().await;
+        let mut stream = self.write_stream.lock().await;
         let mut offset = 0;
         loop {
             if offset >= request.len() + meta_data_length + data_length {
@@ -103,6 +134,8 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
                     IoSlice::new(data),
                 ];
                 offset += stream
+                    .as_mut()
+                    .unwrap()
                     .write_vectored(bufs)
                     .await
                     .map_err(|e| e.to_string())?;
@@ -112,6 +145,8 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
                     IoSlice::new(data),
                 ];
                 offset += stream
+                    .as_mut()
+                    .unwrap()
                     .write_vectored(bufs)
                     .await
                     .map_err(|e| e.to_string())?;
@@ -120,6 +155,8 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
                     &data[offset - request.len() - meta_data_length..],
                 )];
                 offset += stream
+                    .as_mut()
+                    .unwrap()
                     .write_vectored(bufs)
                     .await
                     .map_err(|e| e.to_string())?;
@@ -188,7 +225,6 @@ pub struct ServerConnection<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> {
     pub id: u32,
     name_id: String,
     write_stream: Mutex<W>,
-    status: ConnectionStatus,
 
     phantom_data: PhantomData<R>,
 }
@@ -199,20 +235,8 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ServerConnection<W, R> {
             id,
             name_id,
             write_stream: Mutex::new(write_stream),
-            status: ConnectionStatus::Connected,
 
             phantom_data: PhantomData,
-        }
-    }
-
-    pub fn disconnect(&mut self) {
-        self.status = ConnectionStatus::Disconnected;
-    }
-
-    pub fn is_connected(&self) -> bool {
-        match self.status {
-            ConnectionStatus::Connected => true,
-            ConnectionStatus::Disconnected => false,
         }
     }
 

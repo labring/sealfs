@@ -18,13 +18,16 @@ use sealfs::common::serialization::{
     GetHashRingInfoRecvMetaData, LinuxDirent, ManagerOperationType, OpenFileSendMetaData,
     OperationType, ReadDirSendMetaData, ReadFileSendMetaData, TruncateFileSendMetaData,
 };
-use sealfs::rpc::client::add_tcp_connection;
+use sealfs::rpc::client::TcpStreamCreator;
 use sealfs::server::path_split;
 use sealfs::{offset_of, rpc};
 pub struct Client {
     // TODO replace with a thread safe data structure
-    pub client:
-        rpc::client::RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>,
+    pub client: rpc::client::RpcClient<
+        tokio::net::tcp::OwnedReadHalf,
+        tokio::net::tcp::OwnedWriteHalf,
+        TcpStreamCreator,
+    >,
     pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
     handle: tokio::runtime::Handle,
@@ -57,8 +60,8 @@ impl Client {
         }
     }
 
-    pub async fn add_connection(&self, server_address: &str) {
-        add_tcp_connection(&server_address, &self.client).await;
+    pub async fn add_connection(&self, server_address: &str) -> Result<(), String> {
+        self.client.add_connection(&server_address).await
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -115,7 +118,9 @@ impl Client {
 
         debug!("add connection");
 
-        add_tcp_connection(&self.manager_address.lock().await, &self.client).await;
+        self.client
+            .add_connection(&self.manager_address.lock().await)
+            .await?;
 
         let result = async {
             loop {
@@ -147,7 +152,9 @@ impl Client {
         match result {
             Ok(all_servers_address) => {
                 for server_address in &all_servers_address {
-                    self.add_connection(&server_address.0).await;
+                    if let Err(e) = self.add_connection(&server_address.0).await {
+                        panic!("add connection failed: {}", e);
+                    }
                 }
                 self.hash_ring
                     .write()

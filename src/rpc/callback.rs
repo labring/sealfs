@@ -10,14 +10,13 @@ use std::{
     },
 };
 
-use crate::rpc::protocol::REQUEST_POOL_SIZE;
 use kanal;
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     time::timeout,
 };
 
-use super::protocol::CLIENT_REQUEST_TIMEOUT;
+use super::protocol::{CLIENT_REQUEST_TIMEOUT, REQUEST_POOL_SIZE};
 
 pub struct OperationCallback {
     pub data: *const u8,

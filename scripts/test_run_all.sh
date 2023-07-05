@@ -56,7 +56,7 @@ sleep 3
 ./target/debug/client --log-level $log_level daemon&
 sleep 3
 
-./target/debug/client --log-level $log_level mount ~/fs test1 &
+./target/debug/client --log-level $log_level mount ~/fs test1
 sleep 3
 
 echo "press ctrl+c to stop"

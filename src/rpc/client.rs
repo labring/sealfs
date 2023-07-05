@@ -2,24 +2,91 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::{callback::CallbackPool, connection::ClientConnection};
+use super::{
+    callback::CallbackPool,
+    connection::ClientConnection,
+    protocol::{CONNECTION_RETRY_TIMES, SEND_RETRY_TIMES},
+};
+use async_trait::async_trait;
 use dashmap::DashMap;
 use log::{error, info, warn};
-use std::{sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-pub struct RpcClient<
-    W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+#[async_trait]
+pub trait StreamCreator<
     R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+>
+{
+    async fn create_stream(server_address: &str) -> Result<(R, W), String>;
+}
+
+pub struct TcpStreamCreator;
+
+#[async_trait]
+impl StreamCreator<tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf>
+    for TcpStreamCreator
+{
+    async fn create_stream(
+        server_address: &str,
+    ) -> Result<
+        (
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+        ),
+        String,
+    > {
+        let stream = match tokio::net::TcpStream::connect(server_address).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(format!("connect to {} error: {}", server_address, e));
+            }
+        };
+        Ok(stream.into_split())
+    }
+}
+
+pub struct UnixStreamCreator;
+
+#[async_trait]
+impl StreamCreator<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf>
+    for UnixStreamCreator
+{
+    async fn create_stream(
+        server_address: &str,
+    ) -> Result<
+        (
+            tokio::net::unix::OwnedReadHalf,
+            tokio::net::unix::OwnedWriteHalf,
+        ),
+        String,
+    > {
+        let stream = match tokio::net::UnixStream::connect(server_address).await {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(format!("connect to {} error: {}", server_address, e));
+            }
+        };
+        Ok(stream.into_split())
+    }
+}
+
+pub struct RpcClient<
+    R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+    S: StreamCreator<R, W>,
 > {
     connections: DashMap<String, Arc<ClientConnection<W, R>>>,
     pool: Arc<CallbackPool>,
+    stream_creator: PhantomData<S>,
 }
 
 impl<
-        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
         R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
-    > Default for RpcClient<W, R>
+        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        S: StreamCreator<R, W>,
+    > Default for RpcClient<R, W, S>
 {
     fn default() -> Self {
         Self::new()
@@ -27,9 +94,10 @@ impl<
 }
 
 impl<
-        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
         R: AsyncReadExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
-    > RpcClient<W, R>
+        W: AsyncWriteExt + Unpin + std::marker::Sync + std::marker::Send + 'static,
+        S: StreamCreator<R, W>,
+    > RpcClient<R, W, S>
 {
     pub fn new() -> Self {
         let mut pool = CallbackPool::new();
@@ -38,6 +106,7 @@ impl<
         Self {
             connections: DashMap::new(),
             pool,
+            stream_creator: PhantomData,
         }
     }
 
@@ -45,19 +114,71 @@ impl<
         self.pool.free();
     }
 
-    async fn add_connection(&self, read_stream: R, write_stream: W, server_address: &str) -> bool {
-        let connection = Arc::new(ClientConnection::new(
-            server_address,
-            Some(tokio::sync::Mutex::new(write_stream)),
-        ));
-        tokio::spawn(parse_response(
-            read_stream,
-            connection.clone(),
-            self.pool.clone(),
-        ));
-        self.connections
-            .insert(server_address.to_string(), connection);
-        true
+    pub async fn add_connection(&self, server_address: &str) -> Result<(), String> {
+        for _ in 0..CONNECTION_RETRY_TIMES {
+            match S::create_stream(server_address).await {
+                Ok((read_stream, write_stream)) => {
+                    if self.connections.contains_key(server_address) {
+                        warn!("connection already exists: {}", server_address);
+                        return Ok(());
+                    }
+                    let connection = Arc::new(ClientConnection::new(server_address, write_stream));
+                    tokio::spawn(parse_response(
+                        read_stream,
+                        connection.clone(),
+                        self.pool.clone(),
+                    ));
+                    self.connections
+                        .insert(server_address.to_string(), connection);
+                    info!("add connection to {} success", server_address);
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!(
+                        "connect to {} failed: {}, wait for a while",
+                        server_address, e
+                    );
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+        Err(format!(
+            "connect to {} error: connection retry times exceed",
+            server_address
+        ))
+    }
+
+    async fn reconnect(&self, server_address: &str) -> Result<(), String> {
+        match self.connections.get(server_address) {
+            Some(connection) => {
+                if connection.value().reconnect() {
+                    match S::create_stream(server_address).await {
+                        Ok((read_stream, write_stream)) => {
+                            tokio::spawn(parse_response(
+                                read_stream,
+                                connection.clone(),
+                                self.pool.clone(),
+                            ));
+                            connection.value().reset_connection(write_stream).await;
+                            info!("reconnect to {} success", server_address);
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!(
+                                "reconnect to {} failed: {}, wait for a while",
+                                server_address, e
+                            );
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            connection.value().reconnect_failed();
+                        }
+                    }
+                }
+                Ok(())
+            }
+            None => {
+                panic!("connection not exists: {}", server_address);
+            }
+        }
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -80,34 +201,48 @@ impl<
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
     ) -> Result<(), String> {
-        let connection = match self.connections.get(server_address) {
-            Some(connection) => connection,
-            None => {
-                error!("connection not found: {}", server_address);
-                return Err("connection not found".into());
+        for _ in 0..SEND_RETRY_TIMES {
+            let connection = match self.connections.get(server_address) {
+                Some(connection) => connection,
+                None => {
+                    error!("connection not exists: {}", server_address);
+                    return Err(format!("connection not exists: {}", server_address));
+                }
+            };
+            let (batch, id) = self
+                .pool
+                .register_callback(recv_meta_data, recv_data)
+                .await?;
+
+            if let Err(e) = connection
+                .send_request(
+                    batch,
+                    id,
+                    operation_type,
+                    req_flags,
+                    path,
+                    send_meta_data,
+                    send_data,
+                )
+                .await
+            {
+                error!("send request to {} failed: {}", server_address, e);
+                if connection.disconnect() {
+                    self.reconnect(server_address).await?;
+                }
+                continue;
             }
-        };
-        let (batch, id) = self
-            .pool
-            .register_callback(recv_meta_data, recv_data)
-            .await?;
-        connection
-            .send_request(
-                batch,
-                id,
-                operation_type,
-                req_flags,
-                path,
-                send_meta_data,
-                send_data,
-            )
-            .await?;
-        let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
-        *status = s;
-        *rsp_flags = f;
-        *recv_meta_data_length = meta_data_length;
-        *recv_data_length = data_length;
-        Ok(())
+            let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?; // TODO: retry the request
+            *status = s;
+            *rsp_flags = f;
+            *recv_meta_data_length = meta_data_length;
+            *recv_data_length = data_length;
+            return Ok(());
+        }
+        Err(format!(
+            "send request to {} error: send retry times exceed",
+            server_address
+        ))
     }
 }
 
@@ -119,7 +254,7 @@ pub async fn parse_response<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin>(
     pool: Arc<CallbackPool>,
 ) {
     loop {
-        if !connection.is_connected().await {
+        if !connection.is_connected() {
             break;
         }
         let header = match connection.receive_response_header(&mut read_stream).await {
@@ -187,67 +322,5 @@ pub async fn parse_response<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin>(
             error!("Error writing response back: {}", e);
             break;
         };
-    }
-}
-
-pub async fn add_tcp_connection(
-    address: &str,
-    client: &RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>,
-) {
-    loop {
-        match tokio::net::TcpStream::connect(address.to_owned()).await {
-            Ok(stream) => {
-                let (read_stream, write_stream) = stream.into_split();
-                match client
-                    .add_connection(read_stream, write_stream, address)
-                    .await
-                {
-                    true => {
-                        break;
-                    }
-                    false => {
-                        warn!("add connection failed, wait for a while");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("connect to manager failed, wait for a while, {}", e);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        };
-        info!("add connection to {} failed, retrying...", address);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-}
-
-pub async fn add_unix_connection(
-    address: &str,
-    client: &Arc<RpcClient<tokio::net::unix::OwnedWriteHalf, tokio::net::unix::OwnedReadHalf>>,
-) {
-    loop {
-        match tokio::net::UnixStream::connect(address.to_owned()).await {
-            Ok(stream) => {
-                let (read_stream, write_stream) = stream.into_split();
-                match client
-                    .add_connection(read_stream, write_stream, address)
-                    .await
-                {
-                    true => {
-                        break;
-                    }
-                    false => {
-                        warn!("add connection failed, wait for a while");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("connect to manager failed, wait for a while, {}", e);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        };
-        info!("add connection to {} failed, retrying...", address);
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }

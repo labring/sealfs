@@ -58,43 +58,33 @@ cargo build
 
 ## 快速使用
 
-### 挂载
+### 启动管理节点
 
 ```bash
-mkdir ~/fs
-./target/debug/server &
-./target/debug/client ~/fs
+# edit manager.yaml
+vi examples/manager.yaml
+
+# start manager with manager.yaml
+SEALFS_CONFIG_PATH=./examples ./target/debug/manager &
 ```
 
-### 文件操作
+### 启动一个服务器
 
-show directory
 ```bash
-ll ~/fs
-```
-create & write file
-```bash
-echo "test" >> ~/fs/test.log
+./target/debug/server --manager-address <manager_ip>:<manager_port> --server-address <server_ip>:<server_port> --database-path <local_database_dir> --storage-path <local_storage_dir> --log-level warn &
 ```
 
-read file
+### 启动一个客户端
+
 ```bash
-cat ~/fs/test.log
+./target/debug/client --manager-address <manager_ip>:<manager_port> --log-level warn daemon
 ```
 
-delete file
-```bash
-rm ~/fs/test.log
-```
+### 创建并挂载磁盘
 
-make directory
 ```bash
-mkdir ~/fs/d
-```
-
-remove directory
-```bash
-rm ~/fs/d
+./target/debug/client --manager-address <manager_ip>:<manager_port> --log-level warn create test1 100000
+./target/debug/client --log-level warn mount ~/fs test1
 ```
 
 ## 开源协议

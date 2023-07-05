@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
 use crate::common::serialization::{
     ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
@@ -10,7 +11,7 @@ use crate::common::serialization::{
 };
 use crate::common::{errors, sender};
 use crate::rpc;
-use crate::rpc::client::add_tcp_connection;
+use crate::rpc::client::TcpStreamCreator;
 use dashmap::DashMap;
 use fuser::{
     FileAttr, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
@@ -28,11 +29,13 @@ use tokio::time::sleep;
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
 pub struct Client {
-    // TODO replace with a thread safe data structure
     pub client: Arc<
-        rpc::client::RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>,
+        rpc::client::RpcClient<
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+            TcpStreamCreator,
+        >,
     >,
-    //pub volume_name: RwLock<Option<String>>,
     pub sender: Arc<sender::Sender>,
     pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
@@ -56,7 +59,6 @@ impl Client {
         let client = Arc::new(rpc::client::RpcClient::default());
         Self {
             client: client.clone(),
-            //volume_name: RwLock::new(None),
             sender: Arc::new(sender::Sender::new(client)),
             inodes: DashMap::new(),
             inodes_reverse: DashMap::new(),
@@ -70,8 +72,14 @@ impl Client {
         }
     }
 
-    pub async fn add_connection(&self, server_address: &str) {
-        add_tcp_connection(server_address, &self.client).await;
+    pub async fn add_connection(&self, server_address: &str) -> Result<(), i32> {
+        self.client
+            .add_connection(server_address)
+            .await
+            .map_err(|e| {
+                error!("add connection failed: {:?}", e);
+                CONNECTION_ERROR
+            })
     }
 
     pub fn remove_connection(&self, server_address: &str) {
@@ -133,9 +141,15 @@ impl Client {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
     }
 
-    pub async fn connect_to_manager(&self, manager_address: &str) {
+    pub async fn connect_to_manager(&self, manager_address: &str) -> Result<(), i32> {
         self.manager_address.lock().await.push_str(manager_address);
-        add_tcp_connection(manager_address, &self.client).await;
+        self.client
+            .add_connection(manager_address)
+            .await
+            .map_err(|e| {
+                error!("add connection failed: {:?}", e);
+                CONNECTION_ERROR
+            })
     }
 
     pub async fn connect_servers(&self) -> Result<(), i32> {
@@ -172,7 +186,7 @@ impl Client {
         match result {
             Ok(all_servers_address) => {
                 for server_address in &all_servers_address {
-                    self.add_connection(&server_address.0).await;
+                    self.add_connection(&server_address.0).await?;
                 }
                 self.hash_ring
                     .write()
@@ -736,7 +750,7 @@ impl Client {
     pub async fn open_remote(&self, ino: u64, flags: i32, reply: ReplyOpen) {
         info!("open_remote");
         if flags & libc::O_CREAT != 0 {
-            todo!("open_remote O_CREAT")
+            todo!("open_remote O_CREAT") // this is not supported by the fuse crate
         }
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
@@ -944,7 +958,10 @@ pub async fn client_watch_status(client: Arc<Client>) {
                     if client.hash_ring.read().as_ref().unwrap().contains(&value.0) {
                         continue;
                     }
-                    client.add_connection(&value.0).await;
+                    if let Err(e) = client.add_connection(&value.0).await {
+                        // TODO: we should rollback the transfer process
+                        panic!("Add Connection Failed. Error = {}", e);
+                    }
                 }
                 client
                     .new_hash_ring

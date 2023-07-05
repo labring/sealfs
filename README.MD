@@ -85,48 +85,38 @@ high availability, the priority would be lower.
 rust version 1.68
 
 ```bash
-cargo build
+make build
 ```
 
 ## Quick Start
 
-### Mount
+### Start Manager
 
 ```bash
-mkdir ~/fs
-./target/debug/server &
-./target/debug/client ~/fs
+# edit manager.yaml
+vi examples/manager.yaml
+
+# start manager with manager.yaml
+SEALFS_CONFIG_PATH=./examples ./target/debug/manager &
 ```
 
-### File Operations
+### Start Servers on a Node
 
-show directory
 ```bash
-ll ~/fs
-```
-create & write file
-```bash
-echo "test" >> ~/fs/test.log
+./target/debug/server --manager-address <manager_ip>:<manager_port> --server-address <server_ip>:<server_port> --database-path <local_database_dir> --storage-path <local_storage_dir> --log-level warn &
 ```
 
-read file
+### Start Client on a Node
+
 ```bash
-cat ~/fs/test.log
+./target/debug/client --log-level warn daemon
 ```
 
-delete file
-```bash
-rm ~/fs/test.log
-```
+### Create & Mount Disk
 
-make directory
 ```bash
-mkdir ~/fs/d
-```
-
-remove directory
-```bash
-rm ~/fs/d
+./target/debug/client --log-level warn create test1 100000
+./target/debug/client --log-level warn mount ~/fs test1
 ```
 
 ## LICENSE

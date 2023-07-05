@@ -29,10 +29,7 @@ use crate::{
         },
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
-    rpc::{
-        client::add_tcp_connection,
-        server::{Handler, RpcServer},
-    },
+    rpc::server::{Handler, RpcServer},
     server::storage_engine::meta_engine::MetaEngine,
 };
 use distributed_engine::DistributedEngine;
@@ -87,7 +84,10 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                     {
                         continue;
                     }
-                    engine.add_connection(value.0.clone()).await;
+                    if let Err(e) = engine.add_connection(value.0.clone()).await {
+                        // TODO: rollback the transfer process
+                        panic!("Transfer: add connection failed, error = {}", e);
+                    }
                 }
                 engine
                     .new_hash_ring
@@ -273,7 +273,9 @@ pub async fn run(
     ));
 
     info!("Init: Connect To Manager: {}", manager_address);
-    add_tcp_connection(&manager_address, &engine.client).await;
+    if let Err(e) = engine.client.add_connection(&manager_address).await {
+        panic!("Connect To Manager Failed, Error = {}", e);
+    }
     *engine.manager_address.lock().await = manager_address;
 
     tokio::spawn(sync_cluster_infos(Arc::clone(&engine)));
@@ -295,7 +297,9 @@ pub async fn run(
             if server_address == value.0 {
                 continue;
             }
-            engine.add_connection(value.0.clone()).await;
+            if let Err(e) = engine.add_connection(value.0.clone()).await {
+                panic!("Init: Add Connection Failed. Error = {}", e);
+            }
         }
         info!("Init: Add Connections Success.");
         engine
@@ -360,44 +364,9 @@ where
             }
         };
 
-        // if !self.engine.volume_indexes.contains_key(&id) {
-        //     match r#type {
-        //         // TODO: CreateVolume request should be forward if transfering data
-        //         OperationType::CreateVolume => {
-        //         }
-        //         OperationType::InitVolume => {
-        //             let file_path = String::from_utf8(path).unwrap();
-        //             info!(
-        //                 "{} Init Volume: {}, id: {}",
-        //                 self.engine.address, file_path, id
-        //             );
-        //             if !file_path.is_empty()
-        //                 && self.engine.get_address(&file_path) == self.engine.address
-        //                 && !self.engine.volumes.contains_key(&file_path)
-        //             {
-        //                 error!(
-        //                     "Volume not Exists: id: {}, file_path: {}, address {}, self_address {}",
-        //                     id,
-        //                     file_path,
-        //                     self.engine.get_address(&file_path),
-        //                     self.engine.address
-        //                 );
-        //                 return Ok((libc::ENOENT, 0, 0, 0, vec![], vec![]));
-        //             }
-        //             self.engine.volume_indexes.insert(id, file_path);
-        //             return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
-        //         }
-        //         _ => {
-        //             error!("Volume Index Not Found, id: {}", id);
-        //             return Ok((libc::EPERM, 0, 0, 0, vec![], vec![]));
-        //         }
-        //     }
-        // }
-
-        // let file_path = '/' + volume_name + path
         let file_path = unsafe { std::str::from_utf8_unchecked(&path) };
 
-        // this is the lock for object file while transferring data, if the file is transferring, the lock will be hold until the request is finished
+        // this lock is deprecated, and always return false
         let _lock =
             match self.engine.get_forward_address(file_path) {
                 (Some(address), _) => {

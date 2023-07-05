@@ -14,7 +14,7 @@ use crate::common::serialization::{
 use crate::common::serialization::{DirectoryEntrySendMetaData, OperationType};
 
 use crate::common::util::get_full_path;
-use crate::rpc::client::{add_tcp_connection, RpcClient};
+use crate::rpc::client::{RpcClient, TcpStreamCreator};
 use dashmap::mapref::one::{Ref, RefMut};
 use dashmap::DashMap;
 use libc::{O_CREAT, O_DIRECTORY, O_EXCL};
@@ -31,7 +31,13 @@ pub struct DistributedEngine<Storage: StorageEngine> {
     pub address: String,
     pub storage_engine: Arc<Storage>,
     pub meta_engine: Arc<MetaEngine>,
-    pub client: Arc<RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>>,
+    pub client: Arc<
+        RpcClient<
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+            TcpStreamCreator,
+        >,
+    >,
     pub sender: Sender,
 
     pub cluster_status: AtomicI32,
@@ -77,8 +83,11 @@ where
         }
     }
 
-    pub async fn add_connection(&self, address: String) {
-        add_tcp_connection(&address, &self.client).await;
+    pub async fn add_connection(&self, address: String) -> Result<(), i32> {
+        self.client.add_connection(&address).await.map_err(|e| {
+            error!("add connection failed: {:?}", e);
+            CONNECTION_ERROR
+        })
         //self.sender.init_volume(&address, "").await.unwrap();
     }
 
@@ -633,7 +642,7 @@ where
             OperationType::DeleteDirNoParent => (0, 0, 0, 0, vec![], vec![]),
             OperationType::DeleteFileNoParent => (0, 0, 0, 0, vec![], vec![]),
             OperationType::CreateVolume => (0, 0, 0, 0, vec![], vec![]),
-            OperationType::InitVolume => todo!(),
+            OperationType::InitVolume => (0, 0, 0, 0, vec![], vec![]),
         };
         let result = self
             .client

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use log::{error, info, warn};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpListener,
+    net::{TcpListener, UnixListener},
 };
 
 use super::{connection::ServerConnection, protocol::RequestHeader};
@@ -146,7 +146,16 @@ impl<H: Handler + std::marker::Sync + std::marker::Send> RpcServer<H> {
 
     pub async fn run_unix_stream(&self) -> anyhow::Result<()> {
         info!("Listening on {:?}", self.bind_address);
-        let listener = tokio::net::UnixListener::bind(&self.bind_address)?;
+        let listener = match UnixListener::bind(&self.bind_address) {
+            Ok(listener) => listener,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to create unix stream at {:?}, error is {}",
+                    self.bind_address,
+                    e
+                ));
+            }
+        };
         let mut id = 1u32;
         loop {
             match listener.accept().await {

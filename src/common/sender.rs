@@ -8,7 +8,10 @@ use std::sync::Arc;
 
 use log::error;
 
-use crate::{common::errors::CONNECTION_ERROR, rpc::client::RpcClient};
+use crate::{
+    common::errors::CONNECTION_ERROR,
+    rpc::client::{RpcClient, TcpStreamCreator},
+};
 
 use super::serialization::{
     AddNodesSendMetaData, ClusterStatus, CreateVolumeSendMetaData, DeleteNodesSendMetaData,
@@ -16,12 +19,24 @@ use super::serialization::{
 };
 
 pub struct Sender {
-    pub client: Arc<RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>>,
+    pub client: Arc<
+        RpcClient<
+            tokio::net::tcp::OwnedReadHalf,
+            tokio::net::tcp::OwnedWriteHalf,
+            TcpStreamCreator,
+        >,
+    >,
 }
 
 impl Sender {
     pub fn new(
-        client: Arc<RpcClient<tokio::net::tcp::OwnedWriteHalf, tokio::net::tcp::OwnedReadHalf>>,
+        client: Arc<
+            RpcClient<
+                tokio::net::tcp::OwnedReadHalf,
+                tokio::net::tcp::OwnedWriteHalf,
+                TcpStreamCreator,
+            >,
+        >,
     ) -> Self {
         Sender { client }
     }
