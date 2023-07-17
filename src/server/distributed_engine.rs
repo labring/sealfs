@@ -278,7 +278,7 @@ where
         let address = self.get_new_address(path);
 
         for item in self.meta_engine.dir_db.db.iterator(IteratorMode::From(
-            format!("{}-", path).as_bytes(),
+            format!("{}$", path).as_bytes(),
             rocksdb::Direction::Forward,
         )) {
             // let file_path = format!("{}_{}", pathname, idx);
