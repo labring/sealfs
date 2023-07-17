@@ -20,6 +20,7 @@ use super::serialization::{
 };
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const CONTROLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Sender {
     pub client: Arc<
@@ -300,6 +301,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                CONTROLL_REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -381,6 +383,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -419,6 +422,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                CONTROLL_REQUEST_TIMEOUT,
             )
             .await;
         match result {
