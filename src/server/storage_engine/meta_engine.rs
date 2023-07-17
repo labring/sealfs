@@ -168,7 +168,7 @@ impl MetaEngine {
 
         for dir_name in self.dir_db.db.iterator(IteratorMode::Start) {
             let sub_dir_info = String::from_utf8(dir_name.unwrap().0.to_vec()).unwrap();
-            let list = sub_dir_info.split('-').collect::<Vec<&str>>();
+            let list = sub_dir_info.split('$').collect::<Vec<&str>>();
             info!("list: {:?}", list);
             let mut file_index = self
                 .file_indexs
@@ -284,7 +284,7 @@ impl MetaEngine {
         }
 
         // delete sub file index in dir_db with prefix "path_"
-        let (start_key, end_key) = (path.to_owned() + "-", path.to_owned() + "-~");
+        let (start_key, end_key) = (path.to_owned() + "$", path.to_owned() + "$~");
         let mut batch = WriteBatch::default();
         batch.delete_range(start_key, end_key);
         match self.dir_db.db.write(batch) {
@@ -340,7 +340,7 @@ impl MetaEngine {
         let mut result = Vec::with_capacity(size as usize);
         let mut total = 0;
         for item in self.dir_db.db.iterator(IteratorMode::From(
-            format!("{}-", path).as_bytes(),
+            format!("{}$", path).as_bytes(),
             rocksdb::Direction::Forward,
         )) {
             info!("item: {:?}", item);
@@ -395,7 +395,7 @@ impl MetaEngine {
                     return Err(libc::ENOTDIR);
                 }
                 match self.dir_db.db.put(
-                    format!("{}-{}-{}", parent_dir, file_name, file_type as char),
+                    format!("{}${}${}", parent_dir, file_name, file_type as char),
                     file_name,
                 ) {
                     Ok(_) => {}
@@ -426,7 +426,7 @@ impl MetaEngine {
                     return Err(libc::ENOTDIR);
                 }
                 match self.dir_db.db.delete(format!(
-                    "{}-{}-{}",
+                    "{}${}${}",
                     parent_dir, file_name, file_type as char
                 )) {
                     Ok(_) => {}
@@ -453,7 +453,7 @@ impl MetaEngine {
                 if let Err(e) = self
                     .dir_db
                     .db
-                    .delete(format!("{}-{}-{}", parent, name, file_type as char))
+                    .delete(format!("{}${}${}", parent, name, file_type as char))
                 {
                     error!("delete from parent error: {}", e);
                     return Err(DATABASE_ERROR);
@@ -605,7 +605,7 @@ impl MetaEngine {
             if !self
                 .file_attr_db
                 .db
-                .key_may_exist(key.split('-').next().unwrap())
+                .key_may_exist(key.split('$').next().unwrap())
             {
                 let _ = self.dir_db.db.delete(&key);
             }
