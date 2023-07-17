@@ -16,6 +16,7 @@ use crate::{
 use super::serialization::{
     AddNodesSendMetaData, ClusterStatus, CreateVolumeSendMetaData, DeleteNodesSendMetaData,
     GetClusterStatusRecvMetaData, GetHashRingInfoRecvMetaData, ManagerOperationType, OperationType,
+    Volume,
 };
 
 pub struct Sender {
@@ -268,15 +269,53 @@ impl Sender {
         }
     }
 
+    pub async fn list_volumes(&self, address: &str) -> Result<Vec<Volume>, i32> {
+        let mut status = 0i32;
+        let mut rsp_flags = 0u32;
+
+        let mut recv_meta_data_length = 0usize;
+        let mut recv_data_length = 0usize;
+
+        let mut recv_meta_data = vec![0u8; 65535];
+
+        let result = self
+            .client
+            .call_remote(
+                address,
+                OperationType::ListVolumes.into(),
+                0,
+                "",
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut recv_meta_data,
+                &mut [],
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                if status != 0 {
+                    return Err(status);
+                }
+                let volumes: Vec<Volume> =
+                    bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                Ok(volumes)
+            }
+            Err(e) => {
+                error!("list volumes failed: {}", e);
+                Err(CONNECTION_ERROR)
+            }
+        }
+    }
+
     pub async fn create_volume(&self, address: &str, name: &str, size: u64) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
-        let send_meta_data = bincode::serialize(&CreateVolumeSendMetaData {
-            name: name.to_string(),
-            size,
-        })
-        .unwrap();
+        let send_meta_data = bincode::serialize(&CreateVolumeSendMetaData { size }).unwrap();
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
@@ -287,7 +326,7 @@ impl Sender {
                 address,
                 OperationType::CreateVolume.into(),
                 0,
-                "",
+                name,
                 &send_meta_data,
                 &[],
                 &mut status,
@@ -307,6 +346,82 @@ impl Sender {
             }
             Err(e) => {
                 error!("create volume failed: {:?}", e);
+                Err(CONNECTION_ERROR)
+            }
+        }
+    }
+
+    pub async fn delete_volume(&self, address: &str, name: &str) -> Result<(), i32> {
+        let mut status = 0i32;
+        let mut rsp_flags = 0u32;
+
+        let mut recv_meta_data_length = 0usize;
+        let mut recv_data_length = 0usize;
+
+        let result = self
+            .client
+            .call_remote(
+                address,
+                OperationType::DeleteVolume.into(),
+                0,
+                name,
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut [],
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                if status != 0 {
+                    return Err(status);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                error!("delete volume failed: {:?}", e);
+                Err(CONNECTION_ERROR)
+            }
+        }
+    }
+
+    pub async fn clean_volume(&self, address: &str, name: &str) -> Result<(), i32> {
+        let mut status = 0i32;
+        let mut rsp_flags = 0u32;
+
+        let mut recv_meta_data_length = 0usize;
+        let mut recv_data_length = 0usize;
+
+        let result = self
+            .client
+            .call_remote(
+                address,
+                OperationType::CleanVolume.into(),
+                0,
+                name,
+                &[],
+                &[],
+                &mut status,
+                &mut rsp_flags,
+                &mut recv_meta_data_length,
+                &mut recv_data_length,
+                &mut [],
+                &mut [],
+            )
+            .await;
+        match result {
+            Ok(_) => {
+                if status != 0 {
+                    return Err(status);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                error!("clean volume failed: {:?}", e);
                 Err(CONNECTION_ERROR)
             }
         }

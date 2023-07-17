@@ -74,4 +74,8 @@ impl HashRing {
     pub fn contains(&self, server: &str) -> bool {
         self.servers.contains_key(server)
     }
+
+    pub fn get_server_lists(&self) -> Vec<String> {
+        self.servers.keys().cloned().collect()
+    }
 }

@@ -10,7 +10,7 @@ function green_font() {
 }
 
 function fuse_test() {
-    ./target/debug/client --log-level warn create test1 100000
+    ./target/debug/client --log-level warn create-volume test1 100000
     ./target/debug/client --log-level warn daemon&
     sleep 3
     ./target/debug/client --log-level warn mount ~/fs test1
@@ -23,7 +23,6 @@ function fuse_test() {
     end_time=$[$(date +%s%N)/1000000]
     result_time=$[ $end_time - $start_time ]
     echo -e "fuse tests finish, cost: $(green_font ${result_time}ms)"
-    sudo rm -rf ~/fs
     return $result
 }
 
@@ -90,7 +89,7 @@ echo "[global]" > config-minimal.ini
 echo "datadir = /home/sealos/fs" >> config-minimal.ini
 echo "" >> config-minimal.ini
 echo "[debug]" >> config-minimal.ini
-echo "stonewall-time = 10" >> config-minimal.ini
+echo "stonewall-time = 2" >> config-minimal.ini
 
 cd ..
 

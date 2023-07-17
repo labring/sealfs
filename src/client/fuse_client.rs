@@ -7,7 +7,7 @@ use crate::common::hash_ring::HashRing;
 use crate::common::serialization::{
     ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
     DeleteFileSendMetaData, FileAttrSimple, OpenFileSendMetaData, OperationType,
-    ReadDirSendMetaData, ReadFileSendMetaData, WriteFileSendMetaData,
+    ReadDirSendMetaData, ReadFileSendMetaData, Volume, WriteFileSendMetaData,
 };
 use crate::common::{errors, sender};
 use crate::rpc;
@@ -213,6 +213,16 @@ impl Client {
             .await
     }
 
+    pub async fn list_volumes(&self) -> Result<Vec<Volume>, i32> {
+        let mut volumes: Vec<Volume> = Vec::new();
+
+        for server_address in self.hash_ring.read().as_ref().unwrap().get_server_lists() {
+            let mut new_volumes = self.sender.list_volumes(&server_address).await?;
+            volumes.append(&mut new_volumes);
+        }
+        Ok(volumes)
+    }
+
     pub async fn delete_servers(&self, servers_info: Vec<String>) -> Result<(), i32> {
         self.sender
             .delete_servers(&self.manager_address.lock().await, servers_info)
@@ -245,6 +255,12 @@ impl Client {
     pub async fn create_volume(&self, name: &str, size: u64) -> Result<(), i32> {
         self.sender
             .create_volume(&self.get_connection_address(name), name, size)
+            .await
+    }
+
+    pub async fn delete_volume(&self, name: &str) -> Result<(), i32> {
+        self.sender
+            .delete_volume(&self.get_connection_address(name), name)
             .await
     }
 

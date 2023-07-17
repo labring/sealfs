@@ -1,7 +1,6 @@
 use super::storage_engine::meta_engine::MetaEngine;
 use super::storage_engine::StorageEngine;
 use super::transfer_manager::TransferManager;
-use super::volume::Volume;
 use crate::common::byte::CHUNK_SIZE;
 use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
@@ -48,10 +47,7 @@ pub struct DistributedEngine<Storage: StorageEngine> {
     pub manager_address: Arc<Mutex<String>>,
 
     pub file_locks: DashMap<String, HashMap<String, u32>>,
-    pub volumes: DashMap<String, Volume>,
-    pub volume_lock: spin::Mutex<()>,
     pub transfer_manager: TransferManager,
-    pub volume_indexes: DashMap<u32, String>,
 }
 
 impl<Storage> DistributedEngine<Storage>
@@ -64,6 +60,9 @@ where
         meta_engine: Arc<MetaEngine>,
     ) -> Self {
         let file_locks = DashMap::new();
+        for kv in &meta_engine.file_indexs {
+            file_locks.insert(kv.key().to_owned(), HashMap::new());
+        }
         let client = Arc::new(RpcClient::new());
         Self {
             address,
@@ -76,10 +75,7 @@ where
             new_hash_ring: Arc::new(RwLock::new(None)),
             manager_address: Arc::new(Mutex::new("".to_string())),
             file_locks,
-            volumes: DashMap::new(),
-            volume_lock: spin::Mutex::new(()),
             transfer_manager: TransferManager::new(),
-            volume_indexes: DashMap::new(),
         }
     }
 
@@ -88,7 +84,6 @@ where
             error!("add connection failed: {:?}", e);
             CONNECTION_ERROR
         })
-        //self.sender.init_volume(&address, "").await.unwrap();
     }
 
     pub fn lock_file(
@@ -643,6 +638,9 @@ where
             OperationType::DeleteFileNoParent => (0, 0, 0, 0, vec![], vec![]),
             OperationType::CreateVolume => (0, 0, 0, 0, vec![], vec![]),
             OperationType::InitVolume => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::ListVolumes => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::DeleteVolume => (0, 0, 0, 0, vec![], vec![]),
+            OperationType::CleanVolume => (0, 0, 0, 0, vec![], vec![]),
         };
         let result = self
             .client
@@ -705,29 +703,33 @@ where
             file_lock.insert(name.to_owned(), 0);
         }
 
-        let path = get_full_path(parent, name);
-        let (address, _lock) = self.get_server_address(&path);
-        let result = if self.address == address {
-            info!(
-                "local create dir, parent_dir: {}, file_name: {}",
-                parent, name
-            );
-            self.create_dir_no_parent(&path, mode)
-        } else {
-            self.sender
-                .create_no_parent(
-                    &address,
-                    OperationType::CreateDirNoParent,
-                    &path,
-                    &send_meta_data,
-                )
-                .await
-        };
-
-        if result.is_ok() {
+        let result =
             self.meta_engine
-                .directory_add_entry(parent, name, FileTypeSimple::Directory.into())?;
-        }
+                .directory_add_entry(parent, name, FileTypeSimple::Directory.into());
+
+        let result = match result {
+            Ok(_) => {
+                let path = get_full_path(parent, name);
+                let (address, _lock) = self.get_server_address(&path);
+                if self.address == address {
+                    info!(
+                        "local create dir, parent_dir: {}, file_name: {}",
+                        parent, name
+                    );
+                    self.create_dir_no_parent(&path, mode)
+                } else {
+                    self.sender
+                        .create_no_parent(
+                            &address,
+                            OperationType::CreateDirNoParent,
+                            &path,
+                            &send_meta_data,
+                        )
+                        .await
+                }
+            }
+            Err(e) => Err(e),
+        };
 
         let mut file_lock = self.lock_file_mut(parent)?;
         file_lock.remove(name);
@@ -914,45 +916,47 @@ where
             file_lock.insert(name.to_owned(), 0);
         }
 
-        let (address, _lock) = self.get_server_address(&path);
-        let result = if self.address == address {
-            info!(
-                "local create file, parent_file: {}, file_name: {}",
-                parent, name
-            );
-            match self.create_file_no_parent(&path, oflag, umask, mode) {
-                Ok(attr) => Ok(attr),
-                Err(libc::EEXIST) => {
-                    if (oflag & O_EXCL) != 0 {
-                        return Err(libc::EEXIST); // this may indicate that the file is being created or deleted
-                    } else {
-                        return self.call_get_attr_remote_or_local(&path).await;
+        let result =
+            self.meta_engine
+                .directory_add_entry(parent, name, FileTypeSimple::RegularFile.into());
+
+        let result = match result {
+            Ok(_) => {
+                let (address, _lock) = self.get_server_address(&path);
+                if self.address == address {
+                    info!(
+                        "local create file, parent_file: {}, file_name: {}",
+                        parent, name
+                    );
+                    match self.create_file_no_parent(&path, oflag, umask, mode) {
+                        Ok(attr) => Ok(attr),
+                        Err(libc::EEXIST) => {
+                            if (oflag & O_EXCL) != 0 {
+                                Err(libc::EEXIST) // this may indicate that the file is being created or deleted
+                            } else {
+                                self.call_get_attr_remote_or_local(&path).await
+                            }
+                        }
+                        Err(e) => {
+                            error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
+                            Err(e)
+                        }
                     }
-                }
-                Err(e) => {
-                    error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                    Err(e)
+                } else {
+                    self.sender
+                        .create_no_parent(
+                            &address,
+                            OperationType::CreateFileNoParent,
+                            &path,
+                            &send_meta_data,
+                        )
+                        .await
                 }
             }
-        } else {
-            self.sender
-                .create_no_parent(
-                    &address,
-                    OperationType::CreateFileNoParent,
-                    &path,
-                    &send_meta_data,
-                )
-                .await
+            Err(e) => Err(e),
         };
 
         let mut file_lock = self.lock_file_mut(parent)?;
-        if result.is_ok() {
-            self.meta_engine.directory_add_entry(
-                parent,
-                name,
-                FileTypeSimple::RegularFile.into(),
-            )?;
-        }
         file_lock.remove(name);
         drop(file_lock);
 
@@ -1115,25 +1119,90 @@ where
         }
     }
 
-    pub fn create_volume(&self, name: &str) -> Result<(), i32> {
-        let _vlock = {
-            let _lock = self.volume_lock.lock();
-            if self.volumes.contains_key(name) {
-                return Err(libc::EEXIST);
+    pub fn create_volume(&self, name: &str, _size: u64) -> Result<(), i32> {
+        match self.file_locks.insert(name.to_owned(), HashMap::new()) {
+            Some(_) => Err(libc::EEXIST),
+            None => self.meta_engine.create_volume(name),
+        }
+    }
+
+    // delete and clean volume only work for unmounted volume
+    pub fn clean_volume(&self, name: &str) -> Result<(), i32> {
+        let files: Vec<(String, FileTypeSimple)> = self
+            .meta_engine
+            .file_indexs
+            .iter()
+            .map(|x| (x.key().to_owned(), x.value().file_type))
+            .collect();
+        for kv in files {
+            if kv.0.starts_with(&(name.to_owned() + "/")) {
+                if kv.1 == FileTypeSimple::RegularFile {
+                    self.delete_file_no_parent(&kv.0)?;
+                } else {
+                    self.delete_dir_no_parent_force(&kv.0)?;
+                }
             }
-            self.volumes.insert(
-                name.to_owned(),
-                Volume {
-                    name: name.to_owned(),
-                    size: 100000000,
-                    used_size: 0,
-                },
-            );
-            self.volumes.get(name).unwrap()
+        }
+        Ok(())
+    }
+
+    // delete and clean volume only work for unmounted volume
+    pub async fn delete_volume(&self, name: &str) -> Result<(), i32> {
+        // TODO: check if the volume is not mounted
+        let server_addresses: Vec<String> = self
+            .hash_ring
+            .read()
+            .as_ref()
+            .unwrap()
+            .servers
+            .keys()
+            .cloned()
+            .collect();
+        for address in &server_addresses {
+            if address == &self.address {
+                self.clean_volume(name).unwrap_or_else(|e| {
+                    error!("clean volume failed: {:?}", e);
+                });
+            } else {
+                match self.sender.clean_volume(address, name).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("delete volume failed: {:?}", e);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        let new_server_addresses = match self.new_hash_ring.read().as_ref() {
+            Some(new_hash_ring) => new_hash_ring.servers.keys().cloned().collect(),
+            None => vec![],
         };
-        match self.create_dir_no_parent(name, 0o755) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
+        for address in &new_server_addresses {
+            if server_addresses.contains(address) {
+                continue;
+            }
+            if address == &self.address {
+                self.clean_volume(name).unwrap_or_else(|e| {
+                    error!("clean volume failed: {:?}", e);
+                });
+            } else {
+                match self.sender.clean_volume(address, name).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!("delete volume failed: {:?}", e);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        match self.file_locks.get_mut(name) {
+            Some(value) => {
+                self.meta_engine.delete_volume(name)?;
+                drop(value);
+                self.file_locks.remove(name);
+                Ok(())
+            }
+            None => Err(libc::ENOENT),
         }
     }
 }

@@ -17,14 +17,10 @@ struct Args {
     #[arg(long)]
     address: Option<String>,
     #[arg(long)]
-    protect_threshold: Option<String>,
-    #[arg(long)]
     config_file: Option<String>,
     /// To use customized configuration or not. If this flag is used, please provide a config file through --config_file <path>
     #[arg(long)]
     use_config_file: bool,
-    #[arg(long)]
-    heartbeat: Option<bool>,
     #[arg(long)]
     log_level: Option<String>,
     #[arg(long)]
@@ -36,10 +32,8 @@ struct Args {
 #[derive(Debug, Serialize, Deserialize)]
 struct Properties {
     address: String,
-    protect_threshold: String,
     all_servers_address: Vec<String>,
     virtual_nodes: usize,
-    heartbeat: bool,
     log_level: String,
 }
 
@@ -89,16 +83,12 @@ async fn main() -> anyhow::Result<()> {
         }
         false => Properties {
             address: args.address.unwrap_or(default_properties.address),
-            protect_threshold: args
-                .protect_threshold
-                .unwrap_or(default_properties.protect_threshold),
             all_servers_address: args
                 .all_servers_address
                 .unwrap_or(default_properties.all_servers_address),
             virtual_nodes: args
                 .virtual_nodes
                 .unwrap_or(default_properties.virtual_nodes),
-            heartbeat: args.heartbeat.unwrap_or(default_properties.heartbeat),
             log_level: args.log_level.unwrap_or(default_properties.log_level),
         },
     };

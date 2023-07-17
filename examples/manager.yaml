@@ -8,9 +8,5 @@ all_servers_address:
  - 127.0.0.1:8089
 virtual_nodes:
   100
-heartbeat:
-  false
 log_level:
   warn
-protect_threshold:
-  0.5
