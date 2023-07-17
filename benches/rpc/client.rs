@@ -1,7 +1,7 @@
 #![allow(unused)]
 
 use sealfs::rpc::client::{RpcClient, TcpStreamCreator};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 pub fn cli(total: u32) {
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -57,6 +57,7 @@ pub async fn run_cli_without_data(total: u32) {
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut recv_data,
+                    Duration::from_secs(10),
                 )
                 .await;
             // debug!("call_remote, result: {:?}", result);
@@ -119,6 +120,7 @@ async fn run_cli_with_data_size(total: u32, size: usize) {
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut recv_data,
+                    Duration::from_secs(10),
                 )
                 .await;
             // debug!("call_remote, result: {:?}", result);

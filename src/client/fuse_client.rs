@@ -4,6 +4,7 @@
 
 use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
+use crate::common::sender::REQUEST_TIMEOUT;
 use crate::common::serialization::{
     ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
     DeleteFileSendMetaData, FileAttrSimple, OpenFileSendMetaData, OperationType,
@@ -302,6 +303,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -387,6 +389,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -454,6 +457,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -531,6 +535,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut [],
                 &mut recv_data,
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -616,6 +621,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut [],
                 &mut recv_data,
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -673,6 +679,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -731,6 +738,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -808,6 +816,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -858,6 +867,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -911,6 +921,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {

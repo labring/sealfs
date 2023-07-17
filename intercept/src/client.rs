@@ -12,6 +12,7 @@ use libc::{dirent64, iovec, O_CREAT};
 use log::{debug, info};
 use sealfs::common::byte::CHUNK_SIZE;
 use sealfs::common::hash_ring::HashRing;
+use sealfs::common::sender::REQUEST_TIMEOUT;
 use sealfs::common::serialization::{
     ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
     DeleteFileSendMetaData, FileAttrSimple, GetClusterStatusRecvMetaData,
@@ -190,6 +191,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -229,6 +231,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -268,6 +271,7 @@ impl Client {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -317,6 +321,7 @@ impl Client {
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut [],
+                    REQUEST_TIMEOUT,
                 ))
                 .is_err()
             {
@@ -353,6 +358,7 @@ impl Client {
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut [],
+                    REQUEST_TIMEOUT,
                 ))
                 .is_err()
             {
@@ -394,6 +400,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut [],
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -430,6 +437,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -464,6 +472,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut [],
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -509,6 +518,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut recv_data,
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -593,6 +603,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut recv_data,
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -663,6 +674,7 @@ impl Client {
             &mut recv_data_length,
             &mut [],
             &mut [],
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -696,6 +708,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -732,6 +745,7 @@ impl Client {
             &mut recv_data_length,
             &mut recv_meta_data,
             &mut [],
+            REQUEST_TIMEOUT,
         )) {
             return Err(libc::EIO);
         }
@@ -784,6 +798,7 @@ impl Client {
                         &mut recv_data_length,
                         &mut [],
                         chunk_buf,
+                        REQUEST_TIMEOUT,
                     )
                     .await
                 {
@@ -845,6 +860,7 @@ impl Client {
                         &mut recv_data_length,
                         &mut recv_meta_data,
                         &mut [],
+                        REQUEST_TIMEOUT,
                     )
                     .await
                 {

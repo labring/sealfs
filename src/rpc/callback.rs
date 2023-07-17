@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicU32, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use kanal;
@@ -16,7 +17,7 @@ use tokio::{
     time::timeout,
 };
 
-use super::protocol::{CLIENT_REQUEST_TIMEOUT, REQUEST_POOL_SIZE};
+use super::protocol::REQUEST_POOL_SIZE;
 
 pub struct OperationCallback {
     pub data: *const u8,
@@ -188,10 +189,14 @@ impl CallbackPool {
 
     // wait_for_callback
     // return: (status, flags, meta_data_length, data_length)
-    pub async fn wait_for_callback(&self, id: u32) -> Result<(i32, u32, usize, usize), String> {
+    pub async fn wait_for_callback(
+        &self,
+        id: u32,
+        req_timeout: Duration,
+    ) -> Result<(i32, u32, usize, usize), String> {
         let receiver =
             unsafe { (*(self.callbacks[id as usize] as *mut OperationCallback)).get_receiver() };
-        let result = timeout(CLIENT_REQUEST_TIMEOUT, receiver.recv()).await;
+        let result = timeout(req_timeout, receiver.recv()).await;
         let is_ok = match result {
             Ok(r) => match r {
                 Some(_) => true,
@@ -207,7 +212,7 @@ impl CallbackPool {
                     Ok(_) => false,
                     Err(_) => {
                         // This means that the response has been received, and signal has been sent.
-                        match timeout(CLIENT_REQUEST_TIMEOUT, receiver.recv()).await {
+                        match timeout(req_timeout, receiver.recv()).await {
                             Ok(r) => match r {
                                 Some(_) => true,
                                 None => panic!("wait_for_callback error"),
@@ -319,7 +324,10 @@ mod tests {
                         Ok(_) => assert!(true),
                         Err(_) => assert!(false),
                     };
-                    match pool.wait_for_callback(id).await {
+                    match pool
+                        .wait_for_callback(id, time::Duration::from_secs(3))
+                        .await
+                    {
                         Ok(_) => assert!(true),
                         Err(_) => assert!(false),
                     };
@@ -390,7 +398,10 @@ mod tests {
                     Ok(_) => assert!(true),
                     Err(_) => assert!(false),
                 };
-                match pool.wait_for_callback(id).await {
+                match pool
+                    .wait_for_callback(id, time::Duration::from_secs(3))
+                    .await
+                {
                     Ok(_) => assert!(true),
                     Err(_) => assert!(false),
                 };
