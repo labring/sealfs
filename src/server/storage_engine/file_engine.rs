@@ -62,8 +62,8 @@ impl StorageEngine for FileEngine {
     }
 
     fn init(&self) {
-        self.meta_engine.init();
         self.fsck().unwrap();
+        self.meta_engine.init();
     }
 
     fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
@@ -231,7 +231,7 @@ impl StorageEngine for FileEngine {
             return Err(f_errno);
         };
         self.meta_engine.delete_file_attr(path)?;
-        self.meta_engine.delete_file(&local_file_name)?;
+        self.meta_engine.delete_file(&local_file_name, path)?;
         Ok(())
     }
 
@@ -382,6 +382,7 @@ mod tests {
             assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("test1/a.txt").unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
+            meta_engine.delete_directory("test1").unwrap();
         }
 
         {
@@ -402,6 +403,9 @@ mod tests {
             assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("test1/test_a/a/a.txt").unwrap();
             assert_eq!(Path::new(&local_file_name).is_file(), false);
+            meta_engine.delete_directory("test1/test_a/a").unwrap();
+            meta_engine.delete_directory("test1/test_a").unwrap();
+            meta_engine.delete_directory("test1").unwrap();
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_file", db_path)).unwrap();

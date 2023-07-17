@@ -1,7 +1,6 @@
 #!/bin/bash
 
 function finish() {
-    sudo rm -rf ~/fs
     trap 'kill $(jobs -p)' EXIT
     exit $1
 }
@@ -51,7 +50,7 @@ done
 
 sleep 3
 
-./target/debug/client --log-level $log_level create test1 100000
+./target/debug/client --log-level $log_level create-volume test1 100000
 
 ./target/debug/client --log-level $log_level daemon&
 sleep 3

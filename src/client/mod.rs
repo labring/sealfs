@@ -36,46 +36,71 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Create {
+    CreateVolume {
         /// Create a volume with a given mount point and size
-        #[arg(required = true, name = "MOUNT_POINT")]
+        #[arg(required = true, name = "mount-point")]
         mount_point: Option<String>,
 
         /// Size of the volume
-        #[arg(required = true, name = "volume_SIZE")]
+        #[arg(required = true, name = "volume-size")]
         volume_size: Option<u64>,
 
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
+        manager_address: Option<String>,
+    },
+    DeleteVolume {
+        /// Create a volume with a given mount point and size
+        #[arg(required = true, name = "mount-point")]
+        mount_point: Option<String>,
+
+        /// Address of the manager
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
         manager_address: Option<String>,
     },
     Daemon {
         /// Start a daemon that hosts volumes
-        /// index file
-        #[arg(name = "INDEX_FILE")]
-        index_file: Option<String>,
 
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
         manager_address: Option<String>,
+
+        /// index file
+        #[arg(long = "index-file", name = "index-file")]
+        index_file: Option<String>,
+
+        /// socket path
+        #[arg(long = "socket-path", name = "socket-path")]
+        socket_path: Option<String>,
+
+        /// clean socket file
+        #[arg(long = "clean-socket", name = "clean-socket")]
+        clean_socket: bool,
     },
     Mount {
         /// Act as a client, and mount FUSE at given path
-        #[arg(required = true, name = "MOUNT_POINT")]
+        #[arg(required = true, name = "mount-point")]
         mount_point: Option<String>,
 
         /// Remote volume name
-        #[arg(required = true, name = "volume_NAME")]
+        #[arg(required = true, name = "volume-name")]
         volume_name: Option<String>,
+
+        #[arg(name = "socket-path")]
+        socket_path: Option<String>,
     },
     Umount {
         /// Unmount FUSE at given path
-        #[arg(required = true, name = "MOUNT_POINT")]
+
+        #[arg(required = true, name = "mount-point")]
         mount_point: Option<String>,
+
+        #[arg(name = "socket-path")]
+        socket_path: Option<String>,
     },
     Add {
         /// Add a server to the cluster
-        #[arg(required = true, name = "SERVER_ADDRESS")]
+        #[arg(required = true, name = "server-address")]
         server_address: Option<String>,
 
         /// Weight of the server
@@ -83,37 +108,42 @@ enum Commands {
         weight: Option<usize>,
 
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
         manager_address: Option<String>,
     },
     Delete {
         /// Delete a server from the cluster
-        #[arg(required = true, name = "SERVER_ADDRESS")]
+        #[arg(required = true, name = "server-address")]
         server_address: Option<String>,
 
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
         manager_address: Option<String>,
     },
     ListServers {
         /// List all servers in the cluster
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
         _manager_address: Option<String>,
     },
     ListVolumes {
         /// List all servers in the cluster
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
-        _manager_address: Option<String>,
+        #[arg(short = 'm', long = "manager-address", name = "manager-address")]
+        manager_address: Option<String>,
     },
-    ListMountpoints {},
+    ListMountpoints {
+        #[arg(name = "socket-path")]
+        socket_path: Option<String>,
+    },
     Status {
         /// Address of the manager
-        #[arg(short = 'm', long = "manager_address", name = "manager_address")]
+        #[arg(short = 'm', long = "manager-address", name = "manager-ddress")]
         manager_address: Option<String>,
     },
     Probe {
+        #[arg(name = "socket-path")]
+        socket_path: Option<String>,
         // Probe the local client
     },
 }
@@ -350,7 +380,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
     let client = Arc::new(Client::new());
 
     match cli.command {
-        Commands::Create {
+        Commands::CreateVolume {
             mount_point,
             volume_size,
             manager_address,
@@ -388,9 +418,45 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
 
             Ok(())
         }
+        Commands::DeleteVolume {
+            mount_point,
+            manager_address,
+        } => {
+            let mountpoint = mount_point.unwrap();
+
+            let manager_address = match manager_address {
+                Some(address) => address,
+                None => "127.0.0.1:8081".to_owned(),
+            };
+
+            info!("init client");
+            connect_to_manager(manager_address, client.clone()).await;
+
+            info!("connect_servers");
+            if let Err(status) = client.connect_servers().await {
+                error!(
+                    "connect_servers failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
+
+            info!("delete_volume");
+            if let Err(status) = client.delete_volume(&mountpoint).await {
+                error!(
+                    "delete_volume failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
+
+            Ok(())
+        }
         Commands::Daemon {
             index_file,
             manager_address,
+            socket_path,
+            clean_socket,
         } => {
             let index_file = match index_file {
                 Some(file) => file,
@@ -419,7 +485,20 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 Err(e) => panic!("sealfsd init failed, error = {}", e),
             }
 
-            let server = RpcServer::new(Arc::new(sealfsd), LOCAL_PATH);
+            let socket_path = match socket_path {
+                Some(path) => path,
+                None => LOCAL_PATH.to_owned(),
+            };
+
+            if clean_socket {
+                if let Err(e) = std::fs::remove_file(&socket_path) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        panic!("remove socket file failed, error = {}", e);
+                    }
+                }
+            }
+
+            let server = RpcServer::new(Arc::new(sealfsd), &socket_path);
             let result = server.run_unix_stream().await;
             match result {
                 Ok(_) => info!("server run success"),
@@ -432,10 +511,15 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Mount {
             mount_point,
             volume_name,
+            socket_path,
         } => {
-            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+            let socket_path = match socket_path {
+                Some(path) => path,
+                None => LOCAL_PATH.to_owned(),
+            };
+            let local_client = LocalCli::new(socket_path.clone());
 
-            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+            if let Err(e) = local_client.add_connection(&socket_path).await {
                 panic!("add connection failed, error = {}", status_to_string(e))
             }
 
@@ -449,10 +533,17 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
 
             Ok(())
         }
-        Commands::Umount { mount_point } => {
-            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+        Commands::Umount {
+            mount_point,
+            socket_path,
+        } => {
+            let socket_path = match socket_path {
+                Some(path) => path,
+                None => LOCAL_PATH.to_owned(),
+            };
+            let local_client = LocalCli::new(socket_path.clone());
 
-            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+            if let Err(e) = local_client.add_connection(&socket_path).await {
                 panic!("add connection failed, error = {}", status_to_string(e))
             }
 
@@ -516,11 +607,45 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Commands::ListServers { _manager_address } => todo!(),
-        Commands::ListVolumes { _manager_address } => todo!(),
-        Commands::ListMountpoints {} => {
-            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+        Commands::ListVolumes { manager_address } => {
+            let manager_address = match manager_address {
+                Some(address) => address,
+                None => "127.0.0.1:8081".to_owned(),
+            };
+            info!("init client");
+            connect_to_manager(manager_address, client.clone()).await;
 
-            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+            info!("connect_servers");
+            if let Err(status) = client.connect_servers().await {
+                error!(
+                    "connect_servers failed, status = {:?}",
+                    status_to_string(status)
+                );
+                return Ok(());
+            }
+
+            let result = client.list_volumes().await;
+            match result {
+                Ok(volumes) => {
+                    info!("list volumes success");
+                    for volume in volumes {
+                        println!("{}", volume);
+                    }
+                }
+                Err(e) => {
+                    info!("list volumes failed, error = {}", status_to_string(e))
+                }
+            };
+            Ok(())
+        }
+        Commands::ListMountpoints { socket_path } => {
+            let socket_path = match socket_path {
+                Some(path) => path,
+                None => LOCAL_PATH.to_owned(),
+            };
+            let local_client = LocalCli::new(socket_path.clone());
+
+            if let Err(e) = local_client.add_connection(&socket_path).await {
                 panic!("add connection failed, error = {}", status_to_string(e))
             }
 
@@ -558,10 +683,14 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
             Ok(())
         }
-        Commands::Probe {} => {
-            let local_client = LocalCli::new(LOCAL_PATH.to_owned());
+        Commands::Probe { socket_path } => {
+            let socket_path = match socket_path {
+                Some(path) => path,
+                None => LOCAL_PATH.to_owned(),
+            };
+            let local_client = LocalCli::new(socket_path.clone());
 
-            if let Err(e) = local_client.add_connection(LOCAL_PATH).await {
+            if let Err(e) = local_client.add_connection(&socket_path).await {
                 panic!("add connection failed, error = {}", status_to_string(e))
             }
 

@@ -22,3 +22,14 @@ build:
 
 test:
 	cargo test --features=$(features)
+
+images: manager-image server-image client-image
+
+manager-image:
+	docker build -t manager -f docker/manager/Dockerfile . --no-cache
+
+server-image:
+	docker build -t server -f docker/server/Dockerfile .
+
+client-image:
+	docker build -t client -f docker/client/Dockerfile .

@@ -46,6 +46,9 @@ pub enum OperationType {
     DeleteFileNoParent = 19,
     CreateVolume = 20,
     InitVolume = 21,
+    ListVolumes = 22,
+    DeleteVolume = 23,
+    CleanVolume = 24,
 }
 
 impl TryFrom<u32> for OperationType {
@@ -75,6 +78,9 @@ impl TryFrom<u32> for OperationType {
             19 => Ok(OperationType::DeleteFileNoParent),
             20 => Ok(OperationType::CreateVolume),
             21 => Ok(OperationType::InitVolume),
+            22 => Ok(OperationType::ListVolumes),
+            23 => Ok(OperationType::DeleteVolume),
+            24 => Ok(OperationType::CleanVolume),
             _ => panic!("Unkown value: {}", value),
         }
     }
@@ -105,6 +111,9 @@ impl From<OperationType> for u32 {
             OperationType::DeleteFileNoParent => 19,
             OperationType::CreateVolume => 20,
             OperationType::InitVolume => 21,
+            OperationType::ListVolumes => 22,
+            OperationType::DeleteVolume => 23,
+            OperationType::CleanVolume => 24,
         }
     }
 }
@@ -775,6 +784,22 @@ pub struct CheckDirSendMetaData {
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub struct CreateVolumeSendMetaData {
+    pub size: u64,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
+pub struct Volume {
     pub name: String,
     pub size: u64,
+    pub used_size: u64,
+}
+
+impl Display for Volume {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Volume {{ name: {}, size: {}, used_size: {} }}",
+            self.name, self.size, self.used_size
+        )
+    }
 }

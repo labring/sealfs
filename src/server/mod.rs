@@ -5,8 +5,6 @@
 pub mod distributed_engine;
 pub mod storage_engine;
 mod transfer_manager;
-mod volume;
-
 use std::{
     sync::{atomic::Ordering, Arc},
     time::Duration,
@@ -176,7 +174,7 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                 let _old_hash_ring = engine
                     .hash_ring
                     .write()
-                    .replace(engine.new_hash_ring.read().clone().unwrap());
+                    .replace(engine.new_hash_ring.read().clone().unwrap()); // TODO: _old_hash_ring should be used to rollback the transfer process
 
                 info!("Transfer: start to finishing");
                 match engine.update_server_status(ServerStatus::Finishing).await {
@@ -815,15 +813,18 @@ where
                 info!("{} Create Volume", self.engine.address);
                 let meta_data_unwraped: CreateVolumeSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
-                info!("Create Volume: {:?}, id: {}", &meta_data_unwraped.name, id);
-                if meta_data_unwraped.name.is_empty()
-                    || meta_data_unwraped.name.len() > 255
-                    || meta_data_unwraped.name.contains('\0')
-                    || meta_data_unwraped.name.contains('/')
+                info!("Create Volume: {:?}, id: {}", file_path, id);
+                if file_path.is_empty()
+                    || file_path.len() > 255
+                    || file_path.contains('\0')
+                    || file_path.contains('/')
                 {
                     return Ok((libc::EINVAL, 0, 0, 0, vec![], vec![]));
                 }
-                let status = match self.engine.create_volume(&meta_data_unwraped.name) {
+                let status = match self
+                    .engine
+                    .create_volume(file_path, meta_data_unwraped.size)
+                {
                     Ok(()) => 0,
                     Err(e) => {
                         info!(
@@ -839,26 +840,87 @@ where
                 return Ok((status, 0, 0, 0, Vec::new(), Vec::new()));
             }
             OperationType::InitVolume => {
-                let file_path = String::from_utf8(path).unwrap();
                 info!(
                     "{} Init Volume: {}, id: {}",
                     self.engine.address, file_path, id
                 );
                 if !file_path.is_empty()
-                    && self.engine.get_address(&file_path) == self.engine.address
-                    && !self.engine.volumes.contains_key(&file_path)
+                    && self.engine.get_address(file_path) == self.engine.address
+                    && self.engine.meta_engine.init_volume(file_path).is_err()
                 {
                     error!(
                         "Volume not Exists: id: {}, file_path: {}, address {}, self_address {}",
                         id,
                         file_path,
-                        self.engine.get_address(&file_path),
+                        self.engine.get_address(file_path),
                         self.engine.address
                     );
                     return Ok((libc::ENOENT, 0, 0, 0, vec![], vec![]));
                 }
                 //self.engine.volume_indexes.insert(id, file_path);
                 return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
+            }
+            OperationType::ListVolumes => {
+                info!("{} List Volume", self.engine.address);
+                let return_meta_data = self.engine.meta_engine.list_volumes().unwrap();
+                return Ok((
+                    0,
+                    0,
+                    return_meta_data.len(),
+                    0,
+                    return_meta_data,
+                    Vec::new(),
+                ));
+            }
+            OperationType::DeleteVolume => {
+                info!("{} Delete Volume", self.engine.address);
+                info!("Delete Volume: {:?}, id: {}", file_path, id);
+                if file_path.is_empty()
+                    || file_path.len() > 255
+                    || file_path.contains('\0')
+                    || file_path.contains('/')
+                {
+                    return Ok((libc::EINVAL, 0, 0, 0, vec![], vec![]));
+                }
+                let status = match self.engine.delete_volume(file_path).await {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        info!(
+                            "Delete Volume Failed: {:?}, path: {}, operation_type: {}, flags: {}",
+                            status_to_string(e),
+                            std::str::from_utf8(path.as_slice()).unwrap(),
+                            operation_type,
+                            flags
+                        );
+                        e
+                    }
+                };
+                return Ok((status, 0, 0, 0, Vec::new(), Vec::new()));
+            }
+            OperationType::CleanVolume => {
+                info!("{} Clean Volume", self.engine.address);
+                info!("Clean Volume: {:?}, id: {}", file_path, id);
+                if file_path.is_empty()
+                    || file_path.len() > 255
+                    || file_path.contains('\0')
+                    || file_path.contains('/')
+                {
+                    return Ok((libc::EINVAL, 0, 0, 0, vec![], vec![]));
+                }
+                let status = match self.engine.clean_volume(file_path) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        info!(
+                            "Clean Volume Failed: {:?}, path: {}, operation_type: {}, flags: {}",
+                            status_to_string(e),
+                            std::str::from_utf8(path.as_slice()).unwrap(),
+                            operation_type,
+                            flags
+                        );
+                        e
+                    }
+                };
+                return Ok((status, 0, 0, 0, Vec::new(), Vec::new()));
             }
         }
     }
