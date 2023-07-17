@@ -4,7 +4,7 @@ use super::transfer_manager::TransferManager;
 use crate::common::byte::CHUNK_SIZE;
 use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
-use crate::common::sender::Sender;
+use crate::common::sender::{Sender, REQUEST_TIMEOUT};
 use crate::common::serialization::{
     CheckDirSendMetaData, CheckFileSendMetaData, ClusterStatus, CreateDirSendMetaData,
     CreateFileSendMetaData, FileAttrSimple, FileTypeSimple, ManagerOperationType,
@@ -191,6 +191,7 @@ where
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut [],
+                    REQUEST_TIMEOUT,
                 )
                 .await
             {
@@ -235,6 +236,7 @@ where
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await
         {
@@ -325,6 +327,7 @@ where
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await
         {
@@ -552,6 +555,7 @@ where
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -657,6 +661,7 @@ where
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut recv_data,
+                REQUEST_TIMEOUT,
             )
             .await;
 
@@ -864,6 +869,7 @@ where
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut [],
+                    REQUEST_TIMEOUT,
                 )
                 .await
             {

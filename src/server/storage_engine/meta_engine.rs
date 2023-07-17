@@ -16,6 +16,8 @@ use crate::{
     server::path_split,
 };
 
+const INIT_SUB_FILES_NUM: u32 = 2;
+
 #[cfg(feature = "disk-db")]
 pub struct Database {
     pub db: DB,
@@ -146,7 +148,7 @@ impl MetaEngine {
                         FileIndex {
                             file_type: FileTypeSimple::Directory,
                             status: 0,
-                            sub_files_num: 2,
+                            sub_files_num: INIT_SUB_FILES_NUM,
                         },
                     );
                     if !k.contains('/') {
@@ -199,7 +201,7 @@ impl MetaEngine {
                     FileIndex {
                         file_type: FileTypeSimple::RegularFile,
                         status: 0,
-                        sub_files_num: 2,
+                        sub_files_num: INIT_SUB_FILES_NUM,
                     },
                 );
                 match self.file_db.db.put(loacl_file_name, path) {
@@ -249,9 +251,9 @@ impl MetaEngine {
                 self.file_indexs.insert(
                     path.to_owned(),
                     FileIndex {
-                        file_type: (FileTypeSimple::Directory),
-                        status: (0),
-                        sub_files_num: (2),
+                        file_type: FileTypeSimple::Directory,
+                        status: 0,
+                        sub_files_num: INIT_SUB_FILES_NUM,
                     },
                 );
                 let attr = FileAttrSimple::new(FileTypeSimple::Directory);
@@ -264,7 +266,7 @@ impl MetaEngine {
     pub fn delete_directory(&self, path: &str) -> Result<(), i32> {
         match self.file_indexs.get_mut(path) {
             Some(value) => {
-                if value.sub_files_num > 2 {
+                if value.sub_files_num > INIT_SUB_FILES_NUM {
                     Err(libc::ENOTEMPTY)
                 } else {
                     drop(value);
@@ -342,7 +344,7 @@ impl MetaEngine {
             rocksdb::Direction::Forward,
         )) {
             info!("item: {:?}", item);
-            if index_num == 2 {
+            if index_num == INIT_SUB_FILES_NUM {
                 break;
             }
             if offset > 0 {
@@ -433,7 +435,7 @@ impl MetaEngine {
                         return Err(DATABASE_ERROR);
                     }
                 }
-                assert!(value.sub_files_num > 2);
+                assert!(value.sub_files_num > INIT_SUB_FILES_NUM);
                 value.sub_files_num -= 1;
                 Ok(())
             }
@@ -632,7 +634,7 @@ mod tests {
 
     use libc::mode_t;
 
-    use crate::server::storage_engine::meta_engine::MetaEngine;
+    use crate::server::storage_engine::meta_engine::{MetaEngine, INIT_SUB_FILES_NUM};
 
     #[test]
     fn test_create_delete_dir() {
@@ -645,14 +647,14 @@ mod tests {
             let mode: mode_t = 0o777;
             engine.create_directory("test1/a", mode).unwrap();
             let l = engine.file_indexs.get("test1/a").unwrap().sub_files_num;
-            assert_eq!(2, l);
+            assert_eq!(INIT_SUB_FILES_NUM, l);
             let l = engine.file_indexs.get("test1").unwrap().sub_files_num;
-            assert_eq!(3, l);
+            assert_eq!(INIT_SUB_FILES_NUM + 1, l);
             engine.directory_delete_entry("test1", "a", 3).unwrap();
             engine.delete_directory("test1/a").unwrap();
             assert_eq!(engine.file_indexs.get("test1/a").is_none(), true);
             let l = engine.file_indexs.get("test1").unwrap().sub_files_num;
-            assert_eq!(2, l);
+            assert_eq!(INIT_SUB_FILES_NUM, l);
             engine.delete_directory("test1").unwrap();
         }
 
@@ -664,12 +666,12 @@ mod tests {
             let mode: mode_t = 0o777;
             engine.create_directory("test1/a1", mode).unwrap();
             let l = engine.file_indexs.get("test1/a1").unwrap().sub_files_num;
-            assert_eq!(2, l);
+            assert_eq!(INIT_SUB_FILES_NUM, l);
 
             engine.directory_add_entry("test1/a1", "a2", 3).unwrap();
             engine.create_directory("test1/a1/a2", mode).unwrap();
             let l = engine.file_indexs.get("test1/a1").unwrap().sub_files_num;
-            assert_eq!(3, l);
+            assert_eq!(INIT_SUB_FILES_NUM + 1, l);
             engine.delete_directory("test1/a1/a2").unwrap();
             engine.delete_from_parent("test1/a1/a2", 3).unwrap();
             engine.delete_directory("test1/a1").unwrap();
@@ -678,13 +680,13 @@ mod tests {
             engine.directory_add_entry("test1", "a3", 3).unwrap();
             engine.create_directory("test1/a3", mode).unwrap();
             let l = engine.file_indexs.get("test1/a3").unwrap().sub_files_num;
-            assert_eq!(2, l);
+            assert_eq!(INIT_SUB_FILES_NUM, l);
             engine.directory_delete_entry("test1", "a3", 3).unwrap();
             engine.delete_directory("test1/a3").unwrap();
             assert_eq!(engine.file_indexs.get("test1/a3").is_none(), true);
 
             let l = engine.file_indexs.get("test1").unwrap().sub_files_num;
-            assert_eq!(2, l);
+            assert_eq!(INIT_SUB_FILES_NUM, l);
             engine.delete_directory("test1").unwrap();
         }
         rocksdb::DB::destroy(&rocksdb::Options::default(), format!("{}_dir", db_path)).unwrap();

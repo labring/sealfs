@@ -200,6 +200,7 @@ impl<
         recv_data_length: &mut usize,
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
+        timeout: Duration,
     ) -> Result<(), String> {
         for _ in 0..SEND_RETRY_TIMES {
             let connection = match self.connections.get(server_address) {
@@ -232,7 +233,8 @@ impl<
                 }
                 continue;
             }
-            let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?; // TODO: retry the request
+            let (s, f, meta_data_length, data_length) =
+                self.pool.wait_for_callback(id, timeout).await?; // TODO: retry the request
             *status = s;
             *rsp_flags = f;
             *recv_meta_data_length = meta_data_length;

@@ -2,7 +2,7 @@ use core::result::Result;
 use dashmap::DashMap;
 use ibv::connection::conn::{connect, Conn};
 use log::{debug, error};
-use std::{io::IoSlice, sync::Arc};
+use std::{io::IoSlice, sync::Arc, time::Duration};
 
 use crate::rpc::{
     callback::CallbackPool,
@@ -55,6 +55,7 @@ impl Client {
         recv_data_length: &mut usize,
         recv_meta_data: &mut [u8],
         recv_data: &mut [u8],
+        timeout: Duration,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (batch, id) = self
             .pool
@@ -77,7 +78,8 @@ impl Client {
         )
         .await?;
 
-        let (s, f, meta_data_length, data_length) = self.pool.wait_for_callback(id).await?;
+        let (s, f, meta_data_length, data_length) =
+            self.pool.wait_for_callback(id, timeout).await?;
         debug!(
             "call_remote success, id: {}, status: {}, flags: {}, meta_data_length: {}, data_length: {}",
             id, s, f, meta_data_length, data_length

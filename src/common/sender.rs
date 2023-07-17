@@ -4,7 +4,7 @@
 
 // sender is used to send requests to the other sealfs servers
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use log::error;
 
@@ -18,6 +18,9 @@ use super::serialization::{
     GetClusterStatusRecvMetaData, GetHashRingInfoRecvMetaData, ManagerOperationType, OperationType,
     Volume,
 };
+
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+pub const CONTROLL_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Sender {
     pub client: Arc<
@@ -71,6 +74,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -119,6 +123,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -160,6 +165,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -206,6 +212,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -251,6 +258,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -293,6 +301,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                CONTROLL_REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -335,6 +344,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -373,6 +383,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -411,6 +422,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                CONTROLL_REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -449,6 +461,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -495,6 +508,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -542,6 +556,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut recv_meta_data,
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -582,6 +597,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -622,6 +638,7 @@ impl Sender {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {

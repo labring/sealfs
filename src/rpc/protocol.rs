@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::time;
-
 pub const MAX_FILENAME_LENGTH: usize = 4096;
 pub const MAX_DATA_LENGTH: usize = 65536;
 pub const MAX_METADATA_LENGTH: usize = 4096;
@@ -21,7 +19,6 @@ pub const REQUEST_METADATA_LENGTH_SIZE: usize = 4;
 pub const REQUEST_DATA_LENGTH_SIZE: usize = 4;
 
 pub const REQUEST_POOL_SIZE: usize = 65536;
-pub const CLIENT_REQUEST_TIMEOUT: time::Duration = time::Duration::from_secs(10);
 
 /* receive operation response and wake up the operation thread using condition variable
     response

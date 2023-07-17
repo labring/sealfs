@@ -13,7 +13,7 @@ use fuser::{BackgroundSession, MountOption};
 use log::{error, info};
 
 use crate::{
-    common::errors::CONNECTION_ERROR,
+    common::{errors::CONNECTION_ERROR, sender::REQUEST_TIMEOUT},
     rpc::{
         client::{RpcClient, UnixStreamCreator},
         server::Handler,
@@ -252,6 +252,7 @@ impl LocalCli {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -290,6 +291,7 @@ impl LocalCli {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -330,6 +332,7 @@ impl LocalCli {
                 &mut recv_data_length,
                 &mut [],
                 &mut mountpoints,
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {
@@ -368,6 +371,7 @@ impl LocalCli {
                 &mut recv_data_length,
                 &mut [],
                 &mut [],
+                REQUEST_TIMEOUT,
             )
             .await;
         match result {

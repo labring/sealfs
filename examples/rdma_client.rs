@@ -49,6 +49,7 @@ pub async fn cli(total: u32) -> Duration {
                     &mut recv_data_length,
                     &mut recv_meta_data,
                     &mut recv_data,
+                    Duration::from_secs(10),
                 )
                 .await;
             debug!("call_remote, result: {:?}", result);
