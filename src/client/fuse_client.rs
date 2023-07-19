@@ -6,17 +6,18 @@ use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
 use crate::common::sender::REQUEST_TIMEOUT;
 use crate::common::serialization::{
-    ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData, DeleteDirSendMetaData,
-    DeleteFileSendMetaData, FileAttrSimple, OpenFileSendMetaData, OperationType,
+    file_attr_as_bytes_mut, ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData,
+    DeleteDirSendMetaData, DeleteFileSendMetaData, OpenFileSendMetaData, OperationType,
     ReadDirSendMetaData, ReadFileSendMetaData, Volume, WriteFileSendMetaData,
 };
+use crate::common::util::{empty_dir, empty_file};
 use crate::common::{errors, sender};
 use crate::rpc;
 use crate::rpc::client::TcpStreamCreator;
 use dashmap::DashMap;
 use fuser::{
-    FileAttr, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
-    ReplyWrite,
+    FileAttr, FileType, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
+    ReplyOpen, ReplyWrite,
 };
 use libc::{mode_t, DT_DIR, DT_LNK, DT_REG};
 use log::{debug, error, info};
@@ -25,7 +26,7 @@ use std::ffi::{OsStr, OsString};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::time::sleep;
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
@@ -275,7 +276,7 @@ impl Client {
             Some(parent_path) => self.get_full_path(parent_path.deref(), &name),
             None => {
                 reply.error(libc::ENOENT);
-                info!("lookup_remote error");
+                info!("lookup_remote error: {:?}", libc::ENOENT);
                 return;
             }
         };
@@ -286,7 +287,8 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; 1024];
+        let mut file_attr = Box::new(empty_file());
+        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
 
         let result = self
             .client
@@ -317,11 +319,11 @@ impl Client {
                     "lookup_remote recv_meta_data: {:?}",
                     &recv_meta_data[..recv_meta_data_length]
                 );
-                let mut file_attr: FileAttr = {
-                    let file_attr_simple: FileAttrSimple =
-                        bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                    file_attr_simple.into()
-                };
+                // let mut file_attr: FileAttr = {
+                //     let file_attr_simple: FileAttrSimple =
+                //     FileAttrSimple::from_bytes(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                //     file_attr_simple.into()
+                // };
 
                 if self.inodes.contains_key(&path) {
                     file_attr.ino = *self.inodes.get(&path).unwrap().value();
@@ -364,7 +366,24 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; 1024];
+        let mut file_attr = Box::new(FileAttr {
+            ino: 0,
+            size: 0,
+            blocks: 0,
+            atime: UNIX_EPOCH,
+            mtime: UNIX_EPOCH,
+            ctime: UNIX_EPOCH,
+            crtime: UNIX_EPOCH,
+            kind: FileType::Directory,
+            perm: 0,
+            nlink: 0,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+            flags: 0,
+            blksize: 0,
+        });
+        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
 
         let send_meta_data = bincode::serialize(&CreateFileSendMetaData {
             mode,
@@ -402,11 +421,11 @@ impl Client {
                     "create_remote recv_meta_data: {:?}",
                     &recv_meta_data[..recv_meta_data_length]
                 );
-                let mut file_attr: FileAttr = {
-                    let file_attr_simple: FileAttrSimple =
-                        bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                    file_attr_simple.into()
-                };
+                // let mut file_attr: FileAttr = {
+                //     let file_attr_simple: FileAttrSimple =
+                //     FileAttrSimple::from_bytes(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                //     file_attr_simple.into()
+                // };
 
                 file_attr.ino = self.get_new_inode();
 
@@ -440,7 +459,24 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; 1024];
+        let mut file_attr = Box::new(FileAttr {
+            ino: 0,
+            size: 0,
+            blocks: 0,
+            atime: UNIX_EPOCH,
+            mtime: UNIX_EPOCH,
+            ctime: UNIX_EPOCH,
+            crtime: UNIX_EPOCH,
+            kind: FileType::Directory,
+            perm: 0,
+            nlink: 0,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+            flags: 0,
+            blksize: 0,
+        });
+        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
 
         let result = self
             .client
@@ -470,11 +506,11 @@ impl Client {
                     "getattr_remote recv_meta_data: {:?}",
                     &recv_meta_data[..recv_meta_data_length]
                 );
-                let mut file_attr: FileAttr = {
-                    let file_attr_simple: FileAttrSimple =
-                        bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                    file_attr_simple.into()
-                };
+                // let mut file_attr: FileAttr = {
+                //     let file_attr_simple: FileAttrSimple =
+                //     FileAttrSimple::from_bytes(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                //     file_attr_simple.into()
+                // };
                 debug!("getattr_remote file_attr: {:?}", file_attr);
                 if self.inodes.contains_key(&path) {
                     file_attr.ino = *self.inodes.get(&path).unwrap().value();
@@ -714,7 +750,8 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut recv_meta_data = vec![0u8; 1024];
+        let mut file_attr = Box::new(empty_dir());
+        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
 
         let mode: mode_t = 0o755;
         let send_meta_data = bincode::serialize(&CreateDirSendMetaData {
@@ -751,11 +788,11 @@ impl Client {
                     "create_remote recv_meta_data: {:?}",
                     &recv_meta_data[..recv_meta_data_length]
                 );
-                let mut file_attr: FileAttr = {
-                    let file_attr_simple: FileAttrSimple =
-                        bincode::deserialize(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                    file_attr_simple.into()
-                };
+                // let mut file_attr: FileAttr = {
+                //     let file_attr_simple: FileAttrSimple =
+                //     FileAttrSimple::from_bytes(&recv_meta_data[..recv_meta_data_length]).unwrap();
+                //     file_attr_simple.into()
+                // };
 
                 file_attr.ino = self.get_new_inode();
 

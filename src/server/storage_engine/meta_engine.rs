@@ -1,5 +1,8 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use bytes::BufMut;
 use dashmap::DashMap;
+use fuser::{FileAttr, FileType};
 use libc::{DT_DIR, DT_LNK, DT_REG};
 use log::{debug, error, info};
 #[cfg(feature = "mem-db")]
@@ -11,7 +14,8 @@ use rocksdb::{Cache, IteratorMode, Options, DB};
 use crate::{
     common::{
         errors::{DATABASE_ERROR, SERIALIZATION_ERROR},
-        serialization::{FileAttrSimple, FileTypeSimple, Volume},
+        serialization::{bytes_as_file_attr, file_attr_as_bytes, FileTypeSimple, Volume},
+        util::empty_dir,
     },
     server::path_split,
 };
@@ -31,9 +35,9 @@ pub struct Database {
 }
 
 pub struct FileIndex {
-    pub file_type: FileTypeSimple,
+    pub file_attr: FileAttr,
     pub status: u32,
-    pub sub_files_num: u32,
+    pub sub_files_num: AtomicU32,
 }
 
 pub struct MetaEngine {
@@ -127,28 +131,28 @@ impl MetaEngine {
         for file_name in self.file_attr_db.db.iterator(IteratorMode::Start) {
             let (k, v) = file_name.unwrap();
             let k = String::from_utf8(k.to_vec()).unwrap();
-            let attr: FileAttrSimple = bincode::deserialize(&v).unwrap();
+            let attr = unsafe { bytes_as_file_attr(&v) };
             let file_type = attr.kind;
             match file_type {
-                4 => {
+                FileType::RegularFile => {
                     // RegularFile
                     self.file_indexs.insert(
                         k,
                         FileIndex {
-                            file_type: FileTypeSimple::RegularFile,
+                            file_attr: attr.clone(),
                             status: 0,
-                            sub_files_num: 0,
+                            sub_files_num: AtomicU32::new(0),
                         },
                     );
                 }
-                3 => {
+                FileType::Directory => {
                     // Directory
                     self.file_indexs.insert(
                         k.clone(),
                         FileIndex {
-                            file_type: FileTypeSimple::Directory,
+                            file_attr: attr.clone(),
                             status: 0,
-                            sub_files_num: INIT_SUB_FILES_NUM,
+                            sub_files_num: AtomicU32::new(INIT_SUB_FILES_NUM),
                         },
                     );
                     if !k.contains('/') {
@@ -170,12 +174,15 @@ impl MetaEngine {
             let sub_dir_info = String::from_utf8(dir_name.unwrap().0.to_vec()).unwrap();
             let list = sub_dir_info.split('$').collect::<Vec<&str>>();
             info!("list: {:?}", list);
-            let mut file_index = self
+            let file_index = self
                 .file_indexs
-                .get_mut(list.first().unwrap().to_owned())
+                .get(list.first().unwrap().to_owned())
                 .unwrap();
-            file_index.sub_files_num += 1;
-            info!("file_index.sub_files_num: {:}", file_index.sub_files_num);
+            file_index.sub_files_num.fetch_add(1, Ordering::Relaxed);
+            info!(
+                "file_index.sub_files_num: {:}",
+                file_index.sub_files_num.load(Ordering::Relaxed)
+            );
         }
     }
 
@@ -192,81 +199,73 @@ impl MetaEngine {
         Ok(file_map)
     }
 
-    pub fn put_file(&self, loacl_file_name: &str, path: &str) -> Result<(), i32> {
-        match self.file_indexs.get_mut(path) {
+    pub fn create_file(&self, file_attr: FileAttr, loacl_file_name: &str, path: &str) -> Result<Vec<u8>, i32> {
+        let value = self.put_file_attr(path, &file_attr)?;
+        match self.file_indexs.insert(
+            path.to_string(),
+            FileIndex {
+                file_attr,
+                status: 0,
+                sub_files_num: AtomicU32::new(INIT_SUB_FILES_NUM),
+            },
+        ) {
             Some(_) => Err(libc::EEXIST),
-            None => {
-                self.file_indexs.insert(
-                    path.to_string(),
-                    FileIndex {
-                        file_type: FileTypeSimple::RegularFile,
-                        status: 0,
-                        sub_files_num: INIT_SUB_FILES_NUM,
-                    },
-                );
-                match self.file_db.db.put(loacl_file_name, path) {
-                    Ok(_) => Ok(()),
-                    Err(e) => {
-                        error!("put file error: {}", e);
-                        Err(DATABASE_ERROR)
-                    }
+            None => match self.file_db.db.put(loacl_file_name, path) {
+                Ok(_) => Ok(value),
+                Err(e) => {
+                    error!("put file error: {}", e);
+                    Err(DATABASE_ERROR)
                 }
-            }
+            },
         }
     }
 
     pub fn delete_file(&self, local_file_name: &str, path: &str) -> Result<(), i32> {
-        match self.file_indexs.get_mut(path) {
-            Some(value) => {
-                drop(value);
-                self.file_indexs.remove(path);
-                match self.file_db.db.delete(local_file_name) {
-                    Ok(_) => Ok(()),
-                    Err(e) => {
-                        error!("delete file error: {}", e);
-                        Err(DATABASE_ERROR)
-                    }
+        match self.file_indexs.remove(path) {
+            Some(_) => match self.file_db.db.delete(local_file_name) {
+                Ok(_) => {
+                    self.delete_file_attr(path)?;
+                    Ok(())
                 }
-            }
+                Err(e) => {
+                    error!("delete file error: {}", e);
+                    Err(DATABASE_ERROR)
+                }
+            },
             None => Err(libc::ENOENT),
         }
     }
 
     pub fn is_exist(&self, path: &str) -> Result<bool, i32> {
-        match self.file_attr_db.db.get(path.as_bytes()) {
-            Ok(Some(_value)) => Ok(true),
-            Ok(None) => Ok(false),
-            Err(e) => {
-                error!("is exist error: {}", e);
-                Err(DATABASE_ERROR)
-            }
+        match self.file_indexs.get(path) {
+            Some(_) => Ok(true),
+            None => Ok(false),
         }
     }
 
     // this function does not need to be thread safe
     pub fn create_directory(&self, path: &str, _mode: u32) -> Result<Vec<u8>, i32> {
-        match self.file_indexs.get_mut(path) {
-            Some(_) => Err(libc::EEXIST),
-            None => {
-                self.file_indexs.insert(
+        match self.file_indexs.insert(
                     path.to_owned(),
                     FileIndex {
-                        file_type: FileTypeSimple::Directory,
+                        file_attr: empty_dir(),
                         status: 0,
-                        sub_files_num: INIT_SUB_FILES_NUM,
+                        sub_files_num: AtomicU32::new(INIT_SUB_FILES_NUM),
                     },
-                );
-                let attr = FileAttrSimple::new(FileTypeSimple::Directory);
-                self.put_file_attr(path, attr)
+                ) {
+            Some(_) => Err(libc::EEXIST),
+            None => {
+                let attr = empty_dir();
+                self.put_file_attr(path, &attr)
             }
         }
     }
 
     // this function does not need to be thread safe
     pub fn delete_directory(&self, path: &str) -> Result<(), i32> {
-        match self.file_indexs.get_mut(path) {
+        match self.file_indexs.get(path) {
             Some(value) => {
-                if value.sub_files_num > INIT_SUB_FILES_NUM {
+                if value.sub_files_num.load(Ordering::Relaxed) > INIT_SUB_FILES_NUM {
                     Err(libc::ENOTEMPTY)
                 } else {
                     drop(value);
@@ -299,26 +298,13 @@ impl MetaEngine {
     }
 
     pub fn read_directory(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
-        match self.file_attr_db.db.get(path.as_bytes()) {
-            Ok(Some(value)) => {
-                match bincode::deserialize::<FileAttrSimple>(&value) {
-                    Ok(file_attr) => {
-                        // fuser::FileType::Directory
-                        if file_attr.kind != 3 {
-                            return Err(libc::ENOTDIR);
-                        }
-                    }
-                    Err(e) => {
-                        error!("read directory error: {}", e);
-                        return Err(SERIALIZATION_ERROR);
-                    }
+        match self.file_indexs.get(path) {
+            Some(value) => {
+                if value.file_attr.kind != FileType::Directory {
+                    return Err(libc::ENOTDIR);
                 }
             }
-            Ok(None) => return Err(libc::ENOENT),
-            Err(e) => {
-                error!("read directory error: {}", e);
-                return Err(DATABASE_ERROR);
-            }
+            None => return Err(libc::ENOENT),
         }
 
         let mut offset = offset;
@@ -326,7 +312,7 @@ impl MetaEngine {
         // TODO: optimize the situation while offset is not 0
 
         let mut index_num = match self.file_indexs.get(path) {
-            Some(value) => value.sub_files_num, //maybe better hold a lock
+            Some(value) => value.sub_files_num.load(Ordering::Relaxed), //maybe better hold a lock
             None => {
                 return Err(libc::ENOENT);
             }
@@ -389,9 +375,9 @@ impl MetaEngine {
         file_name: &str,
         file_type: u8,
     ) -> Result<(), i32> {
-        match self.file_indexs.get_mut(parent_dir) {
-            Some(mut value) => {
-                if value.file_type != FileTypeSimple::Directory {
+        match self.file_indexs.get(parent_dir) {
+            Some(value) => {
+                if value.file_attr.kind != FileType::Directory {
                     return Err(libc::ENOTDIR);
                 }
                 match self.dir_db.db.put(
@@ -404,7 +390,7 @@ impl MetaEngine {
                         return Err(DATABASE_ERROR);
                     }
                 }
-                value.sub_files_num += 1;
+                value.sub_files_num.fetch_add(1, Ordering::Relaxed);
                 Ok(())
             }
             None => {
@@ -420,9 +406,9 @@ impl MetaEngine {
         file_name: &str,
         file_type: u8,
     ) -> Result<(), i32> {
-        match self.file_indexs.get_mut(parent_dir) {
-            Some(mut value) => {
-                if value.file_type != FileTypeSimple::Directory {
+        match self.file_indexs.get(parent_dir) {
+            Some(value) => {
+                if value.file_attr.kind != FileType::Directory {
                     return Err(libc::ENOTDIR);
                 }
                 match self.dir_db.db.delete(format!(
@@ -435,8 +421,8 @@ impl MetaEngine {
                         return Err(DATABASE_ERROR);
                     }
                 }
-                assert!(value.sub_files_num > INIT_SUB_FILES_NUM);
-                value.sub_files_num -= 1;
+                //assert!(value.sub_files_num > INIT_SUB_FILES_NUM);
+                value.sub_files_num.fetch_sub(1, Ordering::Relaxed);
                 Ok(())
             }
             None => {
@@ -448,8 +434,8 @@ impl MetaEngine {
 
     pub fn delete_from_parent(&self, path: &str, file_type: u8) -> Result<(), i32> {
         let (parent, name) = path_split(path).unwrap();
-        match self.file_indexs.get_mut(&parent) {
-            Some(mut value) => {
+        match self.file_indexs.get(&parent) {
+            Some(value) => {
                 if let Err(e) = self
                     .dir_db
                     .db
@@ -458,21 +444,15 @@ impl MetaEngine {
                     error!("delete from parent error: {}", e);
                     return Err(DATABASE_ERROR);
                 }
-                value.sub_files_num -= 1;
+                value.sub_files_num.fetch_sub(1, Ordering::Relaxed);
                 Ok(())
             }
             None => Err(libc::ENOENT),
         }
     }
 
-    pub fn put_file_attr(&self, path: &str, attr: FileAttrSimple) -> Result<Vec<u8>, i32> {
-        let value = match bincode::serialize(&attr) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("put_file_attr error: {}", e);
-                return Err(SERIALIZATION_ERROR);
-            }
-        };
+    pub fn put_file_attr(&self, path: &str, attr: &FileAttr) -> Result<Vec<u8>, i32> {
+        let value = unsafe { file_attr_as_bytes(attr) }.to_vec();
         match self.file_attr_db.db.put(path, &value) {
             Ok(_) => Ok(value),
             Err(e) => {
@@ -482,41 +462,38 @@ impl MetaEngine {
         }
     }
 
-    pub fn get_file_attr(&self, path: &str) -> Result<FileAttrSimple, i32> {
-        match self.file_attr_db.db.get(path) {
-            Ok(Some(value)) => bincode::deserialize::<FileAttrSimple>(&value).map_err(|e| {
-                error!("get_file_attr error: {}", e);
-                SERIALIZATION_ERROR
-            }),
-            Ok(None) => Err(libc::ENOENT),
-            Err(e) => {
-                error!("get_file_attr error: {}", e);
-                Err(DATABASE_ERROR)
+    pub fn update_size(&self, path: &str, size: u64) -> Result<(), i32> {
+        match self.file_indexs.get_mut(path) {
+            Some(mut value) => {
+                if value.file_attr.size >= size {
+                    return Ok(());
+                }
+                value.file_attr.size = size;
+                match self.put_file_attr(path, &value.file_attr) {
+                    Ok(_) => Ok(()),
+                    Err(e) => Err(e),
+                }
             }
+            None => Err(libc::ENOENT),
+        }
+    }
+
+    pub fn get_file_attr(&self, path: &str) -> Result<FileAttr, i32> {
+        match self.file_indexs.get(path) {
+            Some(value) => Ok(value.file_attr.clone()),
+            None => Err(libc::ENOENT),
         }
     }
 
     pub fn get_file_attr_raw(&self, path: &str) -> Result<Vec<u8>, i32> {
-        match self.file_attr_db.db.get(path).map(|v| match v {
-            Some(v) => Ok(v),
+        match self.file_indexs.get(path) {
+            Some(value) => Ok(unsafe { file_attr_as_bytes(&value.file_attr) }.to_vec()),
             None => Err(libc::ENOENT),
-        }) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("get_file_attr_raw error: {}", e);
-                Err(DATABASE_ERROR)
-            }
         }
     }
 
-    pub fn complete_transfer_file(&self, path: &str, file_attr: FileAttrSimple) -> Result<(), i32> {
-        let value = match bincode::serialize(&file_attr) {
-            Ok(v) => v,
-            Err(e) => {
-                error!("complete_transfer_file error: {}", e);
-                return Err(SERIALIZATION_ERROR);
-            }
-        };
+    pub fn complete_transfer_file(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
+        let value = unsafe { file_attr_as_bytes(file_attr) };
         match self.file_attr_db.db.put(path, value) {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -584,7 +561,7 @@ impl MetaEngine {
     pub fn is_dir(&self, path: &str) -> Result<bool, i32> {
         match self.file_indexs.get(path) {
             Some(value) => {
-                if value.file_type == FileTypeSimple::Directory {
+                if value.file_attr.kind == FileType::Directory {
                     Ok(true)
                 } else {
                     Ok(false)
@@ -632,6 +609,8 @@ impl MetaEngine {
 #[cfg(test)]
 mod tests {
 
+    use std::sync::atomic::Ordering;
+
     use libc::mode_t;
 
     use crate::server::storage_engine::meta_engine::{MetaEngine, INIT_SUB_FILES_NUM};
@@ -646,14 +625,29 @@ mod tests {
             engine.directory_add_entry("test1", "a", 3).unwrap();
             let mode: mode_t = 0o777;
             engine.create_directory("test1/a", mode).unwrap();
-            let l = engine.file_indexs.get("test1/a").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1/a")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM, l);
-            let l = engine.file_indexs.get("test1").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM + 1, l);
             engine.directory_delete_entry("test1", "a", 3).unwrap();
             engine.delete_directory("test1/a").unwrap();
             assert_eq!(engine.file_indexs.get("test1/a").is_none(), true);
-            let l = engine.file_indexs.get("test1").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM, l);
             engine.delete_directory("test1").unwrap();
         }
@@ -665,12 +659,22 @@ mod tests {
             engine.directory_add_entry("test1", "a1", 3).unwrap();
             let mode: mode_t = 0o777;
             engine.create_directory("test1/a1", mode).unwrap();
-            let l = engine.file_indexs.get("test1/a1").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1/a1")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM, l);
 
             engine.directory_add_entry("test1/a1", "a2", 3).unwrap();
             engine.create_directory("test1/a1/a2", mode).unwrap();
-            let l = engine.file_indexs.get("test1/a1").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1/a1")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM + 1, l);
             engine.delete_directory("test1/a1/a2").unwrap();
             engine.delete_from_parent("test1/a1/a2", 3).unwrap();
@@ -679,13 +683,23 @@ mod tests {
 
             engine.directory_add_entry("test1", "a3", 3).unwrap();
             engine.create_directory("test1/a3", mode).unwrap();
-            let l = engine.file_indexs.get("test1/a3").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1/a3")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM, l);
             engine.directory_delete_entry("test1", "a3", 3).unwrap();
             engine.delete_directory("test1/a3").unwrap();
             assert_eq!(engine.file_indexs.get("test1/a3").is_none(), true);
 
-            let l = engine.file_indexs.get("test1").unwrap().sub_files_num;
+            let l = engine
+                .file_indexs
+                .get("test1")
+                .unwrap()
+                .sub_files_num
+                .load(Ordering::SeqCst);
             assert_eq!(INIT_SUB_FILES_NUM, l);
             engine.delete_directory("test1").unwrap();
         }

@@ -336,24 +336,24 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ServerConnection<W, R> {
         read_stream: &mut R,
         header: &RequestHeader,
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-        let path_length = u32::from_le_bytes(header.file_path_length.to_le_bytes());
-        let meta_data_length = u32::from_le_bytes(header.meta_data_length.to_le_bytes());
-        let data_length = u32::from_le_bytes(header.data_length.to_le_bytes());
-        if path_length > MAX_FILENAME_LENGTH.try_into().unwrap()
-            || data_length > MAX_DATA_LENGTH.try_into().unwrap()
-            || meta_data_length > MAX_METADATA_LENGTH.try_into().unwrap()
+        if header.file_path_length as usize > MAX_FILENAME_LENGTH
+            || header.meta_data_length as usize > MAX_DATA_LENGTH
+            || header.data_length as usize > MAX_METADATA_LENGTH
         {
             return Err("path length or data length or meta data length is too long".into());
         }
-        let mut path = vec![0u8; path_length as usize];
-        let mut data = vec![0u8; data_length as usize];
-        let mut meta_data = vec![0u8; meta_data_length as usize];
+        let mut path = vec![0u8; header.file_path_length as usize];
+        let mut meta_data = vec![0u8; header.meta_data_length as usize];
+        let mut data = vec![0u8; header.data_length as usize];
 
-        self.receive(read_stream, &mut path[0..path_length as usize])
+        self.receive(read_stream, &mut path[0..header.file_path_length as usize])
             .await?;
-        self.receive(read_stream, &mut meta_data[0..meta_data_length as usize])
-            .await?;
-        self.receive(read_stream, &mut data[0..data_length as usize])
+        self.receive(
+            read_stream,
+            &mut meta_data[0..header.meta_data_length as usize],
+        )
+        .await?;
+        self.receive(read_stream, &mut data[0..header.data_length as usize])
             .await?;
 
         Ok((path, data, meta_data))
