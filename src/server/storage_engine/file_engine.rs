@@ -176,7 +176,8 @@ impl StorageEngine for FileEngine {
             data.len()
         );
 
-        self.meta_engine.update_size(path, offset as u64 + write_size as u64)?;
+        self.meta_engine
+            .update_size(path, offset as u64 + write_size as u64)?;
 
         Ok(write_size as usize)
     }
@@ -206,7 +207,8 @@ impl StorageEngine for FileEngine {
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
             }
         };
-        self.meta_engine.create_file(empty_file(), &local_file_name, path)
+        self.meta_engine
+            .create_file(empty_file(), &local_file_name, path)
     }
 
     fn delete_file(&self, path: &str) -> Result<(), i32> {

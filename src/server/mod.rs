@@ -673,7 +673,7 @@ where
             }
             OperationType::CheckFile => {
                 info!("{} Checkout File: {}", self.engine.address, file_path);
-                let file_attr = unsafe { bytes_as_file_attr(&metadata) };
+                let file_attr = bytes_as_file_attr(&metadata);
                 let status =
                     match self.engine.check_file(file_path, file_attr).await {
                         Ok(()) => 0,
@@ -689,7 +689,7 @@ where
             }
             OperationType::CheckDir => {
                 info!("{} Checkout Dir: {}", self.engine.address, file_path);
-                let file_attr = unsafe { bytes_as_file_attr(&metadata) };
+                let file_attr = bytes_as_file_attr(&metadata);
                 let status =
                     match self.engine.check_dir(file_path, file_attr).await {
                         Ok(()) => 0,

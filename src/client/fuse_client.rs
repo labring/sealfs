@@ -288,7 +288,7 @@ impl Client {
         let mut recv_data_length = 0usize;
 
         let mut file_attr = Box::new(empty_file());
-        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
+        let recv_meta_data = file_attr_as_bytes_mut(&mut file_attr);
 
         let result = self
             .client
@@ -303,7 +303,7 @@ impl Client {
                 &mut rsp_flags,
                 &mut recv_meta_data_length,
                 &mut recv_data_length,
-                &mut recv_meta_data,
+                recv_meta_data,
                 &mut [],
                 REQUEST_TIMEOUT,
             )
@@ -383,7 +383,7 @@ impl Client {
             flags: 0,
             blksize: 0,
         });
-        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
+        let recv_meta_data = file_attr_as_bytes_mut(&mut file_attr);
 
         let send_meta_data = bincode::serialize(&CreateFileSendMetaData {
             mode,
@@ -406,7 +406,7 @@ impl Client {
                 &mut rsp_flags,
                 &mut recv_meta_data_length,
                 &mut recv_data_length,
-                &mut recv_meta_data,
+                recv_meta_data,
                 &mut [],
                 REQUEST_TIMEOUT,
             )
@@ -476,7 +476,7 @@ impl Client {
             flags: 0,
             blksize: 0,
         });
-        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
+        let recv_meta_data = file_attr_as_bytes_mut(&mut file_attr);
 
         let result = self
             .client
@@ -491,7 +491,7 @@ impl Client {
                 &mut rsp_flags,
                 &mut recv_meta_data_length,
                 &mut recv_data_length,
-                &mut recv_meta_data,
+                recv_meta_data,
                 &mut [],
                 REQUEST_TIMEOUT,
             )
@@ -751,7 +751,7 @@ impl Client {
         let mut recv_data_length = 0usize;
 
         let mut file_attr = Box::new(empty_dir());
-        let mut recv_meta_data = unsafe { file_attr_as_bytes_mut(&mut file_attr) };
+        let recv_meta_data = file_attr_as_bytes_mut(&mut file_attr);
 
         let mode: mode_t = 0o755;
         let send_meta_data = bincode::serialize(&CreateDirSendMetaData {
@@ -773,7 +773,7 @@ impl Client {
                 &mut rsp_flags,
                 &mut recv_meta_data_length,
                 &mut recv_data_length,
-                &mut recv_meta_data,
+                recv_meta_data,
                 &mut [],
                 REQUEST_TIMEOUT,
             )

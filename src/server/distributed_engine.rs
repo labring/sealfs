@@ -6,13 +6,13 @@ use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
 use crate::common::sender::{Sender, REQUEST_TIMEOUT};
 use crate::common::serialization::{
-    ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData,
+    file_attr_as_bytes, ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData,
     FileTypeSimple, ManagerOperationType, ReadFileSendMetaData, ServerStatus,
-    WriteFileSendMetaData, file_attr_as_bytes,
+    WriteFileSendMetaData,
 };
 use crate::common::serialization::{DirectoryEntrySendMetaData, OperationType};
 
-use crate::common::util::{get_full_path, empty_file};
+use crate::common::util::{empty_file, get_full_path};
 use crate::rpc::client::{RpcClient, TcpStreamCreator};
 use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
@@ -898,9 +898,8 @@ where
                 match self.call_get_attr_remote_or_local(&path).await {
                     Ok(attr) => return Ok(attr),
                     Err(libc::ENOENT) => {
-                        return Ok(unsafe {
-                            file_attr_as_bytes(&empty_file()).to_vec()
-                        }); // this indicate that the file is creating or deleting
+                        return Ok(file_attr_as_bytes(&empty_file()).to_vec());
+                        // this indicate that the file is creating or deleting
                     }
                     Err(e) => {
                         return Err(e);

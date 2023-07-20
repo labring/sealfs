@@ -131,7 +131,7 @@ impl MetaEngine {
         for file_name in self.file_attr_db.db.iterator(IteratorMode::Start) {
             let (k, v) = file_name.unwrap();
             let k = String::from_utf8(k.to_vec()).unwrap();
-            let attr = unsafe { bytes_as_file_attr(&v) };
+            let attr = bytes_as_file_attr(&v);
             let file_type = attr.kind;
             match file_type {
                 FileType::RegularFile => {
@@ -139,7 +139,7 @@ impl MetaEngine {
                     self.file_indexs.insert(
                         k,
                         FileIndex {
-                            file_attr: attr.clone(),
+                            file_attr: *attr,
                             status: 0,
                             sub_files_num: AtomicU32::new(0),
                         },
@@ -150,7 +150,7 @@ impl MetaEngine {
                     self.file_indexs.insert(
                         k.clone(),
                         FileIndex {
-                            file_attr: attr.clone(),
+                            file_attr: *attr,
                             status: 0,
                             sub_files_num: AtomicU32::new(INIT_SUB_FILES_NUM),
                         },
@@ -199,7 +199,12 @@ impl MetaEngine {
         Ok(file_map)
     }
 
-    pub fn create_file(&self, file_attr: FileAttr, loacl_file_name: &str, path: &str) -> Result<Vec<u8>, i32> {
+    pub fn create_file(
+        &self,
+        file_attr: FileAttr,
+        loacl_file_name: &str,
+        path: &str,
+    ) -> Result<Vec<u8>, i32> {
         let value = self.put_file_attr(path, &file_attr)?;
         match self.file_indexs.insert(
             path.to_string(),
@@ -246,13 +251,13 @@ impl MetaEngine {
     // this function does not need to be thread safe
     pub fn create_directory(&self, path: &str, _mode: u32) -> Result<Vec<u8>, i32> {
         match self.file_indexs.insert(
-                    path.to_owned(),
-                    FileIndex {
-                        file_attr: empty_dir(),
-                        status: 0,
-                        sub_files_num: AtomicU32::new(INIT_SUB_FILES_NUM),
-                    },
-                ) {
+            path.to_owned(),
+            FileIndex {
+                file_attr: empty_dir(),
+                status: 0,
+                sub_files_num: AtomicU32::new(INIT_SUB_FILES_NUM),
+            },
+        ) {
             Some(_) => Err(libc::EEXIST),
             None => {
                 let attr = empty_dir();
@@ -452,7 +457,7 @@ impl MetaEngine {
     }
 
     pub fn put_file_attr(&self, path: &str, attr: &FileAttr) -> Result<Vec<u8>, i32> {
-        let value = unsafe { file_attr_as_bytes(attr) }.to_vec();
+        let value = file_attr_as_bytes(attr).to_vec();
         match self.file_attr_db.db.put(path, &value) {
             Ok(_) => Ok(value),
             Err(e) => {
@@ -480,20 +485,20 @@ impl MetaEngine {
 
     pub fn get_file_attr(&self, path: &str) -> Result<FileAttr, i32> {
         match self.file_indexs.get(path) {
-            Some(value) => Ok(value.file_attr.clone()),
+            Some(value) => Ok(value.file_attr),
             None => Err(libc::ENOENT),
         }
     }
 
     pub fn get_file_attr_raw(&self, path: &str) -> Result<Vec<u8>, i32> {
         match self.file_indexs.get(path) {
-            Some(value) => Ok(unsafe { file_attr_as_bytes(&value.file_attr) }.to_vec()),
+            Some(value) => Ok(file_attr_as_bytes(&value.file_attr).to_vec()),
             None => Err(libc::ENOENT),
         }
     }
 
     pub fn complete_transfer_file(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
-        let value = unsafe { file_attr_as_bytes(file_attr) };
+        let value = file_attr_as_bytes(file_attr);
         match self.file_attr_db.db.put(path, value) {
             Ok(_) => Ok(()),
             Err(e) => {

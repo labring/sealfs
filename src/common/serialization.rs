@@ -473,24 +473,32 @@ impl From<FileTypeSimple> for u8 {
     }
 }
 
-pub unsafe fn file_attr_as_bytes<'a>(attr: &'a FileAttr) -> &'a [u8] {
-    let ptr = attr as *const FileAttr as *const u8;
-    std::slice::from_raw_parts(ptr, std::mem::size_of::<FileAttr>())
+pub fn file_attr_as_bytes(attr: &FileAttr) -> &[u8] {
+    unsafe {
+        let ptr = attr as *const FileAttr as *const u8;
+        std::slice::from_raw_parts(ptr, std::mem::size_of::<FileAttr>())
+    }
 }
 
-pub unsafe fn file_attr_as_bytes_mut<'a>(attr: &'a mut FileAttr) -> &'a mut [u8] {
-    let ptr = attr as *mut FileAttr as *mut u8;
-    std::slice::from_raw_parts_mut(ptr, std::mem::size_of::<FileAttr>())
+pub fn file_attr_as_bytes_mut(attr: &mut FileAttr) -> &mut [u8] {
+    unsafe {
+        let ptr = attr as *mut FileAttr as *mut u8;
+        std::slice::from_raw_parts_mut(ptr, std::mem::size_of::<FileAttr>())
+    }
 }
 
-pub unsafe fn bytes_as_file_attr<'a>(bytes: &'a [u8]) -> &'a FileAttr {
-    let ptr = bytes.as_ptr() as *const FileAttr;
-    &*ptr
+pub fn bytes_as_file_attr(bytes: &[u8]) -> &FileAttr {
+    unsafe {
+        let ptr = bytes.as_ptr() as *const FileAttr;
+        &*ptr
+    }
 }
 
-pub unsafe fn bytes_as_file_attr_mut<'a>(bytes: &'a mut [u8]) -> &'a mut FileAttr {
-    let ptr = bytes.as_mut_ptr() as *mut FileAttr;
-    &mut *ptr
+pub fn bytes_as_file_attr_mut(bytes: &mut [u8]) -> &mut FileAttr {
+    unsafe {
+        let ptr = bytes.as_mut_ptr() as *mut FileAttr;
+        &mut *ptr
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
