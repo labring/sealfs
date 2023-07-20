@@ -11,7 +11,7 @@ ps -ef | grep "target/release/server" | grep -v grep | awk '{print $2}' | xargs 
 # ps and kill the process start by this command "target/release/manager"
 ps -ef | grep "target/release/manager" | grep -v grep | awk '{print $2}' | xargs kill -9
 # ps and kill the process start by this command "target/release/client"
-ps -ef | grep "target/release/client" | grep -v grep | awk '{print $2}' | xargs kill -
+ps -ef | grep "target/release/client" | grep -v grep | awk '{print $2}' | xargs kill -9
 
 # ps and kill the process start by this command "target/release/client"
 ps -ef | grep "run_all" | grep -v grep | awk '{print $2}' | xargs kill -9

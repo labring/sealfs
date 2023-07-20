@@ -2,9 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::common::errors::status_to_string;
-use crate::common::serialization::FileAttrSimple;
-use crate::common::{cache::LRUCache, serialization::FileTypeSimple};
+use crate::common::util::empty_file;
+use crate::common::{cache::LRUCache, errors::status_to_string};
 
 use super::meta_engine::MetaEngine;
 use super::StorageEngine;
@@ -177,9 +176,8 @@ impl StorageEngine for FileEngine {
             data.len()
         );
 
-        let mut file_attr = self.meta_engine.get_file_attr(path)?;
-        file_attr.size = file_attr.size.max(offset as u64 + write_size as u64);
-        self.meta_engine.put_file_attr(path, file_attr)?;
+        self.meta_engine
+            .update_size(path, offset as u64 + write_size as u64)?;
 
         Ok(write_size as usize)
     }
@@ -209,9 +207,8 @@ impl StorageEngine for FileEngine {
                     .insert(local_file_name.as_bytes(), FileDescriptor::new(fd));
             }
         };
-        self.meta_engine.put_file(&local_file_name, path)?;
-        let attr = FileAttrSimple::new(FileTypeSimple::RegularFile);
-        self.meta_engine.put_file_attr(path, attr)
+        self.meta_engine
+            .create_file(empty_file(), &local_file_name, path)
     }
 
     fn delete_file(&self, path: &str) -> Result<(), i32> {
@@ -230,7 +227,6 @@ impl StorageEngine for FileEngine {
             error!("delete file error: {:?}", status_to_string(f_errno));
             return Err(f_errno);
         };
-        self.meta_engine.delete_file_attr(path)?;
         self.meta_engine.delete_file(&local_file_name, path)?;
         Ok(())
     }
@@ -316,6 +312,7 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use crate::server::storage_engine::meta_engine::MetaEngine;
+    use fuser::FileType;
     use libc::mode_t;
     use nix::{
         fcntl::{self, OFlag},
@@ -377,7 +374,7 @@ mod tests {
             let oflag: i32 = OFlag::O_CREAT.bits() | OFlag::O_RDWR.bits();
             engine.create_file("test1/a.txt", oflag, 0, mode).unwrap();
             let file_attr = meta_engine.get_file_attr("test1/a.txt").unwrap();
-            assert_eq!(file_attr.kind, 4); // 4 is RegularFile
+            assert_eq!(file_attr.kind, FileType::RegularFile); // 4 is RegularFile
             let local_file_name = generate_local_file_name(root, "test1/a.txt");
             assert_eq!(Path::new(&local_file_name).is_file(), true);
             engine.delete_file("test1/a.txt").unwrap();

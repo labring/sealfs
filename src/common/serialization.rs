@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use fuser::FileType;
+use fuser::{FileAttr, FileType};
 use libc::{
     stat, statx, statx_timestamp, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK,
 };
@@ -473,6 +473,34 @@ impl From<FileTypeSimple> for u8 {
     }
 }
 
+pub fn file_attr_as_bytes(attr: &FileAttr) -> &[u8] {
+    unsafe {
+        let ptr = attr as *const FileAttr as *const u8;
+        std::slice::from_raw_parts(ptr, std::mem::size_of::<FileAttr>())
+    }
+}
+
+pub fn file_attr_as_bytes_mut(attr: &mut FileAttr) -> &mut [u8] {
+    unsafe {
+        let ptr = attr as *mut FileAttr as *mut u8;
+        std::slice::from_raw_parts_mut(ptr, std::mem::size_of::<FileAttr>())
+    }
+}
+
+pub fn bytes_as_file_attr(bytes: &[u8]) -> &FileAttr {
+    unsafe {
+        let ptr = bytes.as_ptr() as *const FileAttr;
+        &*ptr
+    }
+}
+
+pub fn bytes_as_file_attr_mut(bytes: &mut [u8]) -> &mut FileAttr {
+    unsafe {
+        let ptr = bytes.as_mut_ptr() as *mut FileAttr;
+        &mut *ptr
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct FileAttrSimple {
     pub size: u64,
@@ -529,6 +557,65 @@ impl FileAttrSimple {
             blksize: 0,
         }
     }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self as *const FileAttrSimple as *const u8,
+                std::mem::size_of::<FileAttrSimple>(),
+            )
+        }
+    }
+
+    pub fn as_mut_bytes(&mut self) -> &mut [u8] {
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                self as *mut FileAttrSimple as *mut u8,
+                std::mem::size_of::<FileAttrSimple>(),
+            )
+        }
+    }
+
+    // pub fn to_bytes(attr: &FileAttrSimple) -> Vec<u8> {
+    //     let mut bytes = Vec::with_capacity(8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 4 + 4 + 4 + 4 + 4 + 4);
+    //     bytes.extend_from_slice(&attr.size.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.blocks.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.atime.duration_since(UNIX_EPOCH).unwrap().as_secs().to_le_bytes());
+    //     bytes.extend_from_slice(&attr.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs().to_le_bytes());
+    //     bytes.extend_from_slice(&attr.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs().to_le_bytes());
+    //     bytes.extend_from_slice(&attr.crtime.duration_since(UNIX_EPOCH).unwrap().as_secs().to_le_bytes());
+    //     bytes.extend_from_slice(&attr.kind.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.perm.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.nlink.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.uid.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.gid.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.rdev.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.flags.to_le_bytes());
+    //     bytes.extend_from_slice(&attr.blksize.to_le_bytes());
+    //     bytes
+    // }
+
+    // pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+    //     if bytes.len() != 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 4 + 4 + 4 + 4 + 4 + 4 {
+    //         return Err(format!("Invalid length: {}", bytes.len()));
+    //     }
+    //     let mut attr = FileAttrSimple::default();
+    //     attr.size = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
+    //     attr.blocks = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
+    //     attr.atime = UNIX_EPOCH + Duration::from_secs(u64::from_le_bytes(bytes[16..24].try_into().unwrap()));
+    //     attr.mtime = UNIX_EPOCH + Duration::from_secs(u64::from_le_bytes(bytes[24..32].try_into().unwrap()));
+    //     attr.ctime = UNIX_EPOCH + Duration::from_secs(u64::from_le_bytes(bytes[32..40].try_into().unwrap()));
+    //     attr.crtime = UNIX_EPOCH + Duration::from_secs(u64::from_le_bytes(bytes[40..48].try_into().unwrap()));
+    //     attr.kind = u32::from_le_bytes(bytes[48..52].try_into().unwrap());
+    //     attr.perm = u16::from_le_bytes(bytes[52..54].try_into().unwrap());
+    //     attr.nlink = u32::from_le_bytes(bytes[54..58].try_into().unwrap());
+    //     attr.uid = u32::from_le_bytes(bytes[58..62].try_into().unwrap());
+    //     attr.gid = u32::from_le_bytes(bytes[62..66].try_into().unwrap());
+    //     attr.rdev = u32::from_le_bytes(bytes[66..70].try_into().unwrap());
+    //     attr.flags = u32::from_le_bytes(bytes[70..74].try_into().unwrap());
+    //     attr.blksize = u32::from_le_bytes(bytes[74..78].try_into().unwrap());
+    //     Ok(attr)
+    // }
 
     pub fn tostat(&self, statbuf: &mut [u8]) {
         let kind = match self.kind {

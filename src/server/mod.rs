@@ -20,10 +20,10 @@ use crate::{
         errors::status_to_string,
         hash_ring::HashRing,
         serialization::{
-            CheckDirSendMetaData, CheckFileSendMetaData, ClusterStatus, CreateDirSendMetaData,
-            CreateFileSendMetaData, CreateVolumeSendMetaData, DeleteDirSendMetaData,
-            DeleteFileSendMetaData, DirectoryEntrySendMetaData, OpenFileSendMetaData,
-            OperationType, ReadDirSendMetaData, ServerStatus, TruncateFileSendMetaData,
+            bytes_as_file_attr, ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData,
+            CreateVolumeSendMetaData, DeleteDirSendMetaData, DeleteFileSendMetaData,
+            DirectoryEntrySendMetaData, OpenFileSendMetaData, OperationType, ReadDirSendMetaData,
+            ServerStatus, TruncateFileSendMetaData,
         },
         serialization::{ReadFileSendMetaData, WriteFileSendMetaData},
     },
@@ -673,9 +673,9 @@ where
             }
             OperationType::CheckFile => {
                 info!("{} Checkout File: {}", self.engine.address, file_path);
-                let md: CheckFileSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let file_attr = bytes_as_file_attr(&metadata);
                 let status =
-                    match self.engine.check_file(file_path, md.file_attr).await {
+                    match self.engine.check_file(file_path, file_attr).await {
                         Ok(()) => 0,
                         Err(e) => {
                             info!(
@@ -689,9 +689,9 @@ where
             }
             OperationType::CheckDir => {
                 info!("{} Checkout Dir: {}", self.engine.address, file_path);
-                let md: CheckDirSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let file_attr = bytes_as_file_attr(&metadata);
                 let status =
-                    match self.engine.check_dir(file_path, md.file_attr).await {
+                    match self.engine.check_dir(file_path, file_attr).await {
                         Ok(()) => 0,
                         Err(e) => {
                             info!(

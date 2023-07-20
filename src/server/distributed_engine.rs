@@ -6,22 +6,22 @@ use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
 use crate::common::sender::{Sender, REQUEST_TIMEOUT};
 use crate::common::serialization::{
-    CheckDirSendMetaData, CheckFileSendMetaData, ClusterStatus, CreateDirSendMetaData,
-    CreateFileSendMetaData, FileAttrSimple, FileTypeSimple, ManagerOperationType,
-    ReadFileSendMetaData, ServerStatus, WriteFileSendMetaData,
+    file_attr_as_bytes, ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData,
+    FileTypeSimple, ManagerOperationType, ReadFileSendMetaData, ServerStatus,
+    WriteFileSendMetaData,
 };
 use crate::common::serialization::{DirectoryEntrySendMetaData, OperationType};
 
-use crate::common::util::get_full_path;
+use crate::common::util::{empty_file, get_full_path};
 use crate::rpc::client::{RpcClient, TcpStreamCreator};
-use dashmap::mapref::one::{Ref, RefMut};
+use dashmap::mapref::one::Ref;
 use dashmap::DashMap;
+use fuser::{FileAttr, FileType};
 use libc::{O_CREAT, O_DIRECTORY, O_EXCL};
 use log::{debug, error, info};
 use nix::fcntl::OFlag;
 use rocksdb::IteratorMode;
 use spin::RwLock;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::{sync::Arc, vec};
 use tokio::sync::Mutex;
@@ -46,7 +46,7 @@ pub struct DistributedEngine<Storage: StorageEngine> {
 
     pub manager_address: Arc<Mutex<String>>,
 
-    pub file_locks: DashMap<String, HashMap<String, u32>>,
+    pub file_locks: DashMap<String, DashMap<String, u32>>,
     pub transfer_manager: TransferManager,
 }
 
@@ -61,7 +61,7 @@ where
     ) -> Self {
         let file_locks = DashMap::new();
         for kv in &meta_engine.file_indexs {
-            file_locks.insert(kv.key().to_owned(), HashMap::new());
+            file_locks.insert(kv.key().to_owned(), DashMap::new());
         }
         let client = Arc::new(RpcClient::new());
         Self {
@@ -89,7 +89,7 @@ where
     pub fn lock_file(
         &self,
         path: &str,
-    ) -> Result<Ref<String, HashMap<std::string::String, u32>>, i32> {
+    ) -> Result<Ref<String, DashMap<std::string::String, u32>>, i32> {
         match self.file_locks.get(path) {
             Some(lock) => Ok(lock),
             None => {
@@ -99,18 +99,18 @@ where
         }
     }
 
-    pub fn lock_file_mut(
-        &self,
-        path: &str,
-    ) -> Result<RefMut<String, HashMap<std::string::String, u32>>, i32> {
-        match self.file_locks.get_mut(path) {
-            Some(lock) => Ok(lock),
-            None => {
-                error!("lock file error: {}", path);
-                Err(libc::ENOENT)
-            }
-        }
-    }
+    // pub fn lock_file_mut(
+    //     &self,
+    //     path: &str,
+    // ) -> Result<RefMut<String, HashMap<std::string::String, u32>>, i32> {
+    //     match self.file_locks.get_mut(path) {
+    //         Some(lock) => Ok(lock),
+    //         None => {
+    //             error!("lock file error: {}", path);
+    //             Err(libc::ENOENT)
+    //         }
+    //     }
+    // }
 
     pub fn make_up_file_map(&self) -> Vec<String> {
         let mut file_map = Vec::new();
@@ -211,11 +211,10 @@ where
     }
 
     pub async fn check_file_remote(&self, path: &str) -> Result<(), i32> {
-        let file_attr = self.meta_engine.get_file_attr(path).unwrap();
         let server_address = self.get_new_address(path);
         // println!("check: {} {}", file_path, server_address);
 
-        let send_meta_data = bincode::serialize(&CheckFileSendMetaData { file_attr }).unwrap();
+        let send_meta_data = self.meta_engine.get_file_attr_raw(path).unwrap();
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
         let mut recv_meta_data_length = 0usize;
@@ -302,11 +301,10 @@ where
     }
 
     pub async fn check_dir_remote(&self, path: &str) -> Result<(), i32> {
-        let file_attr = self.meta_engine.get_file_attr(path).unwrap();
         let server_address = self.get_new_address(path);
         // println!("check: {} {}", file_path, server_address);
 
-        let send_meta_data = bincode::serialize(&CheckDirSendMetaData { file_attr }).unwrap();
+        let send_meta_data = self.meta_engine.get_file_attr_raw(path).unwrap();
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
         let mut recv_meta_data_length = 0usize;
@@ -687,7 +685,7 @@ where
     }
 
     pub fn create_dir_no_parent(&self, path: &str, mode: u32) -> Result<Vec<u8>, i32> {
-        match self.file_locks.insert(path.to_owned(), HashMap::new()) {
+        match self.file_locks.insert(path.to_owned(), DashMap::new()) {
             Some(_) => Err(libc::EEXIST),
             None => self.meta_engine.create_directory(path, mode),
         }
@@ -700,12 +698,12 @@ where
         name: &str,
         mode: u32,
     ) -> Result<Vec<u8>, i32> {
-        {
-            let mut file_lock = self.lock_file_mut(parent)?;
-            if file_lock.contains_key(name) {
-                return Err(libc::EEXIST); // this may indicate that the file is being created or deleted
-            }
-            file_lock.insert(name.to_owned(), 0);
+        if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
+            info!(
+                "create dir failed, file exists, parent: {}, name: {}",
+                parent, name
+            );
+            return Err(libc::EEXIST);
         }
 
         let result =
@@ -736,9 +734,7 @@ where
             Err(e) => Err(e),
         };
 
-        let mut file_lock = self.lock_file_mut(parent)?;
-        file_lock.remove(name);
-        drop(file_lock);
+        self.lock_file(parent)?.remove(name);
 
         match result {
             Ok(attr) => Ok(attr),
@@ -747,7 +743,7 @@ where
     }
 
     pub fn delete_dir_no_parent(&self, path: &str) -> Result<(), i32> {
-        match self.file_locks.get_mut(path) {
+        match self.file_locks.get(path) {
             Some(value) => {
                 self.meta_engine.delete_directory(path)?;
                 drop(value);
@@ -759,7 +755,7 @@ where
     }
 
     pub fn delete_dir_no_parent_force(&self, path: &str) -> Result<(), i32> {
-        match self.file_locks.get_mut(path) {
+        match self.file_locks.get(path) {
             Some(value) => {
                 self.meta_engine.delete_directory_force(path)?;
                 drop(value);
@@ -776,12 +772,9 @@ where
         parent: &str,
         name: &str,
     ) -> Result<(), i32> {
-        {
-            let mut file_lock = self.lock_file_mut(parent)?;
-            if file_lock.contains_key(name) {
-                return Err(libc::ENOENT); // this may indicate that the file is being created or deleted
-            }
-            file_lock.insert(name.to_owned(), 0);
+        if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
+            info!("delete dir failed, file exists, path: {}/{}", parent, name);
+            return Err(libc::ENOENT);
         }
 
         let path = get_full_path(parent, name);
@@ -814,9 +807,7 @@ where
             )?;
         }
 
-        let mut file_lock = self.lock_file_mut(parent)?;
-        file_lock.remove(name);
-        drop(file_lock);
+        self.lock_file(parent)?.remove(name);
 
         match result {
             Ok(attr) => Ok(attr),
@@ -836,7 +827,7 @@ where
         umask: u32,
         mode: u32,
     ) -> Result<Vec<u8>, i32> {
-        match self.file_locks.insert(path.to_owned(), HashMap::new()) {
+        match self.file_locks.insert(path.to_owned(), DashMap::new()) {
             Some(_) => Err(libc::EEXIST),
             None => {
                 info!("local create file, path: {}", path);
@@ -898,28 +889,23 @@ where
         mode: u32,
     ) -> Result<Vec<u8>, i32> {
         let path = get_full_path(parent, name);
-        {
-            let mut file_lock = self.lock_file_mut(parent)?;
-            if file_lock.contains_key(name) {
-                if (oflag & O_EXCL) != 0 {
-                    return Err(libc::EEXIST); // this may indicate that the file is being created or deleted
-                } else {
-                    drop(file_lock);
-                    match self.call_get_attr_remote_or_local(&path).await {
-                        Ok(attr) => return Ok(attr),
-                        Err(libc::ENOENT) => {
-                            return Ok(bincode::serialize(&FileAttrSimple::new(
-                                FileTypeSimple::RegularFile,
-                            ))
-                            .unwrap()); // this may indicate that the file is creating or deleting
-                        }
-                        Err(e) => {
-                            return Err(e);
-                        }
+
+        if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
+            if (oflag & O_EXCL) != 0 {
+                info!("create file failed, file exists, path: {}", path);
+                return Err(libc::EEXIST); // this indicate that the file is being created or deleted
+            } else {
+                match self.call_get_attr_remote_or_local(&path).await {
+                    Ok(attr) => return Ok(attr),
+                    Err(libc::ENOENT) => {
+                        return Ok(file_attr_as_bytes(&empty_file()).to_vec());
+                        // this indicate that the file is creating or deleting
+                    }
+                    Err(e) => {
+                        return Err(e);
                     }
                 }
             }
-            file_lock.insert(name.to_owned(), 0);
         }
 
         let result =
@@ -962,9 +948,7 @@ where
             Err(e) => Err(e),
         };
 
-        let mut file_lock = self.lock_file_mut(parent)?;
-        file_lock.remove(name);
-        drop(file_lock);
+        self.file_locks.get(parent).unwrap().remove(name);
 
         match result {
             Ok(attr) => Ok(attr),
@@ -990,12 +974,9 @@ where
         parent: &str,
         name: &str,
     ) -> Result<(), i32> {
-        {
-            let mut file_lock = self.lock_file_mut(parent)?;
-            if file_lock.contains_key(name) {
-                return Err(libc::ENOENT); // this may indicate that the file is being created or deleted
-            }
-            file_lock.insert(name.to_owned(), 0);
+        if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
+            info!("delete file failed, file exists, path: {}/{}", parent, name);
+            return Err(libc::ENOENT); // this may indicate that the file is being created or deleted
         }
 
         let path = get_full_path(parent, name);
@@ -1020,7 +1001,6 @@ where
                 .await
         };
 
-        let mut file_lock = self.lock_file_mut(parent)?;
         if result.is_ok() {
             self.meta_engine.directory_delete_entry(
                 parent,
@@ -1028,8 +1008,7 @@ where
                 FileTypeSimple::RegularFile.into(),
             )?;
         }
-        file_lock.remove(name);
-        drop(file_lock);
+        self.file_locks.get(parent).unwrap().remove(name);
 
         match result {
             Ok(attr) => Ok(attr),
@@ -1092,11 +1071,11 @@ where
         }
     }
 
-    pub async fn check_file(&self, path: &str, file_attr: FileAttrSimple) -> Result<(), i32> {
+    pub async fn check_file(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
         self.meta_engine.complete_transfer_file(path, file_attr)
     }
 
-    pub async fn check_dir(&self, path: &str, file_attr: FileAttrSimple) -> Result<(), i32> {
+    pub async fn check_dir(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
         self.meta_engine.complete_transfer_file(path, file_attr)
     }
 
@@ -1126,7 +1105,7 @@ where
     }
 
     pub fn create_volume(&self, name: &str, _size: u64) -> Result<(), i32> {
-        match self.file_locks.insert(name.to_owned(), HashMap::new()) {
+        match self.file_locks.insert(name.to_owned(), DashMap::new()) {
             Some(_) => Err(libc::EEXIST),
             None => self.meta_engine.create_volume(name),
         }
@@ -1134,15 +1113,15 @@ where
 
     // delete and clean volume only work for unmounted volume
     pub fn clean_volume(&self, name: &str) -> Result<(), i32> {
-        let files: Vec<(String, FileTypeSimple)> = self
+        let files: Vec<(String, FileType)> = self
             .meta_engine
             .file_indexs
             .iter()
-            .map(|x| (x.key().to_owned(), x.value().file_type))
+            .map(|x| (x.key().to_owned(), x.value().file_attr.kind))
             .collect();
         for kv in files {
             if kv.0.starts_with(&(name.to_owned() + "/")) {
-                if kv.1 == FileTypeSimple::RegularFile {
+                if kv.1 == FileType::RegularFile {
                     self.delete_file_no_parent(&kv.0)?;
                 } else {
                     self.delete_dir_no_parent_force(&kv.0)?;
