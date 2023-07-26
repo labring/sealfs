@@ -915,25 +915,12 @@ where
         let result = match result {
             Ok(_) => {
                 let (address, _lock) = self.get_server_address(&path);
-                if self.address == address {
+                let result = if self.address == address {
                     info!(
                         "local create file, parent_file: {}, file_name: {}",
                         parent, name
                     );
-                    match self.create_file_no_parent(&path, oflag, umask, mode) {
-                        Ok(attr) => Ok(attr),
-                        Err(libc::EEXIST) => {
-                            if (oflag & O_EXCL) != 0 {
-                                Err(libc::EEXIST) // this may indicate that the file is being created or deleted
-                            } else {
-                                self.call_get_attr_remote_or_local(&path).await
-                            }
-                        }
-                        Err(e) => {
-                            error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
-                            Err(e)
-                        }
-                    }
+                    self.create_file_no_parent(&path, oflag, umask, mode)
                 } else {
                     self.sender
                         .create_no_parent(
@@ -943,6 +930,20 @@ where
                             &send_meta_data,
                         )
                         .await
+                };
+                match result {
+                    Ok(attr) => Ok(attr),
+                    Err(libc::EEXIST) => {
+                        if (oflag & O_EXCL) != 0 {
+                            Err(libc::EEXIST) // this may indicate that the file is being created or deleted
+                        } else {
+                            self.call_get_attr_remote_or_local(&path).await
+                        }
+                    }
+                    Err(e) => {
+                        error!("Create file: DirectoryAddEntry failed: {} ,{:?}", path, e);
+                        Err(e)
+                    }
                 }
             }
             Err(e) => Err(e),

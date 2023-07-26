@@ -17,14 +17,13 @@ use libc::{
 };
 use log::info;
 use path::{get_absolutepath, get_remotepath, CURRENT_DIR, MOUNT_POINT};
+use sealfs::common::errors::status_to_string;
+use sealfs::common::info_syncer::{init_network_connections, ClientStatusMonitor};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::ffi::CStr;
 use std::str::FromStr;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
 use syscall_intercept::*;
-use tokio::time::sleep;
 
 const STAT_SIZE: usize = std::mem::size_of::<stat>();
 const STATX_SIZE: usize = std::mem::size_of::<statx>();
@@ -37,40 +36,25 @@ struct Config {
     log_level: String,
 }
 
-pub async fn sync_cluster_infos() {
-    loop {
-        {
-            let result = CLIENT.get_cluster_status().await;
-            match result {
-                Ok(status) => {
-                    if CLIENT.cluster_status.load(Ordering::Relaxed) != status {
-                        CLIENT.cluster_status.store(status, Ordering::Relaxed);
-                    }
-                }
-                Err(e) => {
-                    info!("sync server infos failed, error = {}", e);
-                }
-            }
-        }
-        sleep(Duration::from_secs(1)).await;
-    }
-}
+pub async fn init_client_async(manager_address: String, volume_name: String) {
+    info!("init client");
+    init_network_connections(manager_address, CLIENT.clone()).await;
 
-pub async fn init_client_async(manager_address: String) -> Result<(), Box<dyn std::error::Error>> {
-    {
-        *CLIENT.manager_address.lock().await = manager_address;
+    info!("connect_servers");
+    if let Err(status) = CLIENT.connect_servers().await {
+        panic!(
+            "connect_servers failed, status = {:?}",
+            status_to_string(status)
+        );
     }
-    let result = CLIENT.init().await;
-    match result {
-        Ok(_) => {
-            info!("temp init success");
-        }
-        Err(e) => {
-            Err(e)?;
-        }
+
+    let result = CLIENT.init_volume(&volume_name).await;
+    if let Err(status) = result {
+        panic!(
+            "init_volume failed, status = {:?}",
+            status_to_string(status)
+        );
     }
-    tokio::spawn(sync_cluster_infos());
-    Ok(())
 }
 
 extern "C" fn initialize() {
@@ -78,7 +62,7 @@ extern "C" fn initialize() {
         set_hook_fn(dispatch);
         let manager_address =
             std::env::var("SEALFS_MANAGER_ADDRESS").unwrap_or("127.0.0.1:8081".to_string());
-        let _volume_name = match std::env::var("SEALFS_VOLUME_NAME") {
+        let volume_name = match std::env::var("SEALFS_VOLUME_NAME") {
             Ok(name) => name,
             Err(_) => panic!("SEALFS_VOLUME_NAME is not set"),
         };
@@ -89,11 +73,7 @@ extern "C" fn initialize() {
             .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
         builder.init();
 
-        let result = RUNTIME.block_on(init_client_async(manager_address));
-        match result {
-            Ok(_) => info!("init manager success"),
-            Err(e) => panic!("init manager failed, error = {}", e),
-        }
+        RUNTIME.block_on(init_client_async(manager_address, volume_name));
     }
 }
 

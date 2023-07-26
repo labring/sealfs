@@ -26,6 +26,7 @@ fi
 set +e
 
 rm /tmp/sealfs.sock
+rm /tmp/sealfs.index
 sudo umount ~/fs
 mkdir -p ~/fs
 
@@ -45,7 +46,7 @@ sudo rm -rf $1/storage*
 for ((i=0; i<5; i++))
 do
     port=$[8085+$i]
-    SEALFS_CONFIG_PATH=./examples ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level $log_level &
+    ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level $log_level &
 done
 
 sleep 3

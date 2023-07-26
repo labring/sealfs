@@ -4,30 +4,30 @@
 
 use crate::common::errors::CONNECTION_ERROR;
 use crate::common::hash_ring::HashRing;
-use crate::common::sender::REQUEST_TIMEOUT;
+use crate::common::info_syncer::{ClientStatusMonitor, InfoSyncer};
+use crate::common::sender::{Sender, REQUEST_TIMEOUT};
 use crate::common::serialization::{
     file_attr_as_bytes_mut, ClusterStatus, CreateDirSendMetaData, CreateFileSendMetaData,
     DeleteDirSendMetaData, DeleteFileSendMetaData, OpenFileSendMetaData, OperationType,
     ReadDirSendMetaData, ReadFileSendMetaData, Volume, WriteFileSendMetaData,
 };
 use crate::common::util::{empty_dir, empty_file};
-use crate::common::{errors, sender};
 use crate::rpc;
 use crate::rpc::client::TcpStreamCreator;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use fuser::{
-    FileAttr, FileType, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
-    ReplyOpen, ReplyWrite,
+    ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
+    ReplyWrite,
 };
 use libc::{mode_t, DT_DIR, DT_LNK, DT_REG};
 use log::{debug, error, info};
 use spin::RwLock;
 use std::ffi::{OsStr, OsString};
 use std::ops::Deref;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
-use tokio::time::sleep;
+use std::time::Duration;
 const TTL: Duration = Duration::from_secs(1); // 1 second
 
 pub struct Client {
@@ -38,7 +38,7 @@ pub struct Client {
             TcpStreamCreator,
         >,
     >,
-    pub sender: Arc<sender::Sender>,
+    pub sender: Arc<Sender>,
     pub inodes: DashMap<String, u64>,
     pub inodes_reverse: DashMap<u64, String>,
     pub inode_counter: std::sync::atomic::AtomicU64,
@@ -56,12 +56,50 @@ impl Default for Client {
     }
 }
 
+#[async_trait]
+impl InfoSyncer for Client {
+    async fn get_cluster_status(&self) -> Result<ClusterStatus, i32> {
+        self.sender
+            .get_cluster_status(&self.manager_address.lock().await)
+            .await
+    }
+
+    fn cluster_status(&self) -> &AtomicI32 {
+        &self.cluster_status
+    }
+}
+
+#[async_trait]
+impl ClientStatusMonitor for Client {
+    fn sender(&self) -> &Sender {
+        &self.sender
+    }
+    fn manager_address(&self) -> &Arc<tokio::sync::Mutex<String>> {
+        &self.manager_address
+    }
+    fn hash_ring(&self) -> &Arc<RwLock<Option<HashRing>>> {
+        &self.hash_ring
+    }
+    async fn add_connection(&self, server_address: &str) -> Result<(), i32> {
+        self.client
+            .add_connection(server_address)
+            .await
+            .map_err(|e| {
+                error!("add connection failed: {:?}", e);
+                CONNECTION_ERROR
+            })
+    }
+    fn new_hash_ring(&self) -> &Arc<RwLock<Option<HashRing>>> {
+        &self.new_hash_ring
+    }
+}
+
 impl Client {
     pub fn new() -> Self {
         let client = Arc::new(rpc::client::RpcClient::default());
         Self {
             client: client.clone(),
-            sender: Arc::new(sender::Sender::new(client)),
+            sender: Arc::new(Sender::new(client)),
             inodes: DashMap::new(),
             inodes_reverse: DashMap::new(),
             inode_counter: std::sync::atomic::AtomicU64::new(1),
@@ -74,58 +112,8 @@ impl Client {
         }
     }
 
-    pub async fn add_connection(&self, server_address: &str) -> Result<(), i32> {
-        self.client
-            .add_connection(server_address)
-            .await
-            .map_err(|e| {
-                error!("add connection failed: {:?}", e);
-                CONNECTION_ERROR
-            })
-    }
-
     pub fn remove_connection(&self, server_address: &str) {
         self.client.remove_connection(server_address);
-    }
-
-    pub fn get_address(&self, path: &str) -> String {
-        self.hash_ring
-            .read()
-            .as_ref()
-            .unwrap()
-            .get(path)
-            .unwrap()
-            .address
-            .clone()
-    }
-
-    pub fn get_new_address(&self, path: &str) -> String {
-        match self.new_hash_ring.read().as_ref() {
-            Some(hash_ring) => hash_ring.get(path).unwrap().address.clone(),
-            None => self.get_address(path),
-        }
-    }
-
-    pub fn get_connection_address(&self, path: &str) -> String {
-        let cluster_status = self.cluster_status.load(Ordering::Acquire);
-
-        // check the ClusterStatus is not Idle
-        // for efficiency, we use i32 operation to check the ClusterStatus
-        if cluster_status == 301 {
-            return self.get_address(path);
-        }
-
-        match cluster_status.try_into().unwrap() {
-            ClusterStatus::Initializing => panic!("cluster status is not ready"),
-            ClusterStatus::Idle => todo!(),
-            ClusterStatus::NodesStarting => self.get_address(path),
-            ClusterStatus::SyncNewHashRing => self.get_address(path),
-            ClusterStatus::PreTransfer => self.get_address(path),
-            ClusterStatus::Transferring => self.get_address(path),
-            ClusterStatus::PreFinish => self.get_new_address(path),
-            ClusterStatus::Finishing => self.get_address(path),
-            ClusterStatus::StatusError => todo!(),
-        }
     }
 
     pub fn get_new_inode(&self) -> u64 {
@@ -143,62 +131,6 @@ impl Client {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
     }
 
-    pub async fn connect_to_manager(&self, manager_address: &str) -> Result<(), i32> {
-        self.manager_address.lock().await.push_str(manager_address);
-        self.client
-            .add_connection(manager_address)
-            .await
-            .map_err(|e| {
-                error!("add connection failed: {:?}", e);
-                CONNECTION_ERROR
-            })
-    }
-
-    pub async fn connect_servers(&self) -> Result<(), i32> {
-        debug!("init");
-
-        let result = async {
-            loop {
-                match self
-                    .cluster_status
-                    .load(Ordering::Acquire)
-                    .try_into()
-                    .unwrap()
-                {
-                    ClusterStatus::Idle => {
-                        return self.get_hash_ring_info().await;
-                    }
-                    ClusterStatus::Initializing => {
-                        info!("cluster is initalling, wait for a while");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                    ClusterStatus::PreFinish => {
-                        info!("cluster is initalling, wait for a while");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                    }
-                    s => {
-                        error!("invalid cluster status: {}", s);
-                        return Err(errors::INVALID_CLUSTER_STATUS);
-                    }
-                }
-            }
-        }
-        .await;
-
-        match result {
-            Ok(all_servers_address) => {
-                for server_address in &all_servers_address {
-                    self.add_connection(&server_address.0).await?;
-                }
-                self.hash_ring
-                    .write()
-                    .replace(HashRing::new(all_servers_address.clone()));
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-
     pub async fn init_volume(&self, volume_name: &str) -> Result<u64, i32> {
         let inode = self.get_new_inode();
         self.inodes_reverse.insert(inode, volume_name.to_string());
@@ -207,12 +139,6 @@ impl Client {
             .init_volume(&self.get_connection_address(volume_name), volume_name)
             .await?;
         Ok(inode)
-    }
-
-    pub async fn add_new_servers(&self, new_servers_info: Vec<(String, usize)>) -> Result<(), i32> {
-        self.sender
-            .add_new_servers(&self.manager_address.lock().await, new_servers_info)
-            .await
     }
 
     pub async fn list_volumes(&self) -> Result<Vec<Volume>, i32> {
@@ -228,24 +154,6 @@ impl Client {
     pub async fn delete_servers(&self, servers_info: Vec<String>) -> Result<(), i32> {
         self.sender
             .delete_servers(&self.manager_address.lock().await, servers_info)
-            .await
-    }
-
-    pub async fn get_cluster_status(&self) -> Result<ClusterStatus, i32> {
-        self.sender
-            .get_cluster_status(&self.manager_address.lock().await)
-            .await
-    }
-
-    pub async fn get_hash_ring_info(&self) -> Result<Vec<(String, usize)>, i32> {
-        self.sender
-            .get_hash_ring_info(&self.manager_address.lock().await)
-            .await
-    }
-
-    pub async fn get_new_hash_ring_info(&self) -> Result<Vec<(String, usize)>, i32> {
-        self.sender
-            .get_new_hash_ring_info(&self.manager_address.lock().await)
             .await
     }
 
@@ -366,23 +274,7 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut file_attr = Box::new(FileAttr {
-            ino: 0,
-            size: 0,
-            blocks: 0,
-            atime: UNIX_EPOCH,
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
-            crtime: UNIX_EPOCH,
-            kind: FileType::Directory,
-            perm: 0,
-            nlink: 0,
-            uid: 0,
-            gid: 0,
-            rdev: 0,
-            flags: 0,
-            blksize: 0,
-        });
+        let mut file_attr = Box::new(empty_file());
         let recv_meta_data = file_attr_as_bytes_mut(&mut file_attr);
 
         let send_meta_data = bincode::serialize(&CreateFileSendMetaData {
@@ -459,23 +351,7 @@ impl Client {
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
 
-        let mut file_attr = Box::new(FileAttr {
-            ino: 0,
-            size: 0,
-            blocks: 0,
-            atime: UNIX_EPOCH,
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
-            crtime: UNIX_EPOCH,
-            kind: FileType::Directory,
-            perm: 0,
-            nlink: 0,
-            uid: 0,
-            gid: 0,
-            rdev: 0,
-            flags: 0,
-            blksize: 0,
-        });
+        let mut file_attr = Box::new(empty_file());
         let recv_meta_data = file_attr_as_bytes_mut(&mut file_attr);
 
         let result = self
@@ -689,7 +565,7 @@ impl Client {
                 return;
             }
         };
-        info!("write_remote path: {:?}", path);
+        info!("write_remote path: {:?}, data_len: {}", path, data.len());
         let server_address = self.get_connection_address(&path);
         let send_meta_data = bincode::serialize(&WriteFileSendMetaData { offset }).unwrap();
         let mut status = 0i32;
@@ -971,171 +847,6 @@ impl Client {
             }
             Err(_) => {
                 reply.error(libc::EIO);
-            }
-        }
-    }
-}
-
-pub async fn client_sync_cluster_infos(client: Arc<Client>) {
-    loop {
-        {
-            let result = client.get_cluster_status().await;
-            match result {
-                Ok(status) => {
-                    let status = status.into();
-                    if client.cluster_status.load(Ordering::Relaxed) != status {
-                        client.cluster_status.store(status, Ordering::Relaxed);
-                    }
-                }
-                Err(e) => {
-                    info!("sync server infos failed, error = {}", e);
-                }
-            }
-        }
-        sleep(Duration::from_secs(1)).await;
-    }
-}
-
-pub async fn client_watch_status(client: Arc<Client>) {
-    loop {
-        match client
-            .cluster_status
-            .load(Ordering::Relaxed)
-            .try_into()
-            .unwrap()
-        {
-            ClusterStatus::SyncNewHashRing => {
-                // here I write a long code block to deal with the process from SyncNewHashRing to new Idle status.
-                // this is because we don't make persistent flags for status, so we could not check a status is finished or not.
-                // so we have to check the status in a long code block, and we could not use a loop to check the status.
-                // in the future, we will make persistent flags for status, and we separate the code block for each status.
-                info!("Transfer: start to sync new hash ring");
-                let all_servers_address = match client.get_new_hash_ring_info().await {
-                    Ok(value) => value,
-                    Err(e) => {
-                        panic!("Get Hash Ring Info Failed. Error = {}", e);
-                    }
-                };
-                info!("Transfer: get new hash ring info");
-
-                for value in all_servers_address.iter() {
-                    if client.hash_ring.read().as_ref().unwrap().contains(&value.0) {
-                        continue;
-                    }
-                    if let Err(e) = client.add_connection(&value.0).await {
-                        // TODO: we should rollback the transfer process
-                        panic!("Add Connection Failed. Error = {}", e);
-                    }
-                }
-                client
-                    .new_hash_ring
-                    .write()
-                    .replace(HashRing::new(all_servers_address));
-                info!("Transfer: sync new hash ring finished");
-
-                // wait for all servers to be PreTransfer
-
-                while <i32 as TryInto<ClusterStatus>>::try_into(
-                    client.cluster_status.load(Ordering::Relaxed),
-                )
-                .unwrap()
-                    == ClusterStatus::SyncNewHashRing
-                {
-                    sleep(Duration::from_secs(1)).await;
-                }
-                assert!(
-                    <i32 as TryInto<ClusterStatus>>::try_into(
-                        client.cluster_status.load(Ordering::Relaxed)
-                    )
-                    .unwrap()
-                        == ClusterStatus::PreTransfer
-                );
-
-                while <i32 as TryInto<ClusterStatus>>::try_into(
-                    client.cluster_status.load(Ordering::Relaxed),
-                )
-                .unwrap()
-                    == ClusterStatus::PreTransfer
-                {
-                    sleep(Duration::from_secs(1)).await;
-                }
-                assert!(
-                    <i32 as TryInto<ClusterStatus>>::try_into(
-                        client.cluster_status.load(Ordering::Relaxed)
-                    )
-                    .unwrap()
-                        == ClusterStatus::Transferring
-                );
-
-                while <i32 as TryInto<ClusterStatus>>::try_into(
-                    client.cluster_status.load(Ordering::Relaxed),
-                )
-                .unwrap()
-                    == ClusterStatus::Transferring
-                {
-                    sleep(Duration::from_secs(1)).await;
-                }
-                assert!(
-                    <i32 as TryInto<ClusterStatus>>::try_into(
-                        client.cluster_status.load(Ordering::Relaxed)
-                    )
-                    .unwrap()
-                        == ClusterStatus::PreFinish
-                );
-
-                let _old_hash_ring = client
-                    .hash_ring
-                    .write()
-                    .replace(client.new_hash_ring.read().as_ref().unwrap().clone());
-
-                while <i32 as TryInto<ClusterStatus>>::try_into(
-                    client.cluster_status.load(Ordering::Relaxed),
-                )
-                .unwrap()
-                    == ClusterStatus::PreFinish
-                {
-                    sleep(Duration::from_secs(1)).await;
-                }
-                assert!(
-                    <i32 as TryInto<ClusterStatus>>::try_into(
-                        client.cluster_status.load(Ordering::Relaxed)
-                    )
-                    .unwrap()
-                        == ClusterStatus::Finishing
-                );
-
-                let _ = client.new_hash_ring.write().take();
-                // here we should close connections to old servers, but now we just wait for remote servers to close connections and do nothing
-
-                while <i32 as TryInto<ClusterStatus>>::try_into(
-                    client.cluster_status.load(Ordering::Relaxed),
-                )
-                .unwrap()
-                    == ClusterStatus::Finishing
-                {
-                    sleep(Duration::from_secs(1)).await;
-                }
-                assert!(
-                    <i32 as TryInto<ClusterStatus>>::try_into(
-                        client.cluster_status.load(Ordering::Relaxed)
-                    )
-                    .unwrap()
-                        == ClusterStatus::Idle
-                );
-
-                info!("transferring data finished");
-            }
-            ClusterStatus::Idle => {
-                sleep(Duration::from_secs(1)).await;
-            }
-            ClusterStatus::Initializing => {
-                sleep(Duration::from_secs(1)).await;
-            }
-            ClusterStatus::NodesStarting => {
-                sleep(Duration::from_secs(1)).await;
-            }
-            e => {
-                panic!("cluster status error: {:?}", e as u32);
             }
         }
     }

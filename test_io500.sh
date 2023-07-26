@@ -10,14 +10,13 @@ function green_font() {
 }
 
 function fuse_test() {
-    ./target/debug/client --log-level warn create-volume test1 100000
     ./target/debug/client --log-level warn daemon&
     sleep 3
     ./target/debug/client --log-level warn mount ~/fs test1
 
     start_time=$[$(date +%s%N)/1000000]
     cd io500
-    timeout -s SIGKILL 200 mpirun -np 2 ./io500 config-minimal.ini
+    timeout -s SIGKILL 200 mpirun -np 5 ./io500 config-minimal.ini
     result=$?
     cd ..
     end_time=$[$(date +%s%N)/1000000]
@@ -29,7 +28,7 @@ function fuse_test() {
 function intercept_test() {
     start_time=$[$(date +%s%N)/1000000]
     cd io500
-    SEALFS_CONFIG_PATH=../examples SEALFS_LOG_LEVEL=info SEALFS_MOUNT_POINT=~/fs LD_PRELOAD=../target/debug/libintercept.so timeout -s SIGKILL 200 mpirun -np 5 ./io500 config-minimal.ini
+    SEALFS_LOG_LEVEL=warn SEALFS_VOLUME_NAME=test1 SEALFS_MOUNT_POINT=~/fs LD_PRELOAD=../target/debug/libintercept.so timeout -s SIGKILL 200 mpirun -np 5 ./io500 config-minimal.ini
     result=$?
     cd ..
     end_time=$[$(date +%s%N)/1000000]
@@ -95,11 +94,13 @@ cd ..
 
 set +e
 
+./target/debug/client --log-level warn create-volume test1 100000
+
 fuse_test
 fuse_result=$?
 echo "fuse result: $fuse_result"
 
-#intercept_test
+intercept_test
 intercept_result=$?
 echo "intercept result: $intercept_result"
 result=$(($fuse_result||$intercept_result))

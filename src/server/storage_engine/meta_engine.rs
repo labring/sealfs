@@ -11,13 +11,10 @@ use rocksdb::{BlockBasedOptions, WriteBatch};
 #[cfg(feature = "disk-db")]
 use rocksdb::{Cache, IteratorMode, Options, DB};
 
-use crate::{
-    common::{
-        errors::{DATABASE_ERROR, SERIALIZATION_ERROR},
-        serialization::{bytes_as_file_attr, file_attr_as_bytes, FileTypeSimple, Volume},
-        util::empty_dir,
-    },
-    server::path_split,
+use crate::common::{
+    errors::{DATABASE_ERROR, SERIALIZATION_ERROR},
+    serialization::{bytes_as_file_attr, file_attr_as_bytes, FileTypeSimple, Volume},
+    util::{empty_dir, path_split},
 };
 
 const INIT_SUB_FILES_NUM: u32 = 2;
