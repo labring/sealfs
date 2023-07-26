@@ -89,8 +89,11 @@ enum Commands {
         #[arg(required = true, name = "volume-name")]
         volume_name: Option<String>,
 
-        #[arg(name = "socket-path")]
+        #[arg(long = "socket-path", name = "socket-path")]
         socket_path: Option<String>,
+
+        #[arg(long = "read-only", name = "read-only")]
+        read_only: bool,
     },
     Umount {
         /// Unmount FUSE at given path
@@ -507,6 +510,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             mount_point,
             volume_name,
             socket_path,
+            read_only,
         } => {
             let socket_path = match socket_path {
                 Some(path) => path,
@@ -519,7 +523,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             let result = local_client
-                .mount(&volume_name.unwrap(), &mount_point.unwrap())
+                .mount(&volume_name.unwrap(), &mount_point.unwrap(), read_only)
                 .await;
             match result {
                 Ok(_) => info!("mount success"),

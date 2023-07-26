@@ -13,7 +13,9 @@ use fuser::{BackgroundSession, MountOption};
 use log::{error, info};
 
 use crate::{
-    common::{errors::CONNECTION_ERROR, sender::REQUEST_TIMEOUT},
+    common::{
+        errors::CONNECTION_ERROR, sender::REQUEST_TIMEOUT, serialization::MountVolumeSendMetaData,
+    },
     rpc::{
         client::{RpcClient, UnixStreamCreator},
         server::Handler,
@@ -28,7 +30,7 @@ const LIST_MOUNTPOINTS: u32 = 4;
 
 pub struct SealfsFused {
     pub client: Arc<Client>,
-    pub mount_points: DashMap<String, (String, BackgroundSession)>,
+    pub mount_points: DashMap<String, (String, bool, BackgroundSession)>,
     pub index_file: String,
 }
 
@@ -47,8 +49,18 @@ impl SealfsFused {
         }
     }
 
-    pub async fn mount(&self, mountpoint: String, volume_name: String) -> Result<(), i32> {
-        let mut options = vec![MountOption::RW, MountOption::FSName("seal".to_string())];
+    pub async fn mount(
+        &self,
+        mountpoint: String,
+        volume_name: String,
+        read_only: bool,
+    ) -> Result<(), i32> {
+        let mount_mode = if read_only {
+            MountOption::RO
+        } else {
+            MountOption::RW
+        };
+        let mut options = vec![mount_mode, MountOption::FSName("seal".to_string())];
         options.push(MountOption::AutoUnmount);
         options.push(MountOption::AllowRoot);
         let result = self.client.init_volume(&volume_name).await;
@@ -62,7 +74,8 @@ impl SealfsFused {
                 ) {
                     Ok(session) => {
                         info!("mount success");
-                        self.mount_points.insert(mountpoint, (volume_name, session));
+                        self.mount_points
+                            .insert(mountpoint, (volume_name, read_only, session));
                         Ok(())
                     }
                     Err(e) => {
@@ -101,7 +114,7 @@ impl SealfsFused {
         std::fs::remove_file(&self.index_file).unwrap_or(());
         let mut file = std::fs::File::create(&self.index_file).unwrap();
         for k in self.mount_points.iter() {
-            let line = format!("{}\n{}\n\n", k.key(), k.value().0);
+            let line = format!("{}\n{}\n{}\n\n", k.key(), k.value().0, k.value().1);
             file.write_all(line.as_bytes()).unwrap();
         }
     }
@@ -127,11 +140,12 @@ impl SealfsFused {
             }
         }
         let lines: Vec<&str> = content.split('\n').collect();
-        for i in 0..lines.len() / 3 {
-            let mountpoint = lines[i * 3].to_owned();
-            let volume_name = lines[i * 3 + 1].to_owned();
+        for i in 0..lines.len() / 4 {
+            let mountpoint = lines[i * 4].to_owned();
+            let volume_name = lines[i * 4 + 1].to_owned();
+            let read_only = lines[i * 4 + 2].parse::<bool>().unwrap();
             info!("mounting volume {} to {}", volume_name, mountpoint);
-            match self.mount(mountpoint, volume_name.clone()).await {
+            match self.mount(mountpoint, volume_name.clone(), read_only).await {
                 Ok(_) => {
                     info!("mount success");
                 }
@@ -161,9 +175,16 @@ impl Handler for SealfsFused {
     ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)> {
         match operation_type {
             MOUNT => {
-                let mountpoint = String::from_utf8(path).unwrap();
-                let volume_name = String::from_utf8(metadata).unwrap();
-                match self.mount(mountpoint, volume_name).await {
+                let send_meta_data: MountVolumeSendMetaData =
+                    bincode::deserialize(&metadata).unwrap();
+                match self
+                    .mount(
+                        send_meta_data.mount_point,
+                        send_meta_data.volume_name,
+                        send_meta_data.read_only,
+                    )
+                    .await
+                {
                     Ok(_) => {
                         self.sync_index_file();
                         Ok((0, 0, 0, 0, vec![], vec![]))
@@ -230,12 +251,24 @@ impl LocalCli {
         })
     }
 
-    pub async fn mount(&self, volume_name: &str, mount_point: &str) -> Result<(), i32> {
+    pub async fn mount(
+        &self,
+        volume_name: &str,
+        mount_point: &str,
+        read_only: bool,
+    ) -> Result<(), i32> {
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
 
         let mut recv_meta_data_length = 0usize;
         let mut recv_data_length = 0usize;
+
+        let send_meta_data = bincode::serialize(&MountVolumeSendMetaData {
+            volume_name: volume_name.to_string(),
+            mount_point: mount_point.to_string(),
+            read_only,
+        })
+        .unwrap();
 
         let result = self
             .client
@@ -243,8 +276,8 @@ impl LocalCli {
                 &self.path,
                 MOUNT,
                 0,
-                mount_point,
-                volume_name.as_bytes(),
+                "",
+                &send_meta_data,
                 &[],
                 &mut status,
                 &mut rsp_flags,
