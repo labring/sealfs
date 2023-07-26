@@ -38,7 +38,7 @@ jobs:
 
       - name: Copy cache
         run: |
-          mkdir -p w/data/action/_work/sealfs/sealfs/target
+          mkdir -p /data/action/_work/sealfs/sealfs/target
           if [ -d /data/backup/debug ]; then
             mv /data/backup/debug w/data/action/_work/sealfs/sealfs/target
           fi
@@ -85,11 +85,11 @@ jobs:
       - if: always()
         name: Backup Temporary
         run: |
-          if [ -d w/data/action/_work/sealfs/sealfs/target/debug ]; then
+          if [ -d /data/action/_work/sealfs/sealfs/target/debug ]; then
             if [ -d /data/backup/debug ]; then
               rm -rf /data/backup/debug
             fi
-            mv w/data/action/_work/sealfs/sealfs/target/debug /data/backup
+            mv /data/action/_work/sealfs/sealfs/target/debug /data/backup
           fi
       
       - if: ${{ steps.install_deps.outcome == 'success' }}
