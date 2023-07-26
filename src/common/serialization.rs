@@ -871,6 +871,13 @@ pub struct CreateVolumeSendMetaData {
     pub size: u64,
 }
 
+#[derive(Serialize, Deserialize, PartialEq)]
+pub struct MountVolumeSendMetaData {
+    pub volume_name: String,
+    pub mount_point: String,
+    pub read_only: bool,
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct Volume {
     pub name: String,

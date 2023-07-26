@@ -40,7 +40,7 @@ jobs:
         run: |
           mkdir -p /data/action/_work/sealfs/sealfs/target
           if [ -d /data/backup/debug ]; then
-            mv /data/backup/debug w/data/action/_work/sealfs/sealfs/target
+            mv /data/backup/debug /data/action/_work/sealfs/sealfs/target
           fi
 
       - name: Build

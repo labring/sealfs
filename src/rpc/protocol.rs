@@ -7,7 +7,7 @@ pub const MAX_DATA_LENGTH: usize = 65536 * 128;
 pub const MAX_METADATA_LENGTH: usize = 4096;
 pub const MAX_COPY_LENGTH: usize = 1024 * 8;
 
-pub const CONNECTION_RETRY_TIMES: i32 = 20;
+pub const CONNECTION_RETRY_TIMES: i32 = 100;
 pub const SEND_RETRY_TIMES: i32 = 3;
 
 // request
