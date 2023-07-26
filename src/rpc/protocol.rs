@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub const MAX_FILENAME_LENGTH: usize = 4096;
-pub const MAX_DATA_LENGTH: usize = 65536;
+pub const MAX_DATA_LENGTH: usize = 65536 * 128;
 pub const MAX_METADATA_LENGTH: usize = 4096;
 pub const MAX_COPY_LENGTH: usize = 1024 * 8;
 

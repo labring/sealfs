@@ -19,7 +19,7 @@ macro_rules! offset_of {
     ($ty:ty, $field:ident) => {
         //  Undefined Behavior: dereferences a null pointer.
         //  Undefined Behavior: accesses field outside of valid memory area.
-        unsafe { &(*(1 as *const $ty)).$field as *const _ as usize - 1 }
+        unsafe { &(*(0 as *const $ty)).$field as *const _ as usize - 1 }
     };
 }
 
@@ -616,86 +616,83 @@ impl FileAttrSimple {
     //     attr.blksize = u32::from_le_bytes(bytes[74..78].try_into().unwrap());
     //     Ok(attr)
     // }
-
-    pub fn tostat(&self, statbuf: &mut [u8]) {
-        let kind = match self.kind {
-            0 => S_IFIFO,
-            1 => S_IFCHR,
-            2 => S_IFBLK,
-            3 => S_IFDIR,
-            4 => S_IFREG,
-            5 => S_IFLNK,
-            6 => S_IFSOCK,
-            _ => S_IFREG,
-        };
-        unsafe {
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_dev = 0;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_ino = 0;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_mode = kind | self.perm as u32;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_nlink = self.nlink as u64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_uid = self.uid;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_gid = self.gid;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_rdev = self.rdev as u64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_size = self.size as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_blksize = self.blksize as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_blocks = self.blocks as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_atime =
-                self.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_atime_nsec =
-                self.atime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_mtime =
-                self.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_mtime_nsec =
-                self.mtime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_ctime =
-                self.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
-            (*(statbuf.as_mut_ptr() as *mut stat)).st_ctime_nsec =
-                self.ctime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
-        }
+}
+pub fn tostat(attr: &FileAttr, statbuf: &mut [u8]) {
+    let kind = match attr.kind {
+        FileType::NamedPipe => S_IFIFO,
+        FileType::CharDevice => S_IFCHR,
+        FileType::BlockDevice => S_IFBLK,
+        FileType::Directory => S_IFDIR,
+        FileType::RegularFile => S_IFREG,
+        FileType::Symlink => S_IFLNK,
+        FileType::Socket => S_IFSOCK,
+    };
+    unsafe {
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_dev = 0;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_ino = 0;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_mode = kind | attr.perm as u32;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_nlink = attr.nlink as u64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_uid = attr.uid;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_gid = attr.gid;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_rdev = attr.rdev as u64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_size = attr.size as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_blksize = attr.blksize as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_blocks = attr.blocks as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_atime =
+            attr.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_atime_nsec =
+            attr.atime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_mtime =
+            attr.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_mtime_nsec =
+            attr.mtime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_ctime =
+            attr.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        (*(statbuf.as_mut_ptr() as *mut stat)).st_ctime_nsec =
+            attr.ctime.duration_since(UNIX_EPOCH).unwrap().as_nanos() as i64;
     }
-    pub fn tostatx(&self, statxbuf: &mut [u8]) {
-        let kind = match self.kind {
-            0 => S_IFIFO,
-            1 => S_IFCHR,
-            2 => S_IFBLK,
-            3 => S_IFDIR,
-            4 => S_IFREG,
-            5 => S_IFLNK,
-            6 => S_IFSOCK,
-            _ => S_IFREG,
-        } as u16;
+}
+pub fn tostatx(attr: &FileAttr, statxbuf: &mut [u8]) {
+    let kind = match attr.kind {
+        FileType::NamedPipe => S_IFIFO,
+        FileType::CharDevice => S_IFCHR,
+        FileType::BlockDevice => S_IFBLK,
+        FileType::Directory => S_IFDIR,
+        FileType::RegularFile => S_IFREG,
+        FileType::Symlink => S_IFLNK,
+        FileType::Socket => S_IFSOCK,
+    } as u16;
 
-        unsafe {
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mask = 0;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ino = 0;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mode = kind | self.perm;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_nlink = self.nlink;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_uid = self.uid;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_gid = self.gid;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_size = self.size;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blksize = self.blksize;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blocks = self.blocks;
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_atime = statx_timestamp {
-                tv_sec: self.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
-                tv_nsec: 0,
-                __statx_timestamp_pad1: [0i32; 1],
-            };
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_btime = statx_timestamp {
-                tv_sec: 0,
-                tv_nsec: 0,
-                __statx_timestamp_pad1: [0i32; 1],
-            };
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mtime = statx_timestamp {
-                tv_sec: self.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
-                tv_nsec: 0,
-                __statx_timestamp_pad1: [0i32; 1],
-            };
-            (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ctime = statx_timestamp {
-                tv_sec: self.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
-                tv_nsec: 0,
-                __statx_timestamp_pad1: [0i32; 1],
-            };
-        }
+    unsafe {
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mask = 0;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ino = 0;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mode = kind | attr.perm;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_nlink = attr.nlink;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_uid = attr.uid;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_gid = attr.gid;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_size = attr.size;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blksize = attr.blksize;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_blocks = attr.blocks;
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_atime = statx_timestamp {
+            tv_sec: attr.atime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+            tv_nsec: 0,
+            __statx_timestamp_pad1: [0i32; 1],
+        };
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_btime = statx_timestamp {
+            tv_sec: 0,
+            tv_nsec: 0,
+            __statx_timestamp_pad1: [0i32; 1],
+        };
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_mtime = statx_timestamp {
+            tv_sec: attr.mtime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+            tv_nsec: 0,
+            __statx_timestamp_pad1: [0i32; 1],
+        };
+        (*(statxbuf.as_mut_ptr() as *mut statx)).stx_ctime = statx_timestamp {
+            tv_sec: attr.ctime.duration_since(UNIX_EPOCH).unwrap().as_secs() as i64,
+            tv_nsec: 0,
+            __statx_timestamp_pad1: [0i32; 1],
+        };
     }
 }
 

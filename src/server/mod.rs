@@ -925,30 +925,3 @@ where
         }
     }
 }
-
-//  path_split: the path should not be empty, and it does not end with a slash unless it is the root directory.
-pub fn path_split(path: &str) -> Result<(String, String), i32> {
-    if path.is_empty() {
-        error!("path is empty");
-        return Err(libc::EINVAL);
-    }
-    if path == "/" {
-        error!("path is root");
-        return Err(libc::EINVAL);
-    }
-    if path.ends_with('/') {
-        error!("path ends with /");
-        return Err(libc::EINVAL);
-    }
-    let index = match path.rfind('/') {
-        Some(value) => value,
-        None => {
-            error!("path does not contain /");
-            return Err(libc::EINVAL);
-        }
-    };
-    match index {
-        0 => Ok(("/".into(), path[1..].into())),
-        _ => Ok((path[..index].into(), path[(index + 1)..].into())),
-    }
-}

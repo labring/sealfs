@@ -14,11 +14,14 @@ use std::{ffi::OsStr, str::FromStr, sync::Arc};
 
 use crate::{
     client::daemon::{LocalCli, SealfsFused},
-    common::errors::status_to_string,
+    common::{
+        errors::status_to_string,
+        info_syncer::{init_network_connections, ClientStatusMonitor, InfoSyncer},
+    },
     rpc::server::RpcServer,
 };
 
-use self::fuse_client::{client_sync_cluster_infos, client_watch_status, Client};
+use self::fuse_client::Client;
 
 const LOCAL_PATH: &str = "/tmp/sealfs.sock";
 const LOCAL_INDEX_PATH: &str = "/tmp/sealfs.index";
@@ -354,14 +357,6 @@ impl Filesystem for SealFS {
     }
 }
 
-pub async fn connect_to_manager(manager_address: String, client: Arc<Client>) {
-    if let Err(e) = client.connect_to_manager(&manager_address).await {
-        panic!("connect to manager failed, err = {}", status_to_string(e));
-    }
-    tokio::spawn(client_sync_cluster_infos(client.clone()));
-    tokio::spawn(client_watch_status(client));
-}
-
 pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -393,7 +388,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
 
             info!("connect_servers");
             if let Err(status) = client.connect_servers().await {
@@ -430,7 +425,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
 
             info!("connect_servers");
             if let Err(status) = client.connect_servers().await {
@@ -468,7 +463,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 None => "127.0.0.1:8081".to_owned(),
             };
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
 
             info!("connect_servers");
             if let Err(status) = client.connect_servers().await {
@@ -566,7 +561,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
 
             let new_servers_info = vec![(server_address.unwrap(), weight.unwrap_or(100))];
             let result = client.add_new_servers(new_servers_info).await;
@@ -591,7 +586,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
 
             let new_servers_info = vec![server_address.unwrap()];
             let result = client.delete_servers(new_servers_info).await;
@@ -613,7 +608,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
                 None => "127.0.0.1:8081".to_owned(),
             };
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
 
             info!("connect_servers");
             if let Err(status) = client.connect_servers().await {
@@ -670,7 +665,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             info!("init client");
-            connect_to_manager(manager_address, client.clone()).await;
+            init_network_connections(manager_address, client.clone()).await;
             let result = client.get_cluster_status().await;
             match result {
                 Ok(status) => {

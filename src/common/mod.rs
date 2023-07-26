@@ -6,6 +6,7 @@ pub mod byte;
 pub mod cache;
 pub mod errors;
 pub mod hash_ring;
+pub mod info_syncer;
 pub mod sender;
 pub mod serialization;
 pub mod util;

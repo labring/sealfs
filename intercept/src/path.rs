@@ -12,6 +12,9 @@ lazy_static::lazy_static! {
         }
         value
     };
+    pub static ref VOLUME_NAME: String = {
+        std::env::var("SEALFS_VOLUME_NAME").unwrap_or_else(|_| "sealfs".to_string())
+    };
 }
 
 fn get_realpath(path: &str) -> Option<String> {
@@ -84,10 +87,9 @@ pub fn get_absolutepath(dir_path: &str, file_path: &str) -> Result<String, i32> 
 
 pub fn get_remotepath(path: &str) -> Option<String> {
     if path.starts_with(MOUNT_POINT.as_str()) {
-        let mut remotepath = path[MOUNT_POINT.len()..].to_string();
-        if remotepath.len() == 0 {
-            remotepath.push('/');
-        } else if remotepath.len() > 1 && remotepath.ends_with('/') {
+        let mut remotepath = VOLUME_NAME.clone();
+        remotepath.push_str(&path[MOUNT_POINT.len()..]);
+        if remotepath.len() > 1 && remotepath.ends_with('/') {
             remotepath.pop();
         }
         return Some(remotepath);
