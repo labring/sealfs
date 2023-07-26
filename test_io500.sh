@@ -10,13 +10,13 @@ function green_font() {
 }
 
 function fuse_test() {
-    ./target/release/client --log-level warn daemon&
+    ./target/debug/client --log-level warn daemon&
     sleep 3
-    ./target/release/client --log-level warn mount ~/fs test1
+    ./target/debug/client --log-level warn mount ~/fs test1
 
     start_time=$[$(date +%s%N)/1000000]
     cd io500
-    timeout -s SIGKILL 200 mpirun -np 2 ./io500 config-minimal.ini
+    timeout -s SIGKILL 200 mpirun -np 5 ./io500 config-minimal.ini
     result=$?
     cd ..
     end_time=$[$(date +%s%N)/1000000]
@@ -28,7 +28,7 @@ function fuse_test() {
 function intercept_test() {
     start_time=$[$(date +%s%N)/1000000]
     cd io500
-    SEALFS_LOG_LEVEL=warn SEALFS_VOLUME_NAME=test1 SEALFS_MOUNT_POINT=~/fs LD_PRELOAD=../target/release/libintercept.so timeout -s SIGKILL 20000 mpirun -np 10 ./io500 config-minimal.ini
+    SEALFS_LOG_LEVEL=warn SEALFS_VOLUME_NAME=test1 SEALFS_MOUNT_POINT=~/fs LD_PRELOAD=../target/debug/libintercept.so timeout -s SIGKILL 200 mpirun -np 5 ./io500 config-minimal.ini
     result=$?
     cd ..
     end_time=$[$(date +%s%N)/1000000]
@@ -59,14 +59,14 @@ sudo rm -rf $1/storage*
 
 set -e
 
-SEALFS_CONFIG_PATH=./examples ./target/release/manager --log-level warn &
+SEALFS_CONFIG_PATH=./examples ./target/debug/manager --log-level warn &
 
 sleep 1
 
 for ((i=0; i<5; i++))
 do
     port=$[8085+$i]
-    ./target/release/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level warn &
+    ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level warn &
 done
 
 sleep 3
@@ -88,15 +88,15 @@ echo "[global]" > config-minimal.ini
 echo "datadir = /home/sealos/fs" >> config-minimal.ini
 echo "" >> config-minimal.ini
 echo "[debug]" >> config-minimal.ini
-echo "stonewall-time = 100" >> config-minimal.ini
+echo "stonewall-time = 2" >> config-minimal.ini
 
 cd ..
 
 set +e
 
-./target/release/client --log-level warn create-volume test1 100000
+./target/debug/client --log-level warn create-volume test1 100000
 
-#fuse_test
+fuse_test
 fuse_result=$?
 echo "fuse result: $fuse_result"
 
