@@ -10,7 +10,7 @@ use std::{
 use async_trait::async_trait;
 use dashmap::DashMap;
 use fuser::{BackgroundSession, MountOption};
-use log::{error, info};
+use log::{error, info, warn};
 
 use crate::{
     common::{
@@ -145,6 +145,15 @@ impl SealfsFused {
             let volume_name = lines[i * 4 + 1].to_owned();
             let read_only = lines[i * 4 + 2].parse::<bool>().unwrap();
             info!("mounting volume {} to {}", volume_name, mountpoint);
+
+            // umount old mountpoint
+            if let Err(e) = std::process::Command::new("umount")
+                .arg(&mountpoint)
+                .output()
+            {
+                warn!("umount {} error: {}", &mountpoint, e);
+            }
+
             match self.mount(mountpoint, volume_name.clone(), read_only).await {
                 Ok(_) => {
                     info!("mount success");

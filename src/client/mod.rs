@@ -101,7 +101,7 @@ enum Commands {
         #[arg(required = true, name = "mount-point")]
         mount_point: Option<String>,
 
-        #[arg(name = "socket-path")]
+        #[arg(long = "socket-path", name = "socket-path")]
         socket_path: Option<String>,
     },
     Add {
@@ -139,7 +139,7 @@ enum Commands {
         manager_address: Option<String>,
     },
     ListMountpoints {
-        #[arg(name = "socket-path")]
+        #[arg(long = "socket-path", name = "socket-path")]
         socket_path: Option<String>,
     },
     Status {
@@ -148,7 +148,7 @@ enum Commands {
         manager_address: Option<String>,
     },
     Probe {
-        #[arg(name = "socket-path")]
+        #[arg(long = "socket-path", name = "socket-path")]
         socket_path: Option<String>,
         // Probe the local client
     },
