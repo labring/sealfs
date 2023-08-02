@@ -8,7 +8,7 @@ use super::protocol::{
     RequestHeader, ResponseHeader, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH, MAX_METADATA_LENGTH,
     REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
 };
-use log::{error, info};
+use log::error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
@@ -336,15 +336,17 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ServerConnection<W, R> {
         read_stream: &mut R,
         header: &RequestHeader,
     ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
-        if header.file_path_length as usize > MAX_FILENAME_LENGTH
-            || header.data_length as usize > MAX_DATA_LENGTH
-            || header.meta_data_length as usize > MAX_METADATA_LENGTH
-        {
-            info!(
-                "path length or data length or meta data length is too long: {} {} {}",
-                header.file_path_length, header.meta_data_length, header.data_length
-            );
-            return Err("path length or data length or meta data length is too long".into());
+        if header.file_path_length as usize > MAX_FILENAME_LENGTH {
+            error!("path length is too long: {}", header.file_path_length);
+            return Err("path length is too long".into());
+        }
+        if header.data_length as usize > MAX_DATA_LENGTH {
+            error!("data length is too long: {}", header.data_length);
+            return Err("data length is too long".into());
+        }
+        if header.meta_data_length as usize > MAX_METADATA_LENGTH {
+            error!("meta data length is too long: {}", header.meta_data_length);
+            return Err("meta data length is too long".into());
         }
         let mut path = vec![0u8; header.file_path_length as usize];
         let mut data = vec![0u8; header.data_length as usize];
