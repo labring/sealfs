@@ -14,7 +14,9 @@ use log::{error, info, warn};
 
 use crate::{
     common::{
-        errors::CONNECTION_ERROR, sender::REQUEST_TIMEOUT, serialization::MountVolumeSendMetaData,
+        errors::{status_to_string, CONNECTION_ERROR},
+        sender::REQUEST_TIMEOUT,
+        serialization::MountVolumeSendMetaData,
     },
     rpc::{
         client::{RpcClient, UnixStreamCreator},
@@ -85,7 +87,7 @@ impl SealfsFused {
                 }
             }
             Err(e) => {
-                error!("mount error: {}", e);
+                error!("mount error: {}", status_to_string(e));
                 Err(e)
             }
         }
@@ -198,10 +200,7 @@ impl Handler for SealfsFused {
                         self.sync_index_file();
                         Ok((0, 0, 0, 0, vec![], vec![]))
                     }
-                    Err(e) => {
-                        error!("mount error: {}", e);
-                        Ok((e, 0, 0, 0, vec![], vec![]))
-                    }
+                    Err(e) => Ok((e, 0, 0, 0, vec![], vec![])),
                 }
             }
             UMOUNT => {
