@@ -151,33 +151,31 @@ impl<
     async fn reconnect(&self, server_address: &str) -> Result<(), String> {
         match self.connections.get(server_address) {
             Some(connection) => {
-                if connection.value().reconnect() {
-                    match S::create_stream(server_address).await {
-                        Ok((read_stream, write_stream)) => {
-                            tokio::spawn(parse_response(
-                                read_stream,
-                                connection.clone(),
-                                self.pool.clone(),
-                            ));
-                            connection.value().reset_connection(write_stream).await;
-                            info!("reconnect to {} success", server_address);
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            warn!(
-                                "reconnect to {} failed: {}, wait for a while",
-                                server_address, e
-                            );
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            connection.value().reconnect_failed();
-                        }
+                if connection.is_connected() {
+                    return Ok(());
+                }
+                match S::create_stream(server_address).await {
+                    Ok((read_stream, write_stream)) => {
+                        tokio::spawn(parse_response(
+                            read_stream,
+                            connection.clone(),
+                            self.pool.clone(),
+                        ));
+                        connection.value().reset_connection(write_stream).await;
+                        info!("reconnect to {} success", server_address);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        warn!(
+                            "reconnect to {} failed: {}, wait for a while",
+                            server_address, e
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        Ok(())
                     }
                 }
-                Ok(())
             }
-            None => {
-                panic!("connection not exists: {}", server_address);
-            }
+            None => Err(format!("connection not exists: {}", server_address)),
         }
     }
 
@@ -213,7 +211,7 @@ impl<
             let (batch, id) = self
                 .pool
                 .register_callback(recv_meta_data, recv_data)
-                .await?;
+                .await?; // TODO: unregister callback when error
 
             if let Err(e) = connection
                 .send_request(
@@ -228,18 +226,32 @@ impl<
                 .await
             {
                 error!("send request to {} failed: {}", server_address, e);
-                if connection.disconnect() {
-                    self.reconnect(server_address).await?;
+                connection.disconnect();
+                let _lock = connection.get_reconnecting_lock().await;
+                warn!("connection to {} disconnected", server_address);
+                match self.reconnect(server_address).await {
+                    Ok(_) => {
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("reconnect to {} failed: {}", server_address, e);
+                        return Err(format!("reconnect to {} failed: {}", server_address, e));
+                    }
                 }
-                continue;
             }
-            let (s, f, meta_data_length, data_length) =
-                self.pool.wait_for_callback(id, timeout).await?; // TODO: retry the request
-            *status = s;
-            *rsp_flags = f;
-            *recv_meta_data_length = meta_data_length;
-            *recv_data_length = data_length;
-            return Ok(());
+            match self.pool.wait_for_callback(id, timeout).await {
+                Ok((s, f, meta_data_length, data_length)) => {
+                    *status = s;
+                    *rsp_flags = f;
+                    *recv_meta_data_length = meta_data_length;
+                    *recv_data_length = data_length;
+                    return Ok(());
+                }
+                Err(e) => {
+                    error!("wait for callback failed: {}", e);
+                    continue;
+                }
+            }
         }
         Err(format!(
             "send request to {} error: send retry times exceed",

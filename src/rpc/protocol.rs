@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub const MAX_FILENAME_LENGTH: usize = 4096;
-pub const MAX_DATA_LENGTH: usize = 65536 * 128;
-pub const MAX_METADATA_LENGTH: usize = 4096;
+pub const MAX_DATA_LENGTH: usize = 65536 * 65536;
+pub const MAX_METADATA_LENGTH: usize = 65536;
 pub const MAX_COPY_LENGTH: usize = 1024 * 8;
 
 pub const CONNECTION_RETRY_TIMES: i32 = 100;
-pub const SEND_RETRY_TIMES: i32 = 3;
+pub const SEND_RETRY_TIMES: i32 = 5;
 
 // request
 // | batch | id | type | flags | total_length | file_path_length | meta_data_length | data_length | filename | meta_data | data |
