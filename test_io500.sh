@@ -10,9 +10,9 @@ function green_font() {
 }
 
 function fuse_test() {
-    ./target/debug/client --log-level warn daemon&
+    ./target/debug/client --log-level info daemon&
     sleep 3
-    ./target/debug/client --log-level warn mount ~/fs test1
+    ./target/debug/client --log-level info mount ~/fs test1
 
     start_time=$[$(date +%s%N)/1000000]
     cd io500
@@ -59,14 +59,14 @@ sudo rm -rf $1/storage*
 
 set -e
 
-SEALFS_CONFIG_PATH=./examples ./target/debug/manager --log-level warn &
+SEALFS_CONFIG_PATH=./examples ./target/debug/manager --log-level info &
 
 sleep 1
 
 for ((i=0; i<5; i++))
 do
     port=$[8085+$i]
-    ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level warn &
+    ./target/debug/server --server-address 127.0.0.1:${port} --database-path $1/database${i}/ --storage-path $1/storage${i}/ --log-level info &
 done
 
 sleep 3
@@ -94,7 +94,7 @@ cd ..
 
 set +e
 
-./target/debug/client --log-level warn create-volume test1 100000
+./target/debug/client --log-level info create-volume test1 100000
 
 fuse_test
 fuse_result=$?

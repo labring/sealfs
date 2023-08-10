@@ -1,7 +1,9 @@
 #!/bin/bash
 
 function finish() {
+    set +e
     trap 'kill $(jobs -p)' EXIT
+    set -e
     exit $1
 }
 
@@ -34,7 +36,7 @@ set -e
 
 # check if $2 is empty, if empty, let $log_level = warn, else $log_level = $2
 if [ -z $2 ]; then
-    log_level=warn
+    log_level=info
 else
     log_level=$2
 fi

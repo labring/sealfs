@@ -119,8 +119,6 @@ impl From<OperationType> for u32 {
 }
 
 pub enum ManagerOperationType {
-    SendHeart = 101,
-    GetMetadata = 102,
     GetClusterStatus = 103,
     GetHashRing = 104,
     GetNewHashRing = 105,
@@ -135,8 +133,6 @@ impl TryFrom<u32> for ManagerOperationType {
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            101 => Ok(ManagerOperationType::SendHeart),
-            102 => Ok(ManagerOperationType::GetMetadata),
             103 => Ok(ManagerOperationType::GetClusterStatus),
             104 => Ok(ManagerOperationType::GetHashRing),
             105 => Ok(ManagerOperationType::GetNewHashRing),
@@ -152,8 +148,6 @@ impl TryFrom<u32> for ManagerOperationType {
 impl From<ManagerOperationType> for u32 {
     fn from(value: ManagerOperationType) -> Self {
         match value {
-            ManagerOperationType::SendHeart => 101,
-            ManagerOperationType::GetMetadata => 102,
             ManagerOperationType::GetClusterStatus => 103,
             ManagerOperationType::GetHashRing => 104,
             ManagerOperationType::GetNewHashRing => 105,
@@ -168,8 +162,6 @@ impl From<ManagerOperationType> for u32 {
 impl ManagerOperationType {
     pub fn to_le_bytes(&self) -> [u8; 4] {
         match self {
-            ManagerOperationType::SendHeart => 101u32.to_le_bytes(),
-            ManagerOperationType::GetMetadata => 102u32.to_le_bytes(),
             ManagerOperationType::GetClusterStatus => 103u32.to_le_bytes(),
             ManagerOperationType::GetHashRing => 104u32.to_le_bytes(),
             ManagerOperationType::GetNewHashRing => 105u32.to_le_bytes(),

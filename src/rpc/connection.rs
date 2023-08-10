@@ -8,7 +8,7 @@ use super::protocol::{
     RequestHeader, ResponseHeader, MAX_DATA_LENGTH, MAX_FILENAME_LENGTH, MAX_METADATA_LENGTH,
     REQUEST_HEADER_SIZE, RESPONSE_HEADER_SIZE,
 };
-use log::error;
+use log::{error, info};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
@@ -46,6 +46,7 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ClientConnection<W, R> {
     }
 
     pub fn disconnect(&self) -> bool {
+        info!("disconnecting from server {}", self.server_address);
         self.status
             .compare_exchange(
                 CONNECTED,

@@ -9,7 +9,7 @@ use fuser::{
     Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyWrite, Request,
 };
-use log::{error, info};
+use log::{debug, error, info};
 use std::{ffi::OsStr, str::FromStr, sync::Arc};
 
 use crate::{
@@ -170,7 +170,7 @@ impl SealFS {
 
 impl Filesystem for SealFS {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        info!("lookup, parent = {}, name = {:?}", parent, name);
+        debug!("lookup, parent = {}, name = {:?}", parent, name);
         let client = self.client.clone();
         let name = name.to_owned();
         let parent = if parent == 1 {
@@ -193,7 +193,7 @@ impl Filesystem for SealFS {
         flags: i32,
         reply: ReplyCreate,
     ) {
-        info!(
+        debug!(
             "create, parent = {}, name = {:?}, mode = {}, umask = {}, flags = {}",
             parent, name, mode, umask, flags
         );
@@ -212,7 +212,7 @@ impl Filesystem for SealFS {
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        info!("getattr, ino = {}", ino);
+        debug!("getattr, ino = {}", ino);
         let client = self.client.clone();
         let ino = if ino == 1 {
             self.volume_root_inode
@@ -225,7 +225,7 @@ impl Filesystem for SealFS {
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, reply: ReplyDirectory) {
-        info!("readdir, ino = {}, offset = {}", ino, offset);
+        debug!("readdir, ino = {}, offset = {}", ino, offset);
         let client = self.client.clone();
         let ino = if ino == 1 {
             self.volume_root_inode
@@ -248,7 +248,7 @@ impl Filesystem for SealFS {
         _lock_owner: Option<u64>,
         reply: ReplyData,
     ) {
-        info!("read, ino = {}, offset = {}, size = {}", ino, offset, size);
+        debug!("read, ino = {}, offset = {}, size = {}", ino, offset, size);
         let client = self.client.clone();
         let ino = if ino == 1 {
             self.volume_root_inode
@@ -272,7 +272,7 @@ impl Filesystem for SealFS {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
-        info!(
+        debug!(
             "write, ino = {}, offset = {}, data_len = {}",
             ino,
             offset,
@@ -301,7 +301,7 @@ impl Filesystem for SealFS {
         _umask: u32,
         reply: ReplyEntry,
     ) {
-        info!(
+        debug!(
             "mkdir, parent = {}, name = {:?}, mode = {}",
             parent, name, mode
         );
@@ -332,7 +332,7 @@ impl Filesystem for SealFS {
     }
 
     fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
-        info!("unlink");
+        debug!("unlink");
         let client = self.client.clone();
         let name = name.to_owned();
         let parent = if parent == 1 {
@@ -346,7 +346,7 @@ impl Filesystem for SealFS {
     }
 
     fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: fuser::ReplyEmpty) {
-        info!("rmdir");
+        debug!("rmdir");
         let client = self.client.clone();
         let name = name.to_owned();
         let parent = if parent == 1 {

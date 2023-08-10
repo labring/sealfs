@@ -12,7 +12,7 @@ use std::time::Duration;
 use dashmap::DashMap;
 use lazy_static::lazy_static;
 use libc::{dirent64, iovec, O_CREAT};
-use log::{error, info};
+use log::{debug, error, info};
 use sealfs::common::byte::CHUNK_SIZE;
 use sealfs::common::errors::{status_to_string, CONNECTION_ERROR};
 use sealfs::common::hash_ring::HashRing;
@@ -181,7 +181,7 @@ impl Client {
     }
 
     pub fn open_remote(&self, pathname: &str, flag: i32, mode: u32) -> Result<(), i32> {
-        info!("open_remote {}", pathname);
+        debug!("open_remote {}", pathname);
         if flag & O_CREAT != 0 {
             let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
             let server_address = self.get_connection_address(&parent);
@@ -266,12 +266,12 @@ impl Client {
     }
 
     pub fn rename_remote(&self, _oldpath: &str, _newpath: &str) -> i32 {
-        info!("rename_remote");
+        debug!("rename_remote");
         todo!()
     }
 
     pub fn truncate_remote(&self, pathname: &str, length: i64) -> Result<(), i32> {
-        info!("truncate_remote {}", pathname);
+        debug!("truncate_remote {}", pathname);
         let server_address = self.get_connection_address(pathname);
         let send_meta_data = bincode::serialize(&TruncateFileSendMetaData { length }).unwrap();
         let mut status = 0i32;
@@ -306,7 +306,7 @@ impl Client {
     }
 
     pub fn mkdir_remote(&self, pathname: &str, mode: u32) -> Result<(), i32> {
-        info!("mkdir_remote {}", pathname);
+        debug!("mkdir_remote {}", pathname);
         let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
         let server_address = self.get_connection_address(&parent);
         let mut status = 0i32;
@@ -342,7 +342,7 @@ impl Client {
     }
 
     pub fn rmdir_remote(&self, pathname: &str) -> Result<(), i32> {
-        info!("rmdir_remote {}", pathname);
+        debug!("rmdir_remote {}", pathname);
         let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
         let server_address = self.get_connection_address(&parent);
         let mut status = 0i32;
@@ -382,7 +382,7 @@ impl Client {
         dirp: &mut [u8],
         dirp_offset: i64,
     ) -> Result<(isize, i64), i32> {
-        info!("getdents_remote {}", pathname);
+        debug!("getdents_remote {}", pathname);
         let server_address = self.get_connection_address(pathname);
         let md = ReadDirSendMetaData {
             offset: dirp_offset as i64,
@@ -434,7 +434,7 @@ impl Client {
                     .try_into()
                     .unwrap(),
             );
-            info!(
+            debug!(
                 "type: {}, {}, {}, {}, {}",
                 r#type,
                 name_len,
@@ -464,7 +464,7 @@ impl Client {
             total += dirp.d_reclen as usize;
             recv_total += (name_len + 3) as usize;
         }
-        info!("getdents_remote {}", pathname);
+        debug!("getdents_remote {}", pathname);
         Ok((total as isize, offset))
     }
 
@@ -474,7 +474,7 @@ impl Client {
         dirp: &mut [u8],
         dirp_offset: i64,
     ) -> Result<(isize, i64), i32> {
-        info!("getdents64_remote {}", pathname);
+        debug!("getdents64_remote {}", pathname);
         let server_address = self.get_connection_address(pathname);
         let md = ReadDirSendMetaData {
             offset: dirp_offset as i64,
@@ -551,7 +551,7 @@ impl Client {
     }
 
     pub fn unlink_remote(&self, pathname: &str) -> Result<(), i32> {
-        info!("unlink_remote {}", pathname);
+        debug!("unlink_remote {}", pathname);
         let (parent, name) = path_split(pathname).map_err(|_| libc::EINVAL)?;
         let server_address = self.get_connection_address(&parent);
         let mut status = 0i32;
@@ -586,7 +586,7 @@ impl Client {
     }
 
     pub fn stat_remote(&self, pathname: &str, statbuf: &mut [u8]) -> Result<(), i32> {
-        info!("stat_remote {}", pathname);
+        debug!("stat_remote {}", pathname);
         let server_address = self.get_connection_address(pathname);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
@@ -622,7 +622,7 @@ impl Client {
     }
 
     pub fn statx_remote(&self, pathname: &str, statxbuf: &mut [u8]) -> Result<(), i32> {
-        info!("statx_remote {}", pathname);
+        debug!("statx_remote {}", pathname);
         let server_address = self.get_connection_address(pathname);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
@@ -658,7 +658,7 @@ impl Client {
     }
 
     pub fn pread_remote(&self, pathname: &str, buf: &mut [u8], offset: i64) -> Result<isize, i32> {
-        info!("pread_remote {}", pathname);
+        debug!("pread_remote {}", pathname);
         let mut idx = offset / CHUNK_SIZE;
         let end_idx = offset + buf.len() as i64;
         let mut chunk_left = offset;
@@ -718,12 +718,12 @@ impl Client {
     }
 
     pub fn preadv_remote(&self, _pathname: &str, _buf: &[iovec], _offset: i64) -> isize {
-        info!("preadv_remote");
+        debug!("preadv_remote");
         todo!()
     }
 
     pub fn pwrite_remote(&self, pathname: &str, buf: &[u8], offset: i64) -> Result<isize, i32> {
-        info!("pwrite_remote {}", pathname);
+        debug!("pwrite_remote {}", pathname);
         let mut idx = offset / CHUNK_SIZE;
         let end_idx = offset + buf.len() as i64;
         let mut chunk_left = offset;
@@ -778,7 +778,7 @@ impl Client {
     }
 
     pub fn pwritev_remote(&self, _pathname: &str, _buf: &[iovec], _offset: i64) -> isize {
-        info!("pwritev_remote");
+        debug!("pwritev_remote");
         todo!()
     }
 }

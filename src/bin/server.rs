@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use log::{info, warn};
+use log::info;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -65,22 +65,16 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         None,
         match log::LevelFilter::from_str(&properties.log_level) {
             Ok(level) => level,
-            Err(_) => {
-                warn!("Invalid log level, use default level: warn");
-                log::LevelFilter::Warn
-            }
+            Err(_) => log::LevelFilter::Warn,
         },
     );
     builder.init();
 
+    info!("start server with properties: {:?}", properties);
+
     let manager_address = properties.manager_address;
     let server_address = properties.server_address.clone();
 
-    //connect to manager
-
-    info!("server_address: {}", server_address.clone());
-
-    info!("Start Server");
     server::run(
         properties.database_path,
         properties.storage_path,

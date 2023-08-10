@@ -7,7 +7,7 @@ use crate::common::{cache::LRUCache, errors::status_to_string};
 
 use super::meta_engine::MetaEngine;
 use super::StorageEngine;
-use log::{debug, error};
+use log::{debug, error, info};
 use nix::errno::errno;
 use nix::{
     fcntl::OFlag,
@@ -48,6 +48,7 @@ impl Drop for FileDescriptor {
 impl StorageEngine for FileEngine {
     fn new(root: &str, meta_engine: Arc<MetaEngine>) -> Self {
         if !Path::new(root).exists() {
+            info!("root path {} does not exist, creating it", root);
             let mode =
                 Mode::S_IRWXU | Mode::S_IRGRP | Mode::S_IWGRP | Mode::S_IROTH | Mode::S_IWOTH;
             mkdir(root, mode).unwrap();

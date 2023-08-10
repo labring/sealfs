@@ -21,7 +21,7 @@ use fuser::{
     ReplyWrite,
 };
 use libc::{mode_t, DT_DIR, DT_LNK, DT_REG};
-use log::{debug, error, info};
+use log::{debug, error};
 use spin::RwLock;
 use std::ffi::{OsStr, OsString};
 use std::ops::Deref;
@@ -175,7 +175,7 @@ impl Client {
     }
 
     pub async fn lookup_remote(&self, parent: u64, name: OsString, reply: ReplyEntry) {
-        info!(
+        debug!(
             "lookup_remote, parent: {}, name: {}",
             parent,
             name.to_str().unwrap()
@@ -184,7 +184,7 @@ impl Client {
             Some(parent_path) => self.get_full_path(parent_path.deref(), &name),
             None => {
                 reply.error(libc::ENOENT);
-                info!("lookup_remote error: {:?}", libc::ENOENT);
+                debug!("lookup_remote error: {:?}", libc::ENOENT);
                 return;
             }
         };
@@ -227,11 +227,6 @@ impl Client {
                     "lookup_remote recv_meta_data: {:?}",
                     &recv_meta_data[..recv_meta_data_length]
                 );
-                // let mut file_attr: FileAttr = {
-                //     let file_attr_simple: FileAttrSimple =
-                //     FileAttrSimple::from_bytes(&recv_meta_data[..recv_meta_data_length]).unwrap();
-                //     file_attr_simple.into()
-                // };
 
                 if self.inodes.contains_key(&path) {
                     file_attr.ino = *self.inodes.get(&path).unwrap().value();
@@ -258,12 +253,12 @@ impl Client {
         flags: i32,
         reply: ReplyCreate,
     ) {
-        info!("create_remote");
+        debug!("create_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("create_remote error");
+                debug!("create_remote error");
                 return;
             }
         };
@@ -334,16 +329,16 @@ impl Client {
     }
 
     pub async fn getattr_remote(&self, ino: u64, reply: ReplyAttr) {
-        info!("getattr_remote");
+        debug!("getattr_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("getattr_remote error");
+                debug!("getattr_remote error");
                 return;
             }
         };
-        info!("getattr_remote path: {:?}", path);
+        debug!("getattr_remote path: {:?}", path);
         let server_address = self.get_connection_address(&path);
         let mut status = 0i32;
         let mut rsp_flags = 0u32;
@@ -406,12 +401,12 @@ impl Client {
     }
 
     pub async fn readdir_remote(&self, ino: u64, offset: i64, mut reply: ReplyDirectory) {
-        info!("readdir_remote");
+        debug!("readdir_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("readdir_remote error");
+                debug!("readdir_remote error");
                 return;
             }
         };
@@ -497,12 +492,12 @@ impl Client {
     }
 
     pub async fn read_remote(&self, ino: u64, offset: i64, size: u32, reply: ReplyData) {
-        info!("read_remote");
+        debug!("read_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("read_remote error");
+                debug!("read_remote error");
                 return;
             }
         };
@@ -556,16 +551,16 @@ impl Client {
     }
 
     pub async fn write_remote(&self, ino: u64, offset: i64, data: Vec<u8>, reply: ReplyWrite) {
-        info!("write_remote");
+        debug!("write_remote");
         let path = match self.inodes_reverse.get(&ino) {
             Some(path) => path.clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("write_remote error");
+                debug!("write_remote error");
                 return;
             }
         };
-        info!("write_remote path: {:?}, data_len: {}", path, data.len());
+        debug!("write_remote path: {:?}, data_len: {}", path, data.len());
         let server_address = self.get_connection_address(&path);
         let send_meta_data = bincode::serialize(&WriteFileSendMetaData { offset }).unwrap();
         let mut status = 0i32;
@@ -609,12 +604,12 @@ impl Client {
     }
 
     pub async fn mkdir_remote(&self, parent: u64, name: OsString, _mode: u32, reply: ReplyEntry) {
-        info!("mkdir_remote");
+        debug!("mkdir_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("mkdir_remote error");
+                debug!("mkdir_remote error");
                 return;
             }
         };
@@ -685,7 +680,7 @@ impl Client {
     }
 
     pub async fn open_remote(&self, ino: u64, flags: i32, reply: ReplyOpen) {
-        info!("open_remote");
+        debug!("open_remote");
         if flags & libc::O_CREAT != 0 {
             todo!("open_remote O_CREAT") // this is not supported by the fuse crate
         }
@@ -693,7 +688,7 @@ impl Client {
             Some(path) => path.clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("open_remote error");
+                debug!("open_remote error");
                 return;
             }
         };
@@ -744,12 +739,12 @@ impl Client {
     }
 
     pub async fn unlink_remote(&self, parent: u64, name: OsString, reply: ReplyEmpty) {
-        info!("unlink_remote");
+        debug!("unlink_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("unlink_remote error");
+                debug!("unlink_remote error");
                 return;
             }
         };
@@ -798,12 +793,12 @@ impl Client {
     }
 
     pub async fn rmdir_remote(&self, parent: u64, name: OsString, reply: ReplyEmpty) {
-        info!("rmdir_remote");
+        debug!("rmdir_remote");
         let path = match self.inodes_reverse.get(&parent) {
             Some(parent_path) => parent_path.deref().clone(),
             None => {
                 reply.error(libc::ENOENT);
-                info!("rmdir_remote error");
+                debug!("rmdir_remote error");
                 return;
             }
         };
