@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
-use log::warn;
+use log::{error, info, warn};
+use sealfs::manager::manager_service::update_server_status;
 use sealfs::{manager::manager_service::ManagerService, rpc::server::RpcServer};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -43,20 +44,18 @@ async fn main() -> anyhow::Result<()> {
 
     // read from default configuration.
     let config_path = std::env::var("SEALFS_CONFIG_PATH").unwrap_or("~".to_string());
+
     let mut config_file = std::fs::File::open(format!("{}/{}", config_path, "manager.yaml"))
         .expect("manager.yaml open failed!");
+
     let mut config_str = String::new();
+
     config_file
         .read_to_string(&mut config_str)
         .expect("manager.yaml read failed!");
+
     let default_properties: Properties =
         serde_yaml::from_str(&config_str).expect("manager.yaml serializa failed!");
-
-    builder.format_timestamp(None).filter(
-        None,
-        log::LevelFilter::from_str(&default_properties.log_level).unwrap(),
-    );
-    builder.init();
 
     // read from command line.
     let args: Args = Args::parse();
@@ -93,6 +92,14 @@ async fn main() -> anyhow::Result<()> {
         },
     };
 
+    builder.format_timestamp(None).filter(
+        None,
+        log::LevelFilter::from_str(&properties.log_level).unwrap(),
+    );
+    builder.init();
+
+    info!("Starting manager with log level: {}", properties.log_level);
+
     let address = properties.address;
 
     let servers_address = properties
@@ -101,7 +108,27 @@ async fn main() -> anyhow::Result<()> {
         .map(|s| (s.to_string(), properties.virtual_nodes))
         .collect::<Vec<(String, usize)>>();
 
-    let server = RpcServer::new(Arc::new(ManagerService::new(servers_address)), &address);
-    server.run().await?;
+    info!("All servers address: {:?}", servers_address);
+
+    let manager = Arc::new(ManagerService::new(servers_address.clone()));
+
+    let server = Arc::new(RpcServer::new(manager.clone(), &address));
+
+    info!("Manager started at {}", address);
+
+    let new_manager = manager.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = server.run().await {
+            error!("Manager server error: {}", e);
+            new_manager
+                .manager
+                .closed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+
+    update_server_status(manager.manager.clone()).await;
+
     Ok(())
 }

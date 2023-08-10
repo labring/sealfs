@@ -149,9 +149,11 @@ impl<
     }
 
     async fn reconnect(&self, server_address: &str) -> Result<(), String> {
+        info!("reconnect to {}", server_address);
         match self.connections.get(server_address) {
             Some(connection) => {
                 if connection.is_connected() {
+                    info!("connection already exists: {}", server_address);
                     return Ok(());
                 }
                 match S::create_stream(server_address).await {

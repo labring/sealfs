@@ -153,6 +153,7 @@ impl MetaEngine {
                         },
                     );
                     if !k.contains('/') {
+                        info!("found volume: {}", k);
                         self.volumes.insert(
                             k.clone(),
                             Volume {
@@ -170,16 +171,11 @@ impl MetaEngine {
         for dir_name in self.dir_db.db.iterator(IteratorMode::Start) {
             let sub_dir_info = String::from_utf8(dir_name.unwrap().0.to_vec()).unwrap();
             let list = sub_dir_info.split('$').collect::<Vec<&str>>();
-            info!("list: {:?}", list);
             let file_index = self
                 .file_indexs
                 .get(list.first().unwrap().to_owned())
                 .unwrap();
             file_index.sub_files_num.fetch_add(1, Ordering::Relaxed);
-            info!(
-                "file_index.sub_files_num: {:}",
-                file_index.sub_files_num.load(Ordering::Relaxed)
-            );
         }
     }
 
@@ -320,18 +316,12 @@ impl MetaEngine {
             }
         };
 
-        info!(
-            "read directory: {}, size: {}, offset: {}, index_num: {}",
-            path, size, offset, index_num
-        );
-
         let mut result = Vec::with_capacity(size as usize);
         let mut total = 0;
         for item in self.dir_db.db.iterator(IteratorMode::From(
             format!("{}$", path).as_bytes(),
             rocksdb::Direction::Forward,
         )) {
-            info!("item: {:?}", item);
             if index_num == INIT_SUB_FILES_NUM {
                 break;
             }

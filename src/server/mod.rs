@@ -39,7 +39,7 @@ pub enum ServerError {
     ParseHeaderError,
 }
 
-pub async fn sync_cluster_infos(engine: Arc<DistributedEngine<FileEngine>>) {
+pub async fn sync_cluster_status(engine: Arc<DistributedEngine<FileEngine>>) {
     loop {
         {
             let result = engine.get_cluster_status().await;
@@ -48,10 +48,11 @@ pub async fn sync_cluster_infos(engine: Arc<DistributedEngine<FileEngine>>) {
                     let status: i32 = status.into();
                     if engine.cluster_status.load(Ordering::Relaxed) != status {
                         engine.cluster_status.store(status, Ordering::Relaxed);
+                        debug!("sync server status, status = {}", status);
                     }
                 }
                 Err(e) => {
-                    panic!("sync server infos failed, error = {}", e);
+                    error!("sync server status failed, error = {}", e);
                 }
             }
         }
@@ -61,6 +62,10 @@ pub async fn sync_cluster_infos(engine: Arc<DistributedEngine<FileEngine>>) {
 
 pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
     loop {
+        if engine.closed.load(Ordering::Relaxed) {
+            error!("watch status: server closed");
+            break;
+        }
         match engine
             .cluster_status
             .load(Ordering::Relaxed)
@@ -68,14 +73,14 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
             .unwrap()
         {
             ClusterStatus::SyncNewHashRing => {
-                info!("Transfer: start to sync new hash ring");
+                info!("watch status: start to sync new hash ring");
                 let all_servers_address = match engine.get_new_hash_ring_info().await {
                     Ok(value) => value,
                     Err(e) => {
                         panic!("Get Hash Ring Info Failed. Error = {}", e);
                     }
                 };
-                info!("Transfer: get new hash ring info");
+                info!("watch status: get new hash ring info");
                 for value in all_servers_address.iter() {
                     if engine.address == value.0
                         || engine.hash_ring.read().as_ref().unwrap().contains(&value.0)
@@ -84,14 +89,14 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                     }
                     if let Err(e) = engine.add_connection(value.0.clone()).await {
                         // TODO: rollback the transfer process
-                        panic!("Transfer: add connection failed, error = {}", e);
+                        panic!("watch status: add connection failed, error = {}", e);
                     }
                 }
                 engine
                     .new_hash_ring
                     .write()
                     .replace(HashRing::new(all_servers_address));
-                info!("Transfer: sync new hash ring finished");
+                info!("watch status: sync new hash ring finished");
                 match engine.update_server_status(ServerStatus::PreTransfer).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -117,7 +122,7 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
 
                 let file_map = engine.make_up_file_map();
 
-                info!("Transfer: start to transfer files");
+                info!("watch status: start to transfer files");
                 match engine
                     .update_server_status(ServerStatus::Transferring)
                     .await
@@ -147,7 +152,7 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                     panic!("transfer files failed, error = {}", e);
                 }
 
-                info!("Transfer: transfer files finished");
+                info!("watch status: transfer files finished");
                 match engine.update_server_status(ServerStatus::PreFinish).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -176,7 +181,7 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                     .write()
                     .replace(engine.new_hash_ring.read().clone().unwrap()); // TODO: _old_hash_ring should be used to rollback the transfer process
 
-                info!("Transfer: start to finishing");
+                info!("watch status: start to finishing");
                 match engine.update_server_status(ServerStatus::Finishing).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -203,7 +208,7 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                 let _ = engine.new_hash_ring.write().take();
                 // here we should close connections to old servers, but now we just wait for remote servers to close connections and do nothing
 
-                info!("Transfer: start to finishing");
+                info!("watch status: start to finishing");
                 match engine.update_server_status(ServerStatus::Finished).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -227,7 +232,7 @@ pub async fn watch_status(engine: Arc<DistributedEngine<FileEngine>>) {
                         == ClusterStatus::Idle
                 );
 
-                info!("transferring data finished");
+                info!("watch status: transferring data finished");
             }
             ClusterStatus::Idle => {
                 sleep(Duration::from_secs(1)).await;
@@ -263,6 +268,7 @@ pub async fn run(
     ));
     let storage_engine = Arc::new(FileEngine::new(&storage_path, Arc::clone(&meta_engine)));
     storage_engine.init();
+    info!("Init: Storage Engine Init Finished");
 
     let engine = Arc::new(DistributedEngine::new(
         server_address.clone(),
@@ -276,48 +282,54 @@ pub async fn run(
     }
     *engine.manager_address.lock().await = manager_address;
 
-    tokio::spawn(sync_cluster_infos(Arc::clone(&engine)));
+    tokio::spawn(sync_cluster_status(Arc::clone(&engine)));
 
     let handler = Arc::new(FileRequestHandler::new(engine.clone()));
     let server = RpcServer::new(handler, &server_address);
 
-    info!("Init: Add connections and update Server Status");
+    let engine_clone = Arc::clone(&engine);
 
     tokio::spawn(async move {
-        let all_servers_address = match engine.get_hash_ring_info().await {
-            Ok(value) => value,
-            Err(_) => {
-                panic!("Get Hash Ring Info Failed.");
-            }
-        };
-        info!("Init: Hash Ring Info: {:?}", all_servers_address);
-        for value in all_servers_address.iter() {
-            if server_address == value.0 {
-                continue;
-            }
-            if let Err(e) = engine.add_connection(value.0.clone()).await {
-                panic!("Init: Add Connection Failed. Error = {}", e);
-            }
+        if let Err(e) = server.run().await {
+            error!("Server Run Failed, Error = {}", e);
+            engine_clone.closed.store(true, Ordering::Relaxed);
         }
-        info!("Init: Add Connections Success.");
-        engine
-            .hash_ring
-            .write()
-            .replace(HashRing::new(all_servers_address));
-        info!("Init: Update Hash Ring Success.");
-        match engine.update_server_status(ServerStatus::Finished).await {
-            Ok(_) => {
-                info!("Update Server Status to Finish Success.");
-            }
-            Err(e) => {
-                panic!("Update Server Status to Finish Failed. Error = {}", e);
-            }
-        }
-        info!("Init: Start Transferring Data.");
-        watch_status(engine.clone()).await;
     });
 
-    server.run().await?;
+    info!("Init: Add connections and update Server Status");
+
+    let all_servers_address = match engine.get_hash_ring_info().await {
+        Ok(value) => value,
+        Err(_) => {
+            panic!("Get Hash Ring Info Failed.");
+        }
+    };
+    info!("Init: Hash Ring Info: {:?}", all_servers_address);
+    for value in all_servers_address.iter() {
+        if server_address == value.0 {
+            continue;
+        }
+        if let Err(e) = engine.add_connection(value.0.clone()).await {
+            panic!("Init: Add Connection Failed. Error = {}", e);
+        }
+    }
+    info!("Init: Add Connections Success.");
+    engine
+        .hash_ring
+        .write()
+        .replace(HashRing::new(all_servers_address));
+    info!("Init: Update Hash Ring Success.");
+    match engine.update_server_status(ServerStatus::Finished).await {
+        Ok(_) => {
+            info!("Update Server Status to Finish Success.");
+        }
+        Err(e) => {
+            panic!("Update Server Status to Finish Failed. Error = {}", e);
+        }
+    }
+    info!("Init: Start Transferring Data.");
+    watch_status(engine.clone()).await;
+
     Ok(())
 }
 
@@ -377,7 +389,7 @@ where
                             return Ok(value);
                         }
                         Err(e) => {
-                            info!(
+                            debug!(
                             "Forward Request Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e), file_path, operation_type, flags
                         );
@@ -398,7 +410,7 @@ where
                 Ok((-1, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::CreateFile => {
-                info!("{} Create File: path: {}", self.engine.address, file_path);
+                debug!("{} Create File: path: {}", self.engine.address, file_path);
                 let meta_data_unwraped: CreateFileSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
                 let (return_meta_data, status) = match self
@@ -415,7 +427,7 @@ where
                 {
                     Ok(value) => (value, 0),
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Create File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -435,7 +447,7 @@ where
                 ))
             }
             OperationType::CreateDir => {
-                info!("{} Create Dir: path: {}", self.engine.address, file_path);
+                debug!("{} Create Dir: path: {}", self.engine.address, file_path);
                 let meta_data_unwraped: CreateDirSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
                 let (return_meta_data, status) = match self
@@ -450,7 +462,7 @@ where
                 {
                     Ok(value) => (value, 0),
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Create Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             e, file_path, operation_type, flags
                         );
@@ -467,12 +479,12 @@ where
                 ))
             }
             OperationType::GetFileAttr => {
-                info!("{} Get File Attr: path: {}", self.engine.address, file_path);
+                debug!("{} Get File Attr: path: {}", self.engine.address, file_path);
                 let (return_meta_data, status) =
                     match self.engine.get_file_attr(file_path).await {
                         Ok(value) => (value, 0),
                         Err(e) => {
-                            info!(
+                            debug!(
                             "Get File Attr Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e), file_path, operation_type, flags
                         );
@@ -489,7 +501,7 @@ where
                 ))
             }
             OperationType::OpenFile => {
-                info!("{} Open File {}", self.engine.address, file_path);
+                debug!("{} Open File {}", self.engine.address, file_path);
                 let meta_data_unwraped: OpenFileSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
                 let status = match self
@@ -499,7 +511,7 @@ where
                 {
                     Ok(()) => 0,
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Open File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -512,13 +524,13 @@ where
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::ReadDir => {
-                info!("{} Read Dir: {}", self.engine.address, file_path);
+                debug!("{} Read Dir: {}", self.engine.address, file_path);
                 let md: ReadDirSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let (data, status) = match self.engine.read_dir(file_path, md.size, md.offset).await
                 {
                     Ok(value) => (value, 0),
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Read Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -531,13 +543,13 @@ where
                 Ok((status, 0, 0, data.len(), Vec::new(), data))
             }
             OperationType::ReadFile => {
-                info!("{} Read File: {}", self.engine.address, file_path);
+                debug!("{} Read File: {}", self.engine.address, file_path);
                 let md: ReadFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let (data, status) =
                     match self.engine.read_file(file_path, md.size, md.offset).await {
                         Ok(value) => (value, 0),
                         Err(e) => {
-                            info!(
+                            debug!(
                                 "Read File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                                 status_to_string(e),
                                 file_path,
@@ -550,7 +562,7 @@ where
                 Ok((status, 0, 0, data.len(), Vec::new(), data))
             }
             OperationType::WriteFile => {
-                info!("{} Write File: {}", self.engine.address, file_path);
+                debug!("{} Write File: {}", self.engine.address, file_path);
                 let md: WriteFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let (status, size) = match self
                     .engine
@@ -559,7 +571,7 @@ where
                 {
                     Ok(size) => (0, size as u32),
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Write File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -579,7 +591,7 @@ where
                 ))
             }
             OperationType::DeleteFile => {
-                info!("{} Delete File: {}", self.engine.address, file_path);
+                debug!("{} Delete File: {}", self.engine.address, file_path);
                 let meta_data_unwraped: DeleteFileSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
                 let status = match self
@@ -589,7 +601,7 @@ where
                 {
                     Ok(()) => 0,
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Delete File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -602,7 +614,7 @@ where
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::DeleteDir => {
-                info!("{} Delete Dir: {}", self.engine.address, file_path);
+                debug!("{} Delete Dir: {}", self.engine.address, file_path);
                 let meta_data_unwraped: DeleteDirSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
                 let status = match self
@@ -612,7 +624,7 @@ where
                 {
                     Ok(()) => 0,
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Delete Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -625,7 +637,7 @@ where
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::DirectoryAddEntry => {
-                info!("{} Directory Add Entry: {}", self.engine.address, file_path);
+                debug!("{} Directory Add Entry: {}", self.engine.address, file_path);
                 let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
                 Ok((
                     self.engine
@@ -639,7 +651,7 @@ where
                 ))
             }
             OperationType::DirectoryDeleteEntry => {
-                info!(
+                debug!(
                     "{} Directory Delete Entry: {}",
                     self.engine.address, file_path
                 );
@@ -656,13 +668,13 @@ where
                 ))
             }
             OperationType::TruncateFile => {
-                info!("{} Truncate File: {}", self.engine.address, file_path);
+                debug!("{} Truncate File: {}", self.engine.address, file_path);
                 let md: TruncateFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let status =
                     match self.engine.truncate_file(file_path, md.length).await {
                         Ok(()) => 0,
                         Err(e) => {
-                            info!(
+                            debug!(
                             "Truncate File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e), file_path, operation_type, flags
                         );
@@ -704,7 +716,7 @@ where
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::CreateDirNoParent => {
-                info!(
+                debug!(
                     "{} Create Dir no Parent: path: {}",
                     self.engine.address, file_path
                 );
@@ -716,7 +728,7 @@ where
                 {
                     Ok(value) => (value, 0),
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Create Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -736,7 +748,7 @@ where
                 ))
             }
             OperationType::CreateFileNoParent => {
-                info!(
+                debug!(
                     "{} Create File no Parent: path: {}",
                     self.engine.address, file_path
                 );
@@ -750,7 +762,7 @@ where
                 ) {
                     Ok(value) => (value, 0),
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Create File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -770,14 +782,14 @@ where
                 ))
             }
             OperationType::DeleteDirNoParent => {
-                info!(
+                debug!(
                     "{} Delete Dir no Parent: {}",
                     self.engine.address, file_path
                 );
                 let status = match self.engine.delete_dir_no_parent(file_path) {
                     Ok(()) => 0,
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Delete Dir Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
@@ -790,14 +802,14 @@ where
                 Ok((status, 0, 0, 0, Vec::new(), Vec::new()))
             }
             OperationType::DeleteFileNoParent => {
-                info!(
+                debug!(
                     "{} Delete File no Parent: {}",
                     self.engine.address, file_path
                 );
                 let status = match self.engine.delete_file_no_parent(file_path) {
                     Ok(()) => 0,
                     Err(e) => {
-                        info!(
+                        debug!(
                             "Delete File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,

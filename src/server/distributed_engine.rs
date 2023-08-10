@@ -22,7 +22,7 @@ use log::{debug, error, info};
 use nix::fcntl::OFlag;
 use rocksdb::IteratorMode;
 use spin::RwLock;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::{sync::Arc, vec};
 use tokio::sync::Mutex;
 
@@ -48,6 +48,8 @@ pub struct DistributedEngine<Storage: StorageEngine> {
 
     pub file_locks: DashMap<String, DashMap<String, u32>>,
     pub transfer_manager: TransferManager,
+
+    pub closed: AtomicBool,
 }
 
 impl<Storage> DistributedEngine<Storage>
@@ -76,6 +78,7 @@ where
             manager_address: Arc::new(Mutex::new("".to_string())),
             file_locks,
             transfer_manager: TransferManager::new(),
+            closed: AtomicBool::new(false),
         }
     }
 
@@ -93,7 +96,7 @@ where
         match self.file_locks.get(path) {
             Some(lock) => Ok(lock),
             None => {
-                info!("lock file error: {}", path);
+                debug!("lock file error: {}", path);
                 Err(libc::ENOENT)
             }
         }
@@ -699,7 +702,7 @@ where
         mode: u32,
     ) -> Result<Vec<u8>, i32> {
         if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
-            info!(
+            debug!(
                 "create dir failed, file exists, parent: {}, name: {}",
                 parent, name
             );
@@ -715,7 +718,7 @@ where
                 let path = get_full_path(parent, name);
                 let (address, _lock) = self.get_server_address(&path);
                 if self.address == address {
-                    info!(
+                    debug!(
                         "local create dir, parent_dir: {}, file_name: {}",
                         parent, name
                     );
@@ -773,14 +776,14 @@ where
         name: &str,
     ) -> Result<(), i32> {
         if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
-            info!("delete dir failed, file exists, path: {}/{}", parent, name);
+            debug!("delete dir failed, file exists, path: {}/{}", parent, name);
             return Err(libc::ENOENT);
         }
 
         let path = get_full_path(parent, name);
         let (address, _lock) = self.get_server_address(&path);
         let result = if self.address == address {
-            info!(
+            debug!(
                 "local create dir, parent_dir: {}, file_name: {}",
                 parent, name
             );
@@ -830,7 +833,7 @@ where
         match self.file_locks.insert(path.to_owned(), DashMap::new()) {
             Some(_) => Err(libc::EEXIST),
             None => {
-                info!("local create file, path: {}", path);
+                debug!("local create file, path: {}", path);
                 self.storage_engine.create_file(path, oflag, umask, mode)
             }
         }
@@ -839,7 +842,7 @@ where
     pub async fn call_get_attr_remote_or_local(&self, path: &str) -> Result<Vec<u8>, i32> {
         let (address, _lock) = self.get_server_address(path);
         if self.address == address {
-            info!("local get attr, path: {}", path);
+            debug!("local get attr, path: {}", path);
             self.meta_engine.get_file_attr_raw(path)
         } else {
             let (mut status, mut rsp_flags, mut recv_meta_data_length, mut recv_data_length) =
@@ -892,7 +895,7 @@ where
 
         if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
             if (oflag & O_EXCL) != 0 {
-                info!("create file failed, file exists, path: {}", path);
+                debug!("create file failed, file exists, path: {}", path);
                 return Err(libc::EEXIST); // this indicate that the file is being created or deleted
             } else {
                 match self.call_get_attr_remote_or_local(&path).await {
@@ -916,7 +919,7 @@ where
             Ok(_) => {
                 let (address, _lock) = self.get_server_address(&path);
                 let result = if self.address == address {
-                    info!(
+                    debug!(
                         "local create file, parent_file: {}, file_name: {}",
                         parent, name
                     );
@@ -976,7 +979,7 @@ where
         name: &str,
     ) -> Result<(), i32> {
         if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
-            info!("delete file failed, file exists, path: {}/{}", parent, name);
+            debug!("delete file failed, file exists, path: {}/{}", parent, name);
             return Err(libc::ENOENT); // this may indicate that the file is being created or deleted
         }
 

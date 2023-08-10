@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 
 use ahash::{HashMap, HashMapExt};
@@ -16,6 +17,7 @@ pub struct Manager {
     pub new_hashring: Arc<RwLock<Option<HashRing>>>,
     pub servers: Arc<Mutex<HashMap<String, Server>>>,
     pub cluster_status: Arc<Mutex<ClusterStatus>>,
+    pub closed: AtomicBool,
     _clients: DashMap<String, String>,
 }
 
@@ -33,6 +35,7 @@ impl Manager {
             new_hashring: Arc::new(RwLock::new(None)),
             servers: Arc::new(Mutex::new(HashMap::new())),
             cluster_status: Arc::new(Mutex::new(ClusterStatus::Initializing)),
+            closed: AtomicBool::new(false),
             _clients: DashMap::new(),
         };
 

@@ -12,15 +12,14 @@ use crate::{
     rpc::server::Handler,
 };
 
-use super::{core::Manager, heart::Heart};
+use super::core::Manager;
 
 use async_trait::async_trait;
-use log::{debug, error};
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 
 pub struct ManagerService {
-    pub heart: Heart,
-    manager: Arc<Manager>,
+    pub manager: Arc<Manager>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -40,10 +39,14 @@ pub struct MetadataResponse {
     pub instances: Vec<String>,
 }
 
-async fn update_server_status(manager: Arc<Manager>) {
+pub async fn update_server_status(manager: Arc<Manager>) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        if manager.closed.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
         let status = *manager.cluster_status.lock().unwrap();
+        debug!("current cluster status is {:?}", status);
         match status {
             ClusterStatus::Idle => {}
             ClusterStatus::NodesStarting => {
@@ -57,6 +60,7 @@ async fn update_server_status(manager: Arc<Manager>) {
                 if flag {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::SyncNewHashRing;
+                    info!("all servers is ready, change the cluster status to SyncNewHashRing");
                 };
             }
             ClusterStatus::SyncNewHashRing => {
@@ -70,6 +74,7 @@ async fn update_server_status(manager: Arc<Manager>) {
                 if flag {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::PreTransfer;
+                    info!("all servers is ready, change the cluster status to PreTransfer");
                 }
             }
             ClusterStatus::PreTransfer => {
@@ -83,6 +88,7 @@ async fn update_server_status(manager: Arc<Manager>) {
                 if flag {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::Transferring;
+                    info!("all servers is ready, change the cluster status to Transferring");
                 }
             }
             ClusterStatus::Transferring => {
@@ -96,6 +102,7 @@ async fn update_server_status(manager: Arc<Manager>) {
                 if flag {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::PreFinish;
+                    info!("all servers is ready, change the cluster status to PreFinish");
                 }
             }
             ClusterStatus::PreFinish => {
@@ -114,6 +121,7 @@ async fn update_server_status(manager: Arc<Manager>) {
                         .unwrap()
                         .replace(manager.new_hashring.read().unwrap().clone().unwrap());
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::Finishing;
+                    info!("all servers is ready, change the cluster status to Finishing");
                 }
             }
             ClusterStatus::Finishing => {
@@ -135,6 +143,7 @@ async fn update_server_status(manager: Arc<Manager>) {
                     // move new_hashring to hashring
                     let _ = new_hashring.take().unwrap();
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::Idle;
+                    info!("all servers is ready, change the cluster status to Idle");
                 }
             }
             ClusterStatus::Initializing => {
@@ -148,19 +157,18 @@ async fn update_server_status(manager: Arc<Manager>) {
                 if flag {
                     tokio::time::sleep(Duration::from_secs(1)).await;
                     *manager.cluster_status.lock().unwrap() = ClusterStatus::Idle;
+                    info!("all servers is ready, change the cluster status to Idle");
                 }
             }
-            s => panic!("get forward address failed, invalid cluster status: {}", s),
+            s => panic!("update server status failed, invalid cluster status: {}", s),
         }
     }
 }
 
 impl ManagerService {
     pub fn new(servers: Vec<(String, usize)>) -> Self {
-        let heart = Heart::default();
         let manager = Arc::new(Manager::new(servers));
-        tokio::spawn(update_server_status(manager.clone()));
-        ManagerService { heart, manager }
+        ManagerService { manager }
     }
 }
 
@@ -168,7 +176,7 @@ impl ManagerService {
 impl Handler for ManagerService {
     async fn dispatch(
         &self,
-        _id: u32,
+        id: u32,
         operation_type: u32,
         _flags: u32,
         path: Vec<u8>,
@@ -177,36 +185,13 @@ impl Handler for ManagerService {
     ) -> anyhow::Result<(i32, u32, usize, usize, Vec<u8>, Vec<u8>)> {
         let r#type = ManagerOperationType::try_from(operation_type).unwrap();
         match r#type {
-            ManagerOperationType::SendHeart => {
-                let request: SendHeartRequest = bincode::deserialize(&metadata).unwrap();
-                debug!("{}", request.lifetime);
-                self.heart
-                    .register_server(request.address, request.lifetime)
-                    .await;
-
-                Ok((0, 0, 0, 0, Vec::new(), Vec::new()))
-            }
-            ManagerOperationType::GetMetadata => {
-                let _request: MetadataRequest = bincode::deserialize(&metadata).unwrap();
-                let mut response = MetadataResponse::default();
-                self.heart.instances.iter().for_each(|instance| {
-                    let key = instance.key();
-                    response.instances.push(key.to_owned());
-                });
-                let response_meta_data = bincode::serialize(&response).unwrap();
-                Ok((
-                    0,
-                    0,
-                    response_meta_data.len(),
-                    0,
-                    response_meta_data,
-                    Vec::new(),
-                ))
-            }
             ManagerOperationType::GetClusterStatus => {
                 let status = self.manager.get_cluster_status();
                 let response_meta_data =
                     bincode::serialize(&GetClusterStatusRecvMetaData { status }).unwrap();
+
+                debug!("connection {} get cluster status: {:?}", id, status);
+
                 Ok((
                     0,
                     0,
@@ -218,6 +203,9 @@ impl Handler for ManagerService {
             }
             ManagerOperationType::GetHashRing => {
                 let hash_ring_info = self.manager.get_hash_ring_info();
+
+                info!("connection {} get hash ring: {:?}", id, hash_ring_info);
+
                 let response_meta_data =
                     bincode::serialize(&GetHashRingInfoRecvMetaData { hash_ring_info }).unwrap();
                 Ok((
@@ -231,6 +219,7 @@ impl Handler for ManagerService {
             }
             ManagerOperationType::GetNewHashRing => match self.manager.get_new_hash_ring_info() {
                 Ok(hash_ring_info) => {
+                    info!("connection {} get new hash ring: {:?}", id, hash_ring_info);
                     let response_meta_data =
                         bincode::serialize(&GetHashRingInfoRecvMetaData { hash_ring_info })
                             .unwrap();
@@ -252,6 +241,7 @@ impl Handler for ManagerService {
                 let new_servers_info = bincode::deserialize::<AddNodesSendMetaData>(&metadata)
                     .unwrap()
                     .new_servers_info;
+                info!("connection {} add nodes: {:?}", id, new_servers_info);
                 match self.manager.add_nodes(new_servers_info) {
                     None => Ok((0, 0, 0, 0, Vec::new(), Vec::new())),
                     Some(e) => {
@@ -265,6 +255,7 @@ impl Handler for ManagerService {
                     bincode::deserialize::<DeleteNodesSendMetaData>(&metadata)
                         .unwrap()
                         .deleted_servers_info;
+                info!("connection {} remove nodes: {:?}", id, deleted_servers_info);
                 match self.manager.delete_nodes(deleted_servers_info) {
                     None => Ok((0, 0, 0, 0, Vec::new(), Vec::new())),
                     Some(e) => {
@@ -274,6 +265,7 @@ impl Handler for ManagerService {
                 }
             }
             ManagerOperationType::UpdateServerStatus => {
+                info!("connection {} update server status", id);
                 match self.manager.set_server_status(
                     String::from_utf8(path).unwrap(),
                     bincode::deserialize(&metadata).unwrap(),

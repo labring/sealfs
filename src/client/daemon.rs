@@ -65,10 +65,18 @@ impl SealfsFused {
         let mut options = vec![mount_mode, MountOption::FSName("seal".to_string())];
         options.push(MountOption::AutoUnmount);
         options.push(MountOption::AllowRoot);
+        options.push(MountOption::CUSTOM("nonempty".to_string()));
         let result = self.client.init_volume(&volume_name).await;
         match result {
             Ok(inode) => {
-                info!("mounting volume {} to {}", volume_name, mountpoint);
+                info!("volume {} inited, now mount", volume_name);
+
+                // check if already mounted
+                if self.mount_points.contains_key(&mountpoint) {
+                    warn!("mountpoint {} already mounted", mountpoint);
+                    return Err(CONNECTION_ERROR);
+                }
+
                 match fuser::spawn_mount2(
                     SealFS::new(self.client.clone(), inode),
                     &mountpoint,
@@ -188,6 +196,10 @@ impl Handler for SealfsFused {
             MOUNT => {
                 let send_meta_data: MountVolumeSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
+                info!(
+                    "mounting volume {} to {}",
+                    send_meta_data.volume_name, send_meta_data.mount_point
+                );
                 match self
                     .mount(
                         send_meta_data.mount_point,
@@ -218,6 +230,7 @@ impl Handler for SealfsFused {
                 }
             }
             LIST_MOUNTPOINTS => {
+                info!("list_mountpoints");
                 let result = self.list_mountpoints();
                 Ok((0, 0, 0, 0, vec![], bincode::serialize(&result).unwrap()))
             }
