@@ -34,13 +34,14 @@ pub struct SealfsFused {
     pub client: Arc<Client>,
     pub mount_points: DashMap<String, (String, bool, BackgroundSession)>,
     pub index_file: String,
+    pub mount_lock: tokio::sync::Mutex<()>,
 }
 
 // TODO: remove this
 // replace fuser with other fuse library which supports async.
 // better for performance too.
-unsafe impl std::marker::Sync for SealfsFused {}
-unsafe impl std::marker::Send for SealfsFused {}
+unsafe impl Sync for SealfsFused {}
+unsafe impl Send for SealfsFused {}
 
 impl SealfsFused {
     pub fn new(index_file: String, client: Arc<Client>) -> Self {
@@ -48,6 +49,7 @@ impl SealfsFused {
             client,
             mount_points: DashMap::new(),
             index_file,
+            mount_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -56,7 +58,8 @@ impl SealfsFused {
         mountpoint: String,
         volume_name: String,
         read_only: bool,
-    ) -> Result<(), i32> {
+    ) -> Result<(), String> {
+        let _lock = self.mount_lock.lock().await;
         let mount_mode = if read_only {
             MountOption::RO
         } else {
@@ -74,7 +77,13 @@ impl SealfsFused {
                 // check if already mounted
                 if self.mount_points.contains_key(&mountpoint) {
                     warn!("mountpoint {} already mounted", mountpoint);
-                    return Err(CONNECTION_ERROR);
+                    if self.mount_points.get(&mountpoint).unwrap().0 != volume_name {
+                        return Err(format!("mountpoint {} already mounted with different volume", mountpoint));
+                    }
+                    if self.mount_points.get(&mountpoint).unwrap().1 != read_only {
+                        return Err(format!("mountpoint {} already mounted with different mode", mountpoint));
+                    }
+                    return Ok(());
                 }
 
                 match fuser::spawn_mount2(
@@ -89,24 +98,22 @@ impl SealfsFused {
                         Ok(())
                     }
                     Err(e) => {
-                        error!("mount error: {}", e);
-                        Err(CONNECTION_ERROR)
+                        Err(format!("mount error: {}", e))
                     }
                 }
             }
             Err(e) => {
-                error!("mount error: {}", status_to_string(e));
-                Err(e)
+                return Err(format!("mount error: {}", status_to_string(e)))
             }
         }
     }
 
-    pub fn unmount(&self, mountpoint: &str) -> Result<(), i32> {
+    pub async fn unmount(&self, mountpoint: &str) -> Result<(), String> {
+        let _lock = self.mount_lock.lock().await;
         match self.mount_points.remove(mountpoint) {
             Some(_) => Ok(()),
             None => {
-                error!("mountpoint {} not found", mountpoint);
-                Err(CONNECTION_ERROR)
+                Err(format!("mountpoint {} not found", mountpoint))
             }
         }
     }
@@ -121,58 +128,92 @@ impl SealfsFused {
 
     // remove old index file and sync mount points to index file
     pub fn sync_index_file(&self) {
+
+        // write to swap file first
+        let mut file = std::fs::File::create(format!("{}.swap", &self.index_file)).unwrap();
+        for k in self.mount_points.iter() {
+            let line = format!("{}\n{}\n{}\n\n", k.key(), k.value().0, k.value().1);
+            file.write_all(line.as_bytes()).unwrap();
+        }
+        // write a $ to indicate the end of file
+        file.write_all(b"$\n").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
         std::fs::remove_file(&self.index_file).unwrap_or(());
         let mut file = std::fs::File::create(&self.index_file).unwrap();
         for k in self.mount_points.iter() {
             let line = format!("{}\n{}\n{}\n\n", k.key(), k.value().0, k.value().1);
             file.write_all(line.as_bytes()).unwrap();
         }
+        // write a $ to indicate the end of file
+        file.write_all(b"$\n").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        std::fs::remove_file(format!("{}.swap", &self.index_file)).unwrap_or(());
     }
 
-    // read index file and mount all volumes
-    pub async fn init(&self) -> Result<(), i32> {
-        let mut file = match std::fs::File::open(&self.index_file) {
+    pub fn read_index_file(&self, index_file_name: &str, allow_nonexist: bool) -> Result<Vec<(String, String, bool)>, String> {
+        let mut result = Vec::new();
+        let mut file = match std::fs::File::open(index_file_name) {
             Ok(f) => f,
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
-                    return Ok(());
+                    if allow_nonexist {
+                        return Ok(result);
+                    }
+                    return Err(format!("index file {} not found", index_file_name));
                 }
-                error!("open index file {} error: {}", &self.index_file, e);
-                return Err(libc::EIO);
+                return Err(format!("open index file {} error: {}", index_file_name, e));
             }
         };
         let mut content = String::new();
         match file.read_to_string(&mut content) {
             Ok(_) => (),
             Err(e) => {
-                error!("read index file {} error: {}", &self.index_file, e);
-                return Ok(());
+                error!("read index file {} error: {}", index_file_name, e);
+                return Err(format!("read index file {} error: {}", index_file_name, e));
             }
         }
         let lines: Vec<&str> = content.split('\n').collect();
-        for i in 0..lines.len() / 4 {
-            let mountpoint = lines[i * 4].to_owned();
-            let volume_name = lines[i * 4 + 1].to_owned();
-            let read_only = lines[i * 4 + 2].parse::<bool>().unwrap();
-            info!("mounting volume {} to {}", volume_name, mountpoint);
-
-            // umount old mountpoint
-            if let Err(e) = std::process::Command::new("umount")
-                .arg(&mountpoint)
-                .output()
-            {
-                warn!("umount {} error: {}", &mountpoint, e);
-            }
-
-            match self.mount(mountpoint, volume_name.clone(), read_only).await {
-                Ok(_) => {
-                    info!("mount success");
+        for i in (0..lines.len()).step_by(4) {
+            if i + 3 >= lines.len() {
+                println!("{}", lines[i]);
+                if lines[i] == "$" {
+                    break
                 }
+                return Err(format!("index file {} format error", index_file_name));
+            }
+            result.push((
+                lines[i].to_string(),
+                lines[i + 1].to_string(),
+                lines[i + 2].parse::<bool>().unwrap(),
+            ));
+        }
+        Ok(result)
+    }
+
+    // read index file and mount all volumes
+    pub async fn init(&self) -> Result<(), String> {
+        let volumes = {
+            match self.read_index_file(format!("{}.swap", &self.index_file).as_str(), false) {
+                Ok(result) => result,
                 Err(e) => {
-                    if e == libc::ENOENT {
-                        error!("volume {} not found", volume_name);
-                        continue;
+                    warn!("read swap index file error: {}", e);
+                    match self.read_index_file(&self.index_file, true) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            return Err(format!("read index file error: {}", e));
+                        }
                     }
+                }
+            }
+        };
+
+        for (mountpoint, volume_name, read_only) in volumes {
+            match self.mount(mountpoint, volume_name.clone(), read_only).await {
+                Ok(_) => {},
+                Err(e) => {
                     return Err(e);
                 }
             }
@@ -212,20 +253,23 @@ impl Handler for SealfsFused {
                         self.sync_index_file();
                         Ok((0, 0, 0, 0, vec![], vec![]))
                     }
-                    Err(e) => Ok((e, 0, 0, 0, vec![], vec![])),
+                    Err(e) => {
+                        error!("mount error: {}", e);
+                        Ok((libc::EIO, 0, 0, 0, vec![], vec![]))
+                    }
                 }
             }
             UMOUNT => {
                 let mountpoint = std::str::from_utf8(&path).unwrap();
                 info!("unmounting volume {}", mountpoint);
-                match self.mount_points.remove(mountpoint) {
-                    Some(_) => {
+                match self.unmount(mountpoint).await {
+                    Ok(()) => {
                         self.sync_index_file();
                         Ok((0, 0, 0, 0, vec![], vec![]))
                     }
-                    None => {
-                        error!("mountpoint not found: {}", mountpoint);
-                        Ok((libc::ENOENT, 0, 0, 0, vec![], vec![]))
+                    Err(e) => {
+                        error!("unmount error: {}", e);
+                        Ok((libc::EIO, 0, 0, 0, vec![], vec![]))
                     }
                 }
             }
