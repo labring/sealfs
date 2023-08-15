@@ -481,7 +481,7 @@ where
             OperationType::GetFileAttr => {
                 debug!("{} Get File Attr: path: {}", self.engine.address, file_path);
                 let (return_meta_data, status) =
-                    match self.engine.get_file_attr(file_path).await {
+                    match self.engine.get_file_attr(file_path) {
                         Ok(value) => (value, 0),
                         Err(e) => {
                             debug!(
@@ -504,11 +504,11 @@ where
                 debug!("{} Open File {}", self.engine.address, file_path);
                 let meta_data_unwraped: OpenFileSendMetaData =
                     bincode::deserialize(&metadata).unwrap();
-                let status = match self
-                    .engine
-                    .open_file(file_path, meta_data_unwraped.flags, meta_data_unwraped.mode)
-                    .await
-                {
+                let status = match self.engine.open_file(
+                    file_path,
+                    meta_data_unwraped.flags,
+                    meta_data_unwraped.mode,
+                ) {
                     Ok(()) => 0,
                     Err(e) => {
                         debug!(
@@ -526,8 +526,7 @@ where
             OperationType::ReadDir => {
                 debug!("{} Read Dir: {}", self.engine.address, file_path);
                 let md: ReadDirSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let (data, status) = match self.engine.read_dir(file_path, md.size, md.offset).await
-                {
+                let (data, status) = match self.engine.read_dir(file_path, md.size, md.offset) {
                     Ok(value) => (value, 0),
                     Err(e) => {
                         debug!(
@@ -545,42 +544,41 @@ where
             OperationType::ReadFile => {
                 debug!("{} Read File: {}", self.engine.address, file_path);
                 let md: ReadFileSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let (data, status) =
-                    match self.engine.read_file(file_path, md.size, md.offset).await {
-                        Ok(value) => (value, 0),
-                        Err(e) => {
-                            debug!(
-                                "Read File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
-                                status_to_string(e),
-                                file_path,
-                                operation_type,
-                                flags
-                            );
-                            (Vec::new(), e)
-                        }
-                    };
-                Ok((status, 0, 0, data.len(), Vec::new(), data))
-            }
-            OperationType::WriteFile => {
-                debug!("{} Write File: {}", self.engine.address, file_path);
-                let md: WriteFileSendMetaData = bincode::deserialize(&metadata).unwrap();
-                let (status, size) = match self
-                    .engine
-                    .write_file(file_path, data.as_slice(), md.offset)
-                    .await
-                {
-                    Ok(size) => (0, size as u32),
+                let (data, status) = match self.engine.read_file(file_path, md.size, md.offset) {
+                    Ok(value) => (value, 0),
                     Err(e) => {
                         debug!(
-                            "Write File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
+                            "Read File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
                             status_to_string(e),
                             file_path,
                             operation_type,
                             flags
                         );
-                        (e, 0)
+                        (Vec::new(), e)
                     }
                 };
+                Ok((status, 0, 0, data.len(), Vec::new(), data))
+            }
+            OperationType::WriteFile => {
+                debug!("{} Write File: {}", self.engine.address, file_path);
+                let md: WriteFileSendMetaData = bincode::deserialize(&metadata).unwrap();
+                let (status, size) =
+                    match self
+                        .engine
+                        .write_file(file_path, data.as_slice(), md.offset)
+                    {
+                        Ok(size) => (0, size as u32),
+                        Err(e) => {
+                            debug!(
+                                "Write File Failed: {:?}, path: {}, operation_type: {}, flags: {}",
+                                status_to_string(e),
+                                file_path,
+                                operation_type,
+                                flags
+                            );
+                            (e, 0)
+                        }
+                    };
                 Ok((
                     status,
                     0,
@@ -641,8 +639,7 @@ where
                 let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
                 Ok((
                     self.engine
-                        .directory_add_entry(file_path, md.file_name, md.file_type)
-                        .await,
+                        .directory_add_entry(file_path, md.file_name, md.file_type),
                     0,
                     0,
                     0,
@@ -658,8 +655,7 @@ where
                 let md: DirectoryEntrySendMetaData = bincode::deserialize(&metadata).unwrap();
                 Ok((
                     self.engine
-                        .directory_delete_entry(file_path, md.file_name, md.file_type)
-                        .await,
+                        .directory_delete_entry(file_path, md.file_name, md.file_type),
                     0,
                     0,
                     0,
@@ -671,7 +667,7 @@ where
                 debug!("{} Truncate File: {}", self.engine.address, file_path);
                 let md: TruncateFileSendMetaData = bincode::deserialize(&metadata).unwrap();
                 let status =
-                    match self.engine.truncate_file(file_path, md.length).await {
+                    match self.engine.truncate_file(file_path, md.length) {
                         Ok(()) => 0,
                         Err(e) => {
                             debug!(
@@ -687,7 +683,7 @@ where
                 info!("{} Checkout File: {}", self.engine.address, file_path);
                 let file_attr = bytes_as_file_attr(&metadata);
                 let status =
-                    match self.engine.check_file(file_path, file_attr).await {
+                    match self.engine.check_file(file_path, file_attr) {
                         Ok(()) => 0,
                         Err(e) => {
                             info!(
@@ -703,7 +699,7 @@ where
                 info!("{} Checkout Dir: {}", self.engine.address, file_path);
                 let file_attr = bytes_as_file_attr(&metadata);
                 let status =
-                    match self.engine.check_dir(file_path, file_attr).await {
+                    match self.engine.check_dir(file_path, file_attr) {
                         Ok(()) => 0,
                         Err(e) => {
                             info!(
