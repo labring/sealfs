@@ -78,10 +78,16 @@ impl SealfsFused {
                 if self.mount_points.contains_key(&mountpoint) {
                     warn!("mountpoint {} already mounted", mountpoint);
                     if self.mount_points.get(&mountpoint).unwrap().0 != volume_name {
-                        return Err(format!("mountpoint {} already mounted with different volume", mountpoint));
+                        return Err(format!(
+                            "mountpoint {} already mounted with different volume",
+                            mountpoint
+                        ));
                     }
                     if self.mount_points.get(&mountpoint).unwrap().1 != read_only {
-                        return Err(format!("mountpoint {} already mounted with different mode", mountpoint));
+                        return Err(format!(
+                            "mountpoint {} already mounted with different mode",
+                            mountpoint
+                        ));
                     }
                     return Ok(());
                 }
@@ -97,14 +103,10 @@ impl SealfsFused {
                             .insert(mountpoint, (volume_name, read_only, session));
                         Ok(())
                     }
-                    Err(e) => {
-                        Err(format!("mount error: {}", e))
-                    }
+                    Err(e) => Err(format!("mount error: {}", e)),
                 }
             }
-            Err(e) => {
-                return Err(format!("mount error: {}", status_to_string(e)))
-            }
+            Err(e) => Err(format!("mount error: {}", status_to_string(e))),
         }
     }
 
@@ -112,9 +114,7 @@ impl SealfsFused {
         let _lock = self.mount_lock.lock().await;
         match self.mount_points.remove(mountpoint) {
             Some(_) => Ok(()),
-            None => {
-                Err(format!("mountpoint {} not found", mountpoint))
-            }
+            None => Err(format!("mountpoint {} not found", mountpoint)),
         }
     }
 
@@ -128,7 +128,6 @@ impl SealfsFused {
 
     // remove old index file and sync mount points to index file
     pub fn sync_index_file(&self) {
-
         // write to swap file first
         let mut file = std::fs::File::create(format!("{}.swap", &self.index_file)).unwrap();
         for k in self.mount_points.iter() {
@@ -153,7 +152,11 @@ impl SealfsFused {
         std::fs::remove_file(format!("{}.swap", &self.index_file)).unwrap_or(());
     }
 
-    pub fn read_index_file(&self, index_file_name: &str, allow_nonexist: bool) -> Result<Vec<(String, String, bool)>, String> {
+    pub fn read_index_file(
+        &self,
+        index_file_name: &str,
+        allow_nonexist: bool,
+    ) -> Result<Vec<(String, String, bool)>, String> {
         let mut result = Vec::new();
         let mut file = match std::fs::File::open(index_file_name) {
             Ok(f) => f,
@@ -180,7 +183,7 @@ impl SealfsFused {
             if i + 3 >= lines.len() {
                 println!("{}", lines[i]);
                 if lines[i] == "$" {
-                    break
+                    break;
                 }
                 return Err(format!("index file {} format error", index_file_name));
             }
@@ -212,7 +215,7 @@ impl SealfsFused {
 
         for (mountpoint, volume_name, read_only) in volumes {
             match self.mount(mountpoint, volume_name.clone(), read_only).await {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     return Err(e);
                 }
