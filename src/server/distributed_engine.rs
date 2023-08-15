@@ -689,7 +689,7 @@ where
 
     pub fn create_dir_no_parent(&self, path: &str, mode: u32) -> Result<Vec<u8>, i32> {
         match self.file_locks.insert(path.to_owned(), DashMap::new()) {
-            Some(_) => Err(libc::EEXIST),
+            Some(_) => Err(libc::EEXIST), // file will be checked in directory_add_entry, no need to recover here
             None => self.meta_engine.create_directory(path, mode),
         }
     }
@@ -818,7 +818,7 @@ where
         }
     }
 
-    pub async fn read_dir(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
+    pub fn read_dir(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         let _file_lock = self.lock_file(path)?;
         self.meta_engine.read_directory(path, size, offset)
     }
@@ -1020,28 +1020,28 @@ where
         }
     }
 
-    pub async fn truncate_file(&self, path: &str, length: i64) -> Result<(), i32> {
+    pub fn truncate_file(&self, path: &str, length: i64) -> Result<(), i32> {
         // a temporary implementation
         let _file_lock = self.lock_file(path)?;
         self.storage_engine.truncate_file(path, length)
     }
 
-    pub async fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
+    pub fn read_file(&self, path: &str, size: u32, offset: i64) -> Result<Vec<u8>, i32> {
         let _file_lock = self.lock_file(path)?;
         self.storage_engine.read_file(path, size, offset)
     }
 
-    pub async fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, i32> {
+    pub fn write_file(&self, path: &str, data: &[u8], offset: i64) -> Result<usize, i32> {
         let _file_lock = self.lock_file(path)?;
         self.storage_engine.write_file(path, data, offset)
     }
 
-    pub async fn get_file_attr(&self, path: &str) -> Result<Vec<u8>, i32> {
+    pub fn get_file_attr(&self, path: &str) -> Result<Vec<u8>, i32> {
         let _file_lock = self.lock_file(path)?;
         self.meta_engine.get_file_attr_raw(path)
     }
 
-    pub async fn open_file(&self, path: &str, flag: i32, mode: u32) -> Result<(), i32> {
+    pub fn open_file(&self, path: &str, flag: i32, mode: u32) -> Result<(), i32> {
         if (flag & O_CREAT) != 0 {
             todo!("create file should be converted at client side")
         } else if (flag & O_DIRECTORY) != 0 {
@@ -1052,7 +1052,7 @@ where
         }
     }
 
-    pub async fn directory_add_entry(&self, path: &str, file_name: String, file_type: u8) -> i32 {
+    pub fn directory_add_entry(&self, path: &str, file_name: String, file_type: u8) -> i32 {
         let _lock = match self.lock_file(path) {
             Ok(lock) => lock,
             Err(e) => {
@@ -1075,20 +1075,15 @@ where
         }
     }
 
-    pub async fn check_file(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
+    pub fn check_file(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
         self.meta_engine.complete_transfer_file(path, file_attr)
     }
 
-    pub async fn check_dir(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
+    pub fn check_dir(&self, path: &str, file_attr: &FileAttr) -> Result<(), i32> {
         self.meta_engine.complete_transfer_file(path, file_attr)
     }
 
-    pub async fn directory_delete_entry(
-        &self,
-        path: &str,
-        file_name: String,
-        file_type: u8,
-    ) -> i32 {
+    pub fn directory_delete_entry(&self, path: &str, file_name: String, file_type: u8) -> i32 {
         let _lock = match self.lock_file(path) {
             Ok(lock) => lock,
             Err(e) => {
