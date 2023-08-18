@@ -250,7 +250,7 @@ impl<
                     return Ok(());
                 }
                 Err(e) => {
-                    error!("wait for callback failed: {}", e);
+                    error!("wait for callback failed: {}, batch: {}, id {}, operation type: {}, path: {}", e, batch, id, operation_type, path);
                     continue;
                 }
             }
@@ -293,13 +293,16 @@ pub async fn parse_response<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin>(
         let result = {
             match pool.lock_if_not_timeout(batch, id) {
                 Ok(_) => Ok(()),
-                Err(_) => Err("lock timeout"),
+                Err(e) => Err(e),
             }
         };
         match result {
             Ok(_) => {}
             Err(e) => {
-                error!("parse_response lock timeout: {}", e);
+                error!(
+                    "parse_response lock timeout: {}, batch: {}, id: {}",
+                    e, batch, id
+                );
                 let result = connection
                     .clean_response(&mut read_stream, total_length)
                     .await;

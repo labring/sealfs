@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod fuse_client;
 
 use clap::{Parser, Subcommand};
+use env_logger::fmt;
 use fuser::{
     Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyWrite, Request,
@@ -369,7 +370,7 @@ pub async fn run_command() -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut builder = env_logger::Builder::from_default_env();
     builder
-        .format_timestamp(None)
+        .format_timestamp(Some(fmt::TimestampPrecision::Millis))
         .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
     builder.init();
 

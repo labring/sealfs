@@ -27,7 +27,6 @@ use sealfs::common::serialization::{
 use sealfs::rpc::client::TcpStreamCreator;
 use sealfs::{offset_of, rpc};
 pub struct Client {
-    // TODO replace with a thread safe data structure
     pub client: Arc<
         rpc::client::RpcClient<
             tokio::net::tcp::OwnedReadHalf,

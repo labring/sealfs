@@ -5,6 +5,7 @@ pub mod syscall_intercept;
 pub mod test_log;
 
 use client::CLIENT;
+use env_logger::fmt;
 use file_desc::{FdAttr, FdType};
 use lazy_static::lazy_static;
 use libc::{
@@ -69,7 +70,7 @@ extern "C" fn initialize() {
         let log_level = std::env::var("SEALFS_LOG_LEVEL").unwrap_or("warn".to_string());
         let mut builder = env_logger::Builder::from_default_env();
         builder
-            .format_timestamp(None)
+            .format_timestamp(Some(fmt::TimestampPrecision::Millis))
             .filter(None, log::LevelFilter::from_str(&log_level).unwrap());
         builder.init();
 

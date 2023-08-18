@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+use env_logger::fmt;
 use log::{error, info, warn};
 use sealfs::manager::manager_service::update_server_status;
 use sealfs::{manager::manager_service::ManagerService, rpc::server::RpcServer};
@@ -92,10 +93,12 @@ async fn main() -> anyhow::Result<()> {
         },
     };
 
-    builder.format_timestamp(None).filter(
-        None,
-        log::LevelFilter::from_str(&properties.log_level).unwrap(),
-    );
+    builder
+        .format_timestamp(Some(fmt::TimestampPrecision::Millis))
+        .filter(
+            None,
+            log::LevelFilter::from_str(&properties.log_level).unwrap(),
+        );
     builder.init();
 
     info!("Starting manager with log level: {}", properties.log_level);

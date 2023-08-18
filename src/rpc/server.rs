@@ -43,7 +43,7 @@ pub async fn handle<
             connection.id,
             header.r#type,
             header.flags,
-            path,
+            path.clone(),
             data,
             metadata,
         )
@@ -61,11 +61,15 @@ pub async fn handle<
                 )
                 .await
             {
-                error!("handle, send response error: {}", e);
+                error!("handle connection: {} , send response error: {}, batch: {}, id: {}, operation_type: {}, flags: {}, path: {:?}", connection.id, e, header.batch, header.id, header.r#type, header.flags, std::str::from_utf8(&path));
+                let _ = connection.close().await;
             }
         }
         Err(e) => {
-            error!("handle, dispatch error: {}", e);
+            error!(
+                "handle connection: {} , dispatch error: {}",
+                connection.id, e
+            );
         }
     }
 }
