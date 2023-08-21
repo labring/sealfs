@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+use env_logger::fmt;
 use log::info;
 use sealfs::server;
 use serde::{Deserialize, Serialize};
@@ -27,8 +28,6 @@ struct Args {
     #[arg(required = true, long)]
     storage_path: Option<String>,
     #[arg(long)]
-    heartbeat: Option<bool>,
-    #[arg(long)]
     log_level: Option<String>,
 }
 
@@ -40,7 +39,6 @@ struct Properties {
     cache_capacity: usize,
     write_buffer_size: usize,
     storage_path: String,
-    heartbeat: bool,
     log_level: String,
 }
 
@@ -56,18 +54,19 @@ async fn main() -> anyhow::Result<(), Box<dyn std::error::Error>> {
         cache_capacity: args.cache_capacity.unwrap_or(13421772),
         write_buffer_size: args.write_buffer_size.unwrap_or(0x4000000),
         storage_path: args.storage_path.unwrap(),
-        heartbeat: args.heartbeat.unwrap_or(false),
         log_level: args.log_level.unwrap_or("warn".to_owned()),
     };
 
     let mut builder = env_logger::Builder::from_default_env();
-    builder.format_timestamp(None).filter(
-        None,
-        match log::LevelFilter::from_str(&properties.log_level) {
-            Ok(level) => level,
-            Err(_) => log::LevelFilter::Warn,
-        },
-    );
+    builder
+        .format_timestamp(Some(fmt::TimestampPrecision::Millis))
+        .filter(
+            None,
+            match log::LevelFilter::from_str(&properties.log_level) {
+                Ok(level) => level,
+                Err(_) => log::LevelFilter::Warn,
+            },
+        );
     builder.init();
 
     info!("start server with properties: {:?}", properties);

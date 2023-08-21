@@ -284,6 +284,13 @@ pub async fn run(
 
     tokio::spawn(sync_cluster_status(Arc::clone(&engine)));
 
+    while <i32 as TryInto<ClusterStatus>>::try_into(engine.cluster_status.load(Ordering::Relaxed))
+        .unwrap()
+        == ClusterStatus::Unkown
+    {
+        sleep(Duration::from_secs(1)).await;
+    }
+
     let handler = Arc::new(FileRequestHandler::new(engine.clone()));
     let server = RpcServer::new(handler, &server_address);
 
@@ -319,12 +326,23 @@ pub async fn run(
         .write()
         .replace(HashRing::new(all_servers_address));
     info!("Init: Update Hash Ring Success.");
-    match engine.update_server_status(ServerStatus::Finished).await {
-        Ok(_) => {
-            info!("Update Server Status to Finish Success.");
+
+    match <i32 as TryInto<ClusterStatus>>::try_into(engine.cluster_status.load(Ordering::Relaxed))
+        .unwrap()
+    {
+        ClusterStatus::Initializing => {
+            match engine.update_server_status(ServerStatus::Finished).await {
+                Ok(_) => {
+                    info!("Update Server Status to Finish Success.");
+                }
+                Err(e) => {
+                    panic!("Update Server Status to Finish Failed. Error = {}", e);
+                }
+            }
         }
-        Err(e) => {
-            panic!("Update Server Status to Finish Failed. Error = {}", e);
+        ClusterStatus::Idle => {}
+        e => {
+            panic!("Cluster Status Unexpected. Status = {:?}", e as u32);
         }
     }
     info!("Init: Start Transferring Data.");

@@ -225,6 +225,13 @@ impl<W: AsyncWriteExt + Unpin, R: AsyncReadExt + Unpin> ServerConnection<W, R> {
         self.name_id.clone()
     }
 
+    pub async fn close(&self) -> Result<(), String> {
+        let mut stream = self.write_stream.lock().await;
+        stream.shutdown().await.map_err(|e| e.to_string())?;
+        info!("close connection {}", self.name_id);
+        Ok(())
+    }
+
     // response
     // | batch | id | status | flags | total_length | meta_data_lenght | data_length | meta_data | data |
     // | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 4Byte | 0~ | 0~ |

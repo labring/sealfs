@@ -117,8 +117,11 @@ impl StorageEngine for FileEngine {
             return Err(f_errno);
         };
         debug!(
-            "read_file path: {}, size: {}, offset: {}, data: {:?}",
-            path, real_size, offset, data
+            "read_file path: {}, size: {}, offset: {}, data_length: {:?}",
+            path,
+            real_size,
+            offset,
+            data.len()
         );
 
         // this is a temporary solution, which results in an extra memory copy.
@@ -154,7 +157,7 @@ impl StorageEngine for FileEngine {
                 };
                 if fd < 0 {
                     let f_errno = errno();
-                    error!("read file error: {:?}", status_to_string(f_errno));
+                    error!("write file error: {:?}", status_to_string(f_errno));
                     return Err(f_errno);
                 }
                 self.cache
@@ -201,7 +204,7 @@ impl StorageEngine for FileEngine {
                 };
                 if fd < 0 {
                     let f_errno = errno();
-                    error!("read file error: {:?}", status_to_string(f_errno));
+                    error!("create_file error: {:?}", status_to_string(f_errno));
                     return Err(f_errno);
                 }
                 self.cache

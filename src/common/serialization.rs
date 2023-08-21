@@ -276,6 +276,7 @@ pub enum ClusterStatus {
     PreFinish = 306,
     Finishing = 307,
     StatusError = 308,
+    Unkown = 309,
 }
 
 impl TryFrom<u32> for ClusterStatus {
@@ -292,6 +293,7 @@ impl TryFrom<u32> for ClusterStatus {
             306 => Ok(ClusterStatus::PreFinish),
             307 => Ok(ClusterStatus::Finishing),
             308 => Ok(ClusterStatus::StatusError),
+            309 => Ok(ClusterStatus::Unkown),
             _ => Err(format!("Unkown value: {}", value)),
         }
     }
@@ -309,6 +311,7 @@ impl From<ClusterStatus> for u32 {
             ClusterStatus::PreFinish => 306,
             ClusterStatus::Finishing => 307,
             ClusterStatus::StatusError => 308,
+            ClusterStatus::Unkown => 309,
         }
     }
 }
@@ -327,6 +330,7 @@ impl TryFrom<i32> for ClusterStatus {
             306 => Ok(ClusterStatus::PreFinish),
             307 => Ok(ClusterStatus::Finishing),
             308 => Ok(ClusterStatus::StatusError),
+            309 => Ok(ClusterStatus::Unkown),
             _ => Err(format!("Unkown value: {}", value)),
         }
     }
@@ -344,6 +348,7 @@ impl From<ClusterStatus> for i32 {
             ClusterStatus::PreFinish => 306,
             ClusterStatus::Finishing => 307,
             ClusterStatus::StatusError => 308,
+            ClusterStatus::Unkown => 309,
         }
     }
 }
@@ -360,6 +365,7 @@ impl Display for ClusterStatus {
             Self::PreFinish => write!(f, "PreFinish"),
             Self::Finishing => write!(f, "DeleteNodes"),
             Self::StatusError => write!(f, "StatusError"),
+            Self::Unkown => write!(f, "Unkown"),
         }
     }
 }

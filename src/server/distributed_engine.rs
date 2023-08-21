@@ -72,7 +72,7 @@ where
             meta_engine,
             client: client.clone(),
             sender: Sender::new(client),
-            cluster_status: AtomicI32::new(ClusterStatus::Initializing.into()),
+            cluster_status: AtomicI32::new(ClusterStatus::Unkown.into()),
             hash_ring: Arc::new(RwLock::new(None)),
             new_hash_ring: Arc::new(RwLock::new(None)),
             manager_address: Arc::new(Mutex::new("".to_string())),
@@ -471,6 +471,7 @@ where
             }
             ClusterStatus::Finishing => (self.get_address(path), false),
             ClusterStatus::StatusError => todo!(),
+            ClusterStatus::Unkown => todo!(),
             //s => panic!("get forward address failed, invalid cluster status: {}", s),
         }
     }
@@ -892,6 +893,11 @@ where
         mode: u32,
     ) -> Result<Vec<u8>, i32> {
         let path = get_full_path(parent, name);
+
+        debug!(
+            "create file, parent_dir: {}, file_name: {}, oflag: {}, umask: {}, mode: {}",
+            parent, name, oflag, umask, mode
+        );
 
         if self.lock_file(parent)?.insert(name.to_owned(), 0).is_some() {
             if (oflag & O_EXCL) != 0 {

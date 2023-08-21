@@ -96,6 +96,7 @@ pub trait ClientStatusMonitor: InfoSyncer {
             ClusterStatus::PreFinish => self.get_new_address(path),
             ClusterStatus::Finishing => self.get_address(path),
             ClusterStatus::StatusError => todo!(),
+            ClusterStatus::Unkown => todo!(),
         }
     }
 
