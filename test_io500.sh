@@ -85,7 +85,7 @@ else
 fi
 
 echo "[global]" > config-minimal.ini
-echo "datadir = /home/sealos/fs" >> config-minimal.ini
+echo "datadir = $HOME/fs" >> config-minimal.ini
 echo "" >> config-minimal.ini
 echo "[debug]" >> config-minimal.ini
 echo "stonewall-time = 2" >> config-minimal.ini
